@@ -126,6 +126,41 @@ fn initializer_with_comment_passes_through() {
 }
 
 #[test]
+fn short_control_headers_unchanged() {
+    assert_eq!(format("if (n < 0) {\n}\n"), "if (n < 0) {\n}\n");
+    assert_eq!(
+        format("while (total > 100) {\n}\n"),
+        "while (total > 100) {\n}\n"
+    );
+    assert_eq!(format("switch (c) {\n}\n"), "switch (c) {\n}\n");
+    assert_eq!(
+        format("for (int i = 0; i < n; i++) {\n}\n"),
+        "for (int i = 0; i < n; i++) {\n}\n"
+    );
+}
+
+#[test]
+fn long_for_header_explodes_one_clause_per_line() {
+    let src = "for (size_t current_sample_index = 0; current_sample_index < total_number_of_samples; current_sample_index++) {\n}\n";
+    let expected = "for (\n\tsize_t current_sample_index = 0;\n\tcurrent_sample_index < total_number_of_samples;\n\tcurrent_sample_index++\n) {\n}\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn long_if_condition_explodes_with_trailing_operators() {
+    let src = "if (averaged_result > MINIMUM_ACCEPTABLE_THRESHOLD && averaged_result < MAXIMUM_ACCEPTABLE_THRESHOLD && averaged_result != 0) {\n}\n";
+    let expected = "if (\n\taveraged_result > MINIMUM_ACCEPTABLE_THRESHOLD &&\n\taveraged_result < MAXIMUM_ACCEPTABLE_THRESHOLD &&\n\taveraged_result != 0\n) {\n}\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn for_header_is_not_treated_as_a_call() {
+    // comma operator inside a for clause must not be split as call args
+    let src = "for (int i = 0, j = N - 1; i < j; i++, j--) {\n}\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
 fn compound_literal_initializer_explodes() {
     let src = "p = &(struct shape){.tag = R, .rect = {.w = 3, .h = 4},};\n";
     let expected = "p = &(struct shape){\n\t.tag = R,\n\t.rect = {.w = 3, .h = 4},\n};\n";

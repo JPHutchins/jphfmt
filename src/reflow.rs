@@ -29,6 +29,28 @@ pub fn format(src: &str) -> String {
         }
 
         if t.kind == TokenKind::Ident
+            && matches!(t.text, "if" | "while" | "switch" | "for")
+            && let Some(open) = next_paren(&toks, i)
+            && let Some(close) = match_bracket(&toks, open)
+        {
+            for tok in &toks[i..open] {
+                emit_str(&mut out, &mut col, tok.text);
+            }
+            let inner = &toks[open + 1..close];
+            let doc = if t.text == "for" {
+                build_for_doc(inner)
+            } else {
+                build_cond_doc(inner)
+            };
+            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let reserved = trailing_reserved(&toks, close + 1);
+            let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
+            emit_str(&mut out, &mut col, &rendered);
+            i = close + 1;
+            continue;
+        }
+
+        if t.kind == TokenKind::Ident
             && t.text == "enum"
             && let Some(brace) = enum_body_brace(&toks, i)
         {
@@ -241,8 +263,11 @@ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> 
     None
 }
 
-/// Split `inner` on commas at bracket depth zero.
-fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
+/// Split `inner` into segments at the depth-zero tokens for which `is_sep` holds.
+fn split_top_level<'a, 'src>(
+    inner: &'a [Token<'src>],
+    is_sep: impl Fn(&Token) -> bool,
+) -> Vec<&'a [Token<'src>]> {
     let mut segments = Vec::new();
     let mut depth = 0i32;
     let mut start = 0usize;
@@ -250,7 +275,7 @@ fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]>
         match t.text {
             "(" | "[" | "{" => depth += 1,
             ")" | "]" | "}" => depth -= 1,
-            "," if depth == 0 => {
+            _ if depth == 0 && is_sep(t) => {
                 segments.push(&inner[start..j]);
                 start = j + 1;
             }
@@ -259,6 +284,87 @@ fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]>
     }
     segments.push(&inner[start..]);
     segments
+}
+
+/// Split `inner` on commas at bracket depth zero.
+fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
+    split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
+}
+
+/// The outermost logical operator present at bracket depth zero (`||` outranks `&&`), if any.
+fn top_level_logical_op(inner: &[Token]) -> Option<&'static str> {
+    let mut depth = 0i32;
+    let mut has_and = false;
+    for t in inner {
+        match t.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => depth -= 1,
+            "||" if depth == 0 && t.kind == TokenKind::Operator => return Some("||"),
+            "&&" if depth == 0 && t.kind == TokenKind::Operator => has_and = true,
+            _ => {}
+        }
+    }
+    has_and.then_some("&&")
+}
+
+/// The `(` that follows control keyword `i` after only trivia, or `None`.
+fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
+    for (j, t) in toks.iter().enumerate().skip(i + 1) {
+        match t.kind {
+            TokenKind::Whitespace | TokenKind::Newline => {}
+            TokenKind::Punct if t.text == "(" => return Some(j),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
+/// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
+fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
+    if segments.is_empty() {
+        return Doc::text("()");
+    }
+    let last = segments.len() - 1;
+    let mut items = vec![Doc::SoftLine];
+    for (idx, seg) in segments.into_iter().enumerate() {
+        items.push(Doc::Text(seg));
+        if idx < last {
+            items.push(Doc::text(sep.to_owned()));
+            items.push(Doc::Line);
+        }
+    }
+    Doc::group(Doc::concat([
+        Doc::text("("),
+        Doc::nest(Doc::concat(items)),
+        Doc::SoftLine,
+        Doc::text(")"),
+    ]))
+}
+
+/// `for (init; cond; step)` — one clause per line when broken (§2.4).
+fn build_for_doc(inner: &[Token]) -> Doc {
+    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
+        .iter()
+        .map(|c| render_segment(c))
+        .collect();
+    build_clause_group(clauses, ";")
+}
+
+/// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
+/// trailing (§2.7); a condition with no such operator explodes as a single indented element.
+fn build_cond_doc(inner: &[Token]) -> Doc {
+    match top_level_logical_op(inner) {
+        Some(op) => {
+            let operands =
+                split_top_level(inner, |t| t.kind == TokenKind::Operator && t.text == op)
+                    .iter()
+                    .map(|o| render_segment(o))
+                    .collect();
+            build_clause_group(operands, &format!(" {op}"))
+        }
+        None => build_clause_group(vec![render_segment(inner)], ""),
+    }
 }
 
 fn is_trivia(t: &Token) -> bool {
