@@ -1,12 +1,16 @@
 //! The structuring pass. It reformats the constructs cfmt understands with the §2.2 rule and
 //! emits everything else byte-for-byte:
 //!
-//! * function-call and declaration argument lists (M2), detected by the house rule that a callee
+//! * function-call / declaration argument lists (M2), detected by the house rule that a callee
 //!   hugs its `(` with no space (`foo(`), which excludes control headers (`if (`) for free;
-//! * `{}` initializer lists and `enum` bodies (M3), with the §2.3 magic trailing comma.
+//! * `{}` initializer lists and `enum` bodies (M3), with the §2.3 magic trailing comma;
+//! * `for`/`if`/`while`/`switch` headers (M4), one clause per line, operators trailing;
+//! * `#define` bodies and GNU statement-expressions `({ ... })` (M5), the constructs clang-format
+//!   cannot lay out — function-like macro bodies open on the `#define` line with `\` continuations
+//!   one space after the content, and statement-expressions block-indent their statements.
 //!
 //! Anything not confidently one of these is emitted verbatim, so partial understanding never
-//! corrupts code. Comments inside a list are deferred to M7: such a list is passed through.
+//! corrupts code; lists containing comments are deferred to M7 and pass through.
 
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -14,9 +18,14 @@ use crate::lexer::{Token, TokenKind, tokenize};
 const WIDTH: usize = 100;
 
 pub fn format(src: &str) -> String {
-    let toks = tokenize(src);
+    structure(&tokenize(src), 0)
+}
+
+/// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
+/// formatting a fragment such as a macro body that follows a prefix).
+fn structure(toks: &[Token], start_col: usize) -> String {
     let mut out = String::new();
-    let mut col = 0usize;
+    let mut col = start_col;
     let mut i = 0usize;
     let mut paren_depth = 0i32;
     let mut in_init = false;
@@ -24,14 +33,20 @@ pub fn format(src: &str) -> String {
         let t = toks[i];
 
         if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(&out) {
-            i = emit_directive(&toks, i, &mut out, &mut col);
+            let is_define = next_nontrivia(toks, i + 1)
+                .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
+            i = if is_define {
+                emit_define(toks, i, &mut out, &mut col)
+            } else {
+                emit_directive(toks, i, &mut out, &mut col)
+            };
             continue;
         }
 
         if t.kind == TokenKind::Ident
             && matches!(t.text, "if" | "while" | "switch" | "for")
-            && let Some(open) = next_paren(&toks, i)
-            && let Some(close) = match_bracket(&toks, open)
+            && let Some(open) = next_paren(toks, i)
+            && let Some(close) = match_bracket(toks, open)
         {
             for tok in &toks[i..open] {
                 emit_str(&mut out, &mut col, tok.text);
@@ -43,7 +58,7 @@ pub fn format(src: &str) -> String {
                 build_cond_doc(inner)
             };
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
-            let reserved = trailing_reserved(&toks, close + 1);
+            let reserved = trailing_reserved(toks, close + 1);
             let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
             i = close + 1;
@@ -52,37 +67,51 @@ pub fn format(src: &str) -> String {
 
         if t.kind == TokenKind::Ident
             && t.text == "enum"
-            && let Some(brace) = enum_body_brace(&toks, i)
+            && let Some(brace) = enum_body_brace(toks, i)
         {
             for tok in &toks[i..brace] {
                 emit_str(&mut out, &mut col, tok.text);
             }
-            i = emit_brace(&toks, brace, true, &mut out, &mut col);
+            i = emit_brace(toks, brace, true, &mut out, &mut col);
             continue;
         }
 
-        if is_call_head(&toks, i)
-            && let Some(close) = match_bracket(&toks, i + 1)
+        if is_call_head(toks, i)
+            && let Some(close) = match_bracket(toks, i + 1)
         {
             emit_str(&mut out, &mut col, t.text);
             let doc = build_call_doc(&toks[i + 2..close]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
-            let reserved = trailing_reserved(&toks, close + 1);
+            let reserved = trailing_reserved(toks, close + 1);
             let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
             i = close + 1;
             continue;
         }
 
-        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression
-        // `({ ... })` (whose `{` is hugged by `(`).
+        // GNU statement-expression `({ ... })` — block-indent its statements.
+        if t.kind == TokenKind::Punct
+            && t.text == "("
+            && toks
+                .get(i + 1)
+                .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
+        {
+            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            if let Some((block, next)) = format_stmt_expr(toks, i, base_level) {
+                emit_str(&mut out, &mut col, &block);
+                i = next;
+                continue;
+            }
+        }
+
+        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
         if in_init
             && t.kind == TokenKind::Punct
             && t.text == "{"
             && last_nonspace_char(&out) != Some('(')
-            && match_brace(&toks, i).is_some()
+            && match_brace(toks, i).is_some()
         {
-            i = emit_brace(&toks, i, false, &mut out, &mut col);
+            i = emit_brace(toks, i, false, &mut out, &mut col);
             continue;
         }
 
@@ -99,6 +128,117 @@ pub fn format(src: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// Format a `#define`: a function-like macro whose body is a single call/`_Generic` or a
+/// statement-expression is laid out with the body opening on the `#define` line and `\`
+/// continuations one space after each line; any other body is emitted verbatim.
+fn emit_define(toks: &[Token], start: usize, out: &mut String, col: &mut usize) -> usize {
+    let end = directive_end(toks, start);
+    if let Some((prefix, body)) = split_define(toks, start, end)
+        && let Some(body_str) = format_define_body(&body, display_width(&prefix))
+    {
+        let full = format!("{prefix}{body_str}");
+        let continued = full.split('\n').collect::<Vec<_>>().join(" \\\n");
+        emit_str(out, col, &continued);
+        emit_str(out, col, "\n");
+        return end;
+    }
+    for tok in &toks[start..end] {
+        emit_str(out, col, tok.text);
+    }
+    end
+}
+
+/// Split a `#define` into its `#define NAME(params) ` prefix text and its body tokens (with
+/// continuation backslashes removed and surrounding trivia trimmed). `None` if it has no body.
+fn split_define<'src>(
+    toks: &[Token<'src>],
+    start: usize,
+    end: usize,
+) -> Option<(String, Vec<Token<'src>>)> {
+    let define = next_nontrivia_in(toks, start + 1, end)?;
+    let name = next_nontrivia_in(toks, define + 1, end)?;
+    let prefix_end = match toks.get(name + 1) {
+        Some(n) if n.kind == TokenKind::Punct && n.text == "(" => {
+            match_bracket(toks, name + 1)? + 1
+        }
+        _ => name + 1,
+    };
+    let prefix: String = toks[start..prefix_end]
+        .iter()
+        .map(|t| t.text)
+        .collect::<String>()
+        + " ";
+    let mut body: Vec<Token> = toks[prefix_end..end]
+        .iter()
+        .filter(|t| !(t.kind == TokenKind::Punct && t.text == "\\"))
+        .copied()
+        .collect();
+    while body.first().is_some_and(is_trivia) {
+        body.remove(0);
+    }
+    while body.last().is_some_and(is_trivia) {
+        body.pop();
+    }
+    if body.is_empty() {
+        return None;
+    }
+    Some((prefix, body))
+}
+
+/// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
+fn format_define_body(body: &[Token], prefix_col: usize) -> Option<String> {
+    if is_call_head(body, 0) && match_bracket(body, 1) == Some(body.len() - 1) {
+        return Some(structure(body, prefix_col));
+    }
+    if body.len() >= 2
+        && body[0].kind == TokenKind::Punct
+        && body[0].text == "("
+        && body[1].kind == TokenKind::Punct
+        && body[1].text == "{"
+    {
+        return format_stmt_expr(body, 0, 0).map(|(s, _)| s);
+    }
+    None
+}
+
+/// Format a `({ ... })` statement-expression: `({` opens the line, each statement on its own line
+/// at `base_level + 1`, `})` at `base_level`. Returns the block and the index past the `)`, or
+/// `None` if the braces are unbalanced or a statement nests a block or carries a comment.
+fn format_stmt_expr(toks: &[Token], open: usize, base_level: usize) -> Option<(String, usize)> {
+    let paren_close = match_bracket(toks, open)?;
+    let brace_close = match_brace(toks, open + 1)?;
+    let inner = &toks[open + 2..brace_close];
+    let unformattable = inner.iter().any(|t| {
+        (t.kind == TokenKind::Punct && t.text == "{")
+            || matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+    });
+    if unformattable {
+        return None;
+    }
+    let statements: Vec<String> =
+        split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
+            .iter()
+            .map(|s| render_segment(s))
+            .filter(|s| !s.is_empty())
+            .collect();
+    if statements.is_empty() {
+        return None;
+    }
+    let inner_indent = "\t".repeat(base_level + 1);
+    let close_indent = "\t".repeat(base_level);
+    let mut s = String::from("({");
+    for statement in &statements {
+        s.push('\n');
+        s.push_str(&inner_indent);
+        s.push_str(statement);
+        s.push(';');
+    }
+    s.push('\n');
+    s.push_str(&close_indent);
+    s.push_str("})");
+    Some((s, paren_close + 1))
 }
 
 /// Format the `{...}` opening at `open` (an initializer when `padded` is false, an enum body when
@@ -185,14 +325,15 @@ fn last_nonspace_char(out: &str) -> Option<char> {
 /// An identifier immediately followed by `(` (no intervening whitespace) — a call or the
 /// structurally identical declaration parameter list, excluding control/operator keywords.
 fn is_call_head(toks: &[Token], i: usize) -> bool {
-    toks[i].kind == TokenKind::Ident
+    toks.get(i).is_some_and(|t| t.kind == TokenKind::Ident)
         && !is_excluded_callee(toks[i].text)
         && toks
             .get(i + 1)
             .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(")
 }
 
-/// Keywords that take a `(` but are not calls whose arguments split on commas.
+/// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
+/// excluded: its associations are a comma list and explode exactly per §2.2.
 fn is_excluded_callee(name: &str) -> bool {
     matches!(
         name,
@@ -209,7 +350,6 @@ fn is_excluded_callee(name: &str) -> bool {
             | "_Alignas"
             | "typeof"
             | "typeof_unqual"
-            | "_Generic"
             | "defined"
             | "static_assert"
             | "_Static_assert"
@@ -233,6 +373,43 @@ fn enum_body_brace(toks: &[Token], i: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// The `(` that follows control keyword `i` after only trivia, or `None`.
+fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
+    for (j, t) in toks.iter().enumerate().skip(i + 1) {
+        match t.kind {
+            TokenKind::Whitespace | TokenKind::Newline => {}
+            TokenKind::Punct if t.text == "(" => return Some(j),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The next non-trivia token index at or after `from`.
+fn next_nontrivia(toks: &[Token], from: usize) -> Option<usize> {
+    (from..toks.len()).find(|&j| !is_trivia(&toks[j]))
+}
+
+/// The next non-trivia token index in `[from, end)`.
+fn next_nontrivia_in(toks: &[Token], from: usize, end: usize) -> Option<usize> {
+    (from..end).find(|&j| !is_trivia(&toks[j]))
+}
+
+/// One past the last token of the preprocessor directive starting at `start` (following `\` line
+/// continuations).
+fn directive_end(toks: &[Token], start: usize) -> usize {
+    let mut i = start;
+    while i < toks.len() {
+        let is_newline = toks[i].kind == TokenKind::Newline;
+        let continued = is_newline && i > 0 && toks[i - 1].text == "\\";
+        i += 1;
+        if is_newline && !continued {
+            break;
+        }
+    }
+    i
 }
 
 /// Index of the `)`/`]` matching the bracket at `open`, or `None` if unbalanced.
@@ -307,66 +484,6 @@ fn top_level_logical_op(inner: &[Token]) -> Option<&'static str> {
     has_and.then_some("&&")
 }
 
-/// The `(` that follows control keyword `i` after only trivia, or `None`.
-fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
-    for (j, t) in toks.iter().enumerate().skip(i + 1) {
-        match t.kind {
-            TokenKind::Whitespace | TokenKind::Newline => {}
-            TokenKind::Punct if t.text == "(" => return Some(j),
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
-/// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
-fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
-    if segments.is_empty() {
-        return Doc::text("()");
-    }
-    let last = segments.len() - 1;
-    let mut items = vec![Doc::SoftLine];
-    for (idx, seg) in segments.into_iter().enumerate() {
-        items.push(Doc::Text(seg));
-        if idx < last {
-            items.push(Doc::text(sep.to_owned()));
-            items.push(Doc::Line);
-        }
-    }
-    Doc::group(Doc::concat([
-        Doc::text("("),
-        Doc::nest(Doc::concat(items)),
-        Doc::SoftLine,
-        Doc::text(")"),
-    ]))
-}
-
-/// `for (init; cond; step)` — one clause per line when broken (§2.4).
-fn build_for_doc(inner: &[Token]) -> Doc {
-    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
-        .iter()
-        .map(|c| render_segment(c))
-        .collect();
-    build_clause_group(clauses, ";")
-}
-
-/// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
-/// trailing (§2.7); a condition with no such operator explodes as a single indented element.
-fn build_cond_doc(inner: &[Token]) -> Doc {
-    match top_level_logical_op(inner) {
-        Some(op) => {
-            let operands =
-                split_top_level(inner, |t| t.kind == TokenKind::Operator && t.text == op)
-                    .iter()
-                    .map(|o| render_segment(o))
-                    .collect();
-            build_clause_group(operands, &format!(" {op}"))
-        }
-        None => build_clause_group(vec![render_segment(inner)], ""),
-    }
-}
-
 fn is_trivia(t: &Token) -> bool {
     matches!(t.kind, TokenKind::Whitespace | TokenKind::Newline)
 }
@@ -430,9 +547,7 @@ fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     if elements.is_empty() {
         return Doc::text("{}");
     }
-    let pad = || {
-        if padded { Doc::Line } else { Doc::SoftLine }
-    };
+    let pad = || if padded { Doc::Line } else { Doc::SoftLine };
     let last = elements.len() - 1;
     let mut items = vec![pad()];
     for (idx, element) in elements.into_iter().enumerate() {
@@ -506,6 +621,54 @@ fn build_element_doc(toks: &[Token]) -> Doc {
     }
 }
 
+/// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
+/// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
+fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
+    if segments.is_empty() {
+        return Doc::text("()");
+    }
+    let last = segments.len() - 1;
+    let mut items = vec![Doc::SoftLine];
+    for (idx, seg) in segments.into_iter().enumerate() {
+        items.push(Doc::Text(seg));
+        if idx < last {
+            items.push(Doc::text(sep.to_owned()));
+            items.push(Doc::Line);
+        }
+    }
+    Doc::group(Doc::concat([
+        Doc::text("("),
+        Doc::nest(Doc::concat(items)),
+        Doc::SoftLine,
+        Doc::text(")"),
+    ]))
+}
+
+/// `for (init; cond; step)` — one clause per line when broken (§2.4).
+fn build_for_doc(inner: &[Token]) -> Doc {
+    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
+        .iter()
+        .map(|c| render_segment(c))
+        .collect();
+    build_clause_group(clauses, ";")
+}
+
+/// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
+/// trailing (§2.7); a condition with no such operator explodes as a single indented element.
+fn build_cond_doc(inner: &[Token]) -> Doc {
+    match top_level_logical_op(inner) {
+        Some(op) => {
+            let operands =
+                split_top_level(inner, |t| t.kind == TokenKind::Operator && t.text == op)
+                    .iter()
+                    .map(|o| render_segment(o))
+                    .collect();
+            build_clause_group(operands, &format!(" {op}"))
+        }
+        None => build_clause_group(vec![render_segment(inner)], ""),
+    }
+}
+
 /// Columns consumed by structural tokens trailing the construct on its line (e.g. `;` or ` {`), so
 /// the group leaves room for them. Comments are ignored so a trailing comment never forces a break.
 fn trailing_reserved(toks: &[Token], from: usize) -> usize {
@@ -523,19 +686,9 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
 /// Emit a preprocessor directive verbatim, following `\` line continuations; returns the index
 /// just past it.
 fn emit_directive(toks: &[Token], start: usize, out: &mut String, col: &mut usize) -> usize {
-    let mut i = start;
-    while i < toks.len() {
-        let t = toks[i];
-        emit_str(out, col, t.text);
-        if t.kind == TokenKind::Newline {
-            let continued = i > 0 && toks[i - 1].text == "\\";
-            i += 1;
-            if !continued {
-                return i;
-            }
-        } else {
-            i += 1;
-        }
+    let end = directive_end(toks, start);
+    for tok in &toks[start..end] {
+        emit_str(out, col, tok.text);
     }
-    i
+    end
 }

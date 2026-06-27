@@ -110,16 +110,6 @@ fn enum_magic_comma_explodes() {
 }
 
 #[test]
-fn statement_expression_is_not_an_initializer() {
-    let src = "int d = ({\n    int t = x;\n    t * 2;\n});\n";
-    assert_eq!(
-        format(src),
-        src,
-        "GNU statement-expression must pass through"
-    );
-}
-
-#[test]
 fn initializer_with_comment_passes_through() {
     let src = "int v[] = {\n    1, /* one */\n    2,\n};\n";
     assert_eq!(format(src), src, "comments in a list defer to M7");
@@ -164,6 +154,54 @@ fn for_header_is_not_treated_as_a_call() {
 fn compound_literal_initializer_explodes() {
     let src = "p = &(struct shape){.tag = R, .rect = {.w = 3, .h = 4},};\n";
     let expected = "p = &(struct shape){\n\t.tag = R,\n\t.rect = {.w = 3, .h = 4},\n};\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn function_like_macro_body_opens_on_define_line() {
+    let src = "#define DISPATCH_EVENT(handler, event) dispatch_incoming_event((handler), (event), read_monotonic_timestamp_ms(), current_execution_context_id())\n";
+    let expected = "#define DISPATCH_EVENT(handler, event) dispatch_incoming_event( \\\n\t(handler), \\\n\t(event), \\\n\tread_monotonic_timestamp_ms(), \\\n\tcurrent_execution_context_id() \\\n)\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn statement_expression_macro_blocks_with_continuations() {
+    let src =
+        "#define MAX(a, b) ({ typeof(a) _a = (a); typeof(b) _b = (b); _a > _b ? _a : _b; })\n";
+    let expected = "#define MAX(a, b) ({ \\\n\ttypeof(a) _a = (a); \\\n\ttypeof(b) _b = (b); \\\n\t_a > _b ? _a : _b; \\\n})\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn generic_macro_explodes_one_association_per_line() {
+    let src = "#define type_name(x) _Generic((x), int: \"int\", long: \"long\", float: \"float\", double: \"double\", default: \"other\")\n";
+    let expected = "#define type_name(x) _Generic( \\\n\t(x), \\\n\tint: \"int\", \\\n\tlong: \"long\", \\\n\tfloat: \"float\", \\\n\tdouble: \"double\", \\\n\tdefault: \"other\" \\\n)\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn short_object_macro_unchanged() {
+    assert_eq!(format("#define PI 3.14159\n"), "#define PI 3.14159\n");
+    assert_eq!(
+        format("#define MIN(a, b) ((a) < (b) ? (a) : (b))\n"),
+        "#define MIN(a, b) ((a) < (b) ? (a) : (b))\n"
+    );
+}
+
+#[test]
+fn do_while_macro_passes_through() {
+    let src = "#define SWAP(a, b) \\\n\tdo { \\\n\t\tint t = a; \\\n\t} while (0)\n";
+    assert_eq!(
+        format(src),
+        src,
+        "do/while macro bodies are not yet structured"
+    );
+}
+
+#[test]
+fn statement_expression_in_code_block_indents() {
+    let src = "int d = ({ int t = larger; t * 2; });\n";
+    let expected = "int d = ({\n\tint t = larger;\n\tt * 2;\n});\n";
     assert_eq!(format(src), expected);
 }
 
