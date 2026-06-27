@@ -206,6 +206,27 @@ fn statement_expression_in_code_block_indents() {
 }
 
 #[test]
+fn short_parenthesized_ternary_stays_flat() {
+    assert_eq!(format("x = (b != 0 ? b : 1);\n"), "x = (b != 0 ? b : 1);\n");
+}
+
+#[test]
+fn unparenthesized_ternary_is_left_alone() {
+    // §8.2: cfmt does not insert parens; a bare ternary passes through
+    assert_eq!(
+        format("acc = a > b ? a : a < b ? b : 0;\n"),
+        "acc = a > b ? a : a < b ? b : 0;\n"
+    );
+}
+
+#[test]
+fn long_ternary_chain_explodes_flat_with_trailing_colons() {
+    let src = "return (status_code == 0 ? \"ok\" : status_code == 1 ? \"busy\" : status_code == 2 ? \"error\" : status_code < 0 ? \"fault\" : \"unknown\");\n";
+    let expected = "return (\n\tstatus_code == 0 ? \"ok\" :\n\tstatus_code == 1 ? \"busy\" :\n\tstatus_code == 2 ? \"error\" :\n\tstatus_code < 0 ? \"fault\" :\n\t\"unknown\"\n);\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
 fn declaration_with_brace_explodes_and_keeps_brace_attached() {
     let src = "static int do_something_with_a_long_name(int first_parameter, int second_parameter, int third_parameter) {\n";
     let expected = "static int do_something_with_a_long_name(\n\tint first_parameter,\n\tint second_parameter,\n\tint third_parameter\n) {\n";

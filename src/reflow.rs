@@ -104,6 +104,23 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             }
         }
 
+        // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its
+        // own line with the colon trailing (§2.4). Parens are author-written (§8.2), not inserted.
+        if t.kind == TokenKind::Punct
+            && t.text == "("
+            && let Some(close) = match_bracket(toks, i)
+            && has_top_level_question(&toks[i + 1..close])
+            && !contains_comment(&toks[i + 1..close])
+        {
+            let doc = build_ternary_doc(&toks[i + 1..close]);
+            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let reserved = trailing_reserved(toks, close + 1);
+            let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
+            emit_str(&mut out, &mut col, &rendered);
+            i = close + 1;
+            continue;
+        }
+
         // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
         if in_init
             && t.kind == TokenKind::Punct
@@ -486,6 +503,35 @@ fn top_level_logical_op(inner: &[Token]) -> Option<&'static str> {
 
 fn is_trivia(t: &Token) -> bool {
     matches!(t.kind, TokenKind::Whitespace | TokenKind::Newline)
+}
+
+fn contains_comment(toks: &[Token]) -> bool {
+    toks.iter()
+        .any(|t| matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment))
+}
+
+/// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
+fn has_top_level_question(inner: &[Token]) -> bool {
+    let mut depth = 0i32;
+    for t in inner {
+        match t.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => depth -= 1,
+            "?" if depth == 0 && t.kind == TokenKind::Punct => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
+/// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
+fn build_ternary_doc(inner: &[Token]) -> Doc {
+    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":")
+        .iter()
+        .map(|s| render_segment(s))
+        .collect();
+    build_clause_group(segments, " :")
 }
 
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
