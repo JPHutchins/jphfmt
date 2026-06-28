@@ -26,17 +26,21 @@
 
 
 *** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=cfmt@0.1.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
        Fresh libc v0.2.186
        Fresh cfg-if v1.0.4
        Fresh unicode-ident v1.0.24
-       Fresh memchr v2.8.2
        Fresh fnv v1.0.7
        Fresh regex-syntax v0.8.11
-       Fresh autocfg v1.5.1
-       Fresh bitflags v2.13.0
+       Fresh memchr v2.8.2
        Fresh linux-raw-sys v0.12.1
-       Fresh fastrand v2.4.1
+       Fresh bitflags v2.13.0
+       Fresh autocfg v1.5.1
        Fresh once_cell v1.21.4
+       Fresh fastrand v2.4.1
        Fresh wait-timeout v0.2.1
        Fresh bit-vec v0.8.0
        Fresh quick-error v1.2.3
@@ -44,29 +48,29 @@
        Fresh aho-corasick v1.1.4
        Fresh bit-set v0.8.0
        Fresh proc-macro2 v1.0.106
-       Fresh getrandom v0.3.4
        Fresh regex-automata v0.4.14
-       Fresh getrandom v0.4.3
+       Fresh getrandom v0.3.4
        Fresh zerocopy v0.8.52
        Fresh rustix v1.1.4
+       Fresh getrandom v0.4.3
        Fresh quote v1.0.46
        Fresh rand_core v0.9.5
        Fresh tempfile v3.27.0
        Fresh ppv-lite86 v0.2.21
        Fresh num-traits v0.2.19
        Fresh syn v2.0.118
-       Fresh rand_chacha v0.9.0
-       Fresh rusty-fork v0.3.1
-       Fresh rand v0.9.4
        Fresh rand_xorshift v0.4.0
+       Fresh rusty-fork v0.3.1
+       Fresh rand_chacha v0.9.0
+       Fresh rand v0.9.4
        Fresh logos-codegen v0.16.1
        Fresh proptest v1.11.0
        Fresh logos-derive v0.16.1
        Fresh logos v0.16.1
-       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-9qvovd.tmp): the file `src/reflow.rs` has changed (1782619402.316287818s, 2s after last build at 1782619400.964841909s)
-   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-9qvovd.tmp)
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-RkOWWx.tmp): the file `src/reflow.rs` has changed (1782619867.655148756s, 1s after last build at 1782619866.808348492s)
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-RkOWWx.tmp)
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
 error[E0369]: cannot multiply `String` by `&str`
    --> src/reflow.rs:521:9
     |
@@ -86,14 +90,14 @@ note: `String` does not implement `Mul<&str>`
     | ^^^^^^^^^^^^^^^^^ `String` is defined in another crate
 
 For more information about this error, try `rustc --explain E0369`.
-error: could not compile `cfmt` (lib) due to 1 previous error
-
-Caused by:
-  process didn't exit successfully: `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta` (exit status: 1)
-warning: build failed, waiting for other jobs to finish...
 error: could not compile `cfmt` (lib test) due to 1 previous error
 
 Caused by:
-  process didn't exit successfully: `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib` (exit status: 1)
+  process didn't exit successfully: `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `cfmt` (lib) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-RkOWWx.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta` (exit status: 1)
 
 *** result: Failure(101)
