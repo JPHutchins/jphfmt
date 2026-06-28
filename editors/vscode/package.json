@@ -3,8 +3,12 @@
   "displayName": "cfmt — opinionated C formatter",
   "description": "Format C with cfmt: one uniform bracket rule, no column alignment.",
   "version": "0.1.0",
-  "publisher": "intercreate",
+  "publisher": "JPHutchins",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JPHutchins/cfmt.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
