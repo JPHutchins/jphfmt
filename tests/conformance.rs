@@ -62,6 +62,28 @@ fn showcase_content_is_preserved() {
     );
 }
 
+const MESSY: &str = include_str!("messy.c");
+
+#[test]
+fn messy_real_world_input_is_idempotent_and_safe() {
+    let once = format(MESSY);
+    assert_eq!(format(&once), once, "must be idempotent on messy input");
+    assert_eq!(
+        significant(&once),
+        significant(MESSY),
+        "must not change any token on messy input"
+    );
+    for (n, line) in once.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix(' ') {
+            assert!(
+                rest.trim_start().starts_with('*'),
+                "messy line {} is space-indented code: {line:?}",
+                n + 1
+            );
+        }
+    }
+}
+
 #[test]
 fn golden_has_no_space_indented_code() {
     // §7 cardinal rule: zero column alignment. Only sacred comment bodies (` * …`) may lead

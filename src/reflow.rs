@@ -15,10 +15,17 @@
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind, tokenize};
 
-const WIDTH: usize = 100;
+/// Default column limit (§8.5).
+pub const DEFAULT_WIDTH: usize = 100;
 
 pub fn format(src: &str) -> String {
-    retab(&structure(&tokenize(src), 0))
+    format_with_width(src, DEFAULT_WIDTH)
+}
+
+/// Format with an explicit column limit. Tab width for the overflow measurement is fixed at
+/// [`TAB_WIDTH`] (§8.5 default).
+pub fn format_with_width(src: &str, width: usize) -> String {
+    retab(&structure(&tokenize(src), 0, width))
 }
 
 /// Normalize every line's leading indentation to hard tabs (§2.1): re-lex the output and rewrite
@@ -52,7 +59,7 @@ fn retab(s: &str) -> String {
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
 /// formatting a fragment such as a macro body that follows a prefix).
-fn structure(toks: &[Token], start_col: usize) -> String {
+fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
     let mut out = String::new();
     let mut col = start_col;
     let mut i = 0usize;
@@ -65,7 +72,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             let is_define = next_nontrivia(toks, i + 1)
                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
             i = if is_define {
-                emit_define(toks, i, &mut out, &mut col)
+                emit_define(toks, i, &mut out, &mut col, width)
             } else {
                 emit_directive(toks, i, &mut out, &mut col)
             };
@@ -89,7 +96,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             };
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
+            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
             i = close + 1;
             continue;
@@ -102,7 +109,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             for tok in &toks[i..brace] {
                 emit_str(&mut out, &mut col, tok.text);
             }
-            i = emit_brace(toks, brace, true, &mut out, &mut col);
+            i = emit_brace(toks, brace, true, &mut out, &mut col, width);
             continue;
         }
 
@@ -114,7 +121,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             let doc = build_call_doc(&toks[i + 2..close]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
+            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
             i = close + 1;
             continue;
@@ -146,7 +153,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             let doc = build_ternary_doc(&toks[i + 1..close]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, WIDTH.saturating_sub(reserved), col, base_level);
+            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
             i = close + 1;
             continue;
@@ -159,7 +166,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             && last_nonspace_char(&out) != Some('(')
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, &mut out, &mut col);
+            i = emit_brace(toks, i, false, &mut out, &mut col, width);
             continue;
         }
 
@@ -181,10 +188,16 @@ fn structure(toks: &[Token], start_col: usize) -> String {
 /// Format a `#define`: a function-like macro whose body is a single call/`_Generic` or a
 /// statement-expression is laid out with the body opening on the `#define` line and `\`
 /// continuations one space after each line; any other body is emitted verbatim.
-fn emit_define(toks: &[Token], start: usize, out: &mut String, col: &mut usize) -> usize {
+fn emit_define(
+    toks: &[Token],
+    start: usize,
+    out: &mut String,
+    col: &mut usize,
+    width: usize,
+) -> usize {
     let end = directive_end(toks, start);
     if let Some((prefix, body)) = split_define(toks, start, end)
-        && let Some(body_str) = format_define_body(&body, display_width(&prefix))
+        && let Some(body_str) = format_define_body(&body, display_width(&prefix), width)
     {
         let full = format!("{prefix}{body_str}");
         let continued = full.split('\n').collect::<Vec<_>>().join(" \\\n");
@@ -236,12 +249,12 @@ fn split_define<'src>(
 }
 
 /// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
-fn format_define_body(body: &[Token], prefix_col: usize) -> Option<String> {
+fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     if contains_comment(body) {
         return None;
     }
     if is_call_head(body, 0) && match_bracket(body, 1) == Some(body.len() - 1) {
-        return Some(structure(body, prefix_col));
+        return Some(structure(body, prefix_col, width));
     }
     if body.len() >= 2
         && body[0].kind == TokenKind::Punct
@@ -301,6 +314,7 @@ fn emit_brace(
     padded: bool,
     out: &mut String,
     col: &mut usize,
+    width: usize,
 ) -> usize {
     let Some(close) = match_brace(toks, open) else {
         emit_str(out, col, toks[open].text);
@@ -320,7 +334,7 @@ fn emit_brace(
     let base_level = current_line_indent_cols(out) / TAB_WIDTH;
     let reserved = trailing_reserved(toks, close + 1);
     let doc = build_brace_doc(inner, padded);
-    let rendered = render(&doc, WIDTH.saturating_sub(reserved), *col, base_level);
+    let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
     emit_str(out, col, &rendered);
     close + 1
 }

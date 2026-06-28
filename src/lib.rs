@@ -9,7 +9,4 @@ pub mod doc;
 pub mod lexer;
 mod reflow;
 
-/// Format C source. Idempotent: `format(format(src)) == format(src)` for every input.
-pub fn format(src: &str) -> String {
-    reflow::format(src)
-}
+pub use reflow::{DEFAULT_WIDTH, format, format_with_width};
