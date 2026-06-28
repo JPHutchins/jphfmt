@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
-use cfmt::{DEFAULT_WIDTH, format_with_width};
+use jphfmt::{DEFAULT_WIDTH, format_with_width};
 
 /// What to do with each input's formatted result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ enum Mode {
     Version,
 }
 
-const USAGE: &str = "usage: cfmt [-i | --check] [--width N] [FILE...]";
+const USAGE: &str = "usage: jphfmt [-i | --check] [--width N] [FILE...]";
 
 struct Args {
     mode: Mode,
@@ -95,19 +95,19 @@ fn main() -> ExitCode {
     let args = match parse_args(&argv) {
         Ok(args) => args,
         Err(msg) => {
-            eprintln!("cfmt: {msg}");
+            eprintln!("jphfmt: {msg}");
             return ExitCode::FAILURE;
         }
     };
     if args.mode == Mode::Version {
-        println!("cfmt {}", env!("CARGO_PKG_VERSION"));
+        println!("jphfmt {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
     match run(&args) {
         Ok(changed) if args.mode == Mode::Check && changed => ExitCode::FAILURE,
         Ok(_) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("cfmt: {err}");
+            eprintln!("jphfmt: {err}");
             ExitCode::FAILURE
         }
     }

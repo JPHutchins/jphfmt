@@ -10,14 +10,14 @@ import {
   type InitializeResult,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
-import { formatSource, type FormatResult } from "./cfmt";
+import { formatSource, type FormatResult } from "./jphfmt";
 
 interface Settings {
   readonly path: string;
   readonly width: number;
 }
 
-const DEFAULT_SETTINGS: Settings = { path: "cfmt", width: 100 };
+const DEFAULT_SETTINGS: Settings = { path: "jphfmt", width: 100 };
 
 /// Read settings from a client's untyped `initializationOptions`, falling back per field.
 const readSettings = (options: unknown): Settings => {
@@ -39,8 +39,8 @@ let settings: Settings = DEFAULT_SETTINGS;
 const wholeDocument = (doc: TextDocument): Range =>
   Range.create(doc.positionAt(0), doc.positionAt(doc.getText().length));
 
-/// One full-document edit when cfmt changed the text; nothing when unchanged; an error toast
-/// when cfmt failed.
+/// One full-document edit when jphfmt changed the text; nothing when unchanged; an error toast
+/// when jphfmt failed.
 const toEdits = (doc: TextDocument, result: FormatResult): readonly TextEdit[] => {
   switch (result.kind) {
     case "formatted":
@@ -48,7 +48,7 @@ const toEdits = (doc: TextDocument, result: FormatResult): readonly TextEdit[] =
         ? []
         : [TextEdit.replace(wholeDocument(doc), result.text)];
     case "failed":
-      connection.window.showErrorMessage(`cfmt: ${result.message}`);
+      connection.window.showErrorMessage(`jphfmt: ${result.message}`);
       return [];
   }
 };

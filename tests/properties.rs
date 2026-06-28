@@ -1,7 +1,7 @@
 //! Property tests: the lexer is total and the pipeline is safe, so these must hold for *any*
 //! input, not just valid C. proptest also catches panics, so this doubles as a fuzz harness.
 
-use cfmt::{format, format_with_width};
+use jphfmt::{format, format_with_width};
 use proptest::prelude::*;
 
 /// Strings of C-relevant characters (brackets, operators, comments, strings, whitespace), which

@@ -1,6 +1,6 @@
-# cfmt — an opinionated C formatter
+# jphfmt — an opinionated C formatter
 
-`cfmt` is a zero-config, opinionated C code formatter: gofmt/black philosophy
+`jphfmt` is a zero-config, opinionated C code formatter: gofmt/black philosophy
 applied to C. It enforces **one uniform layout rule** and performs **no column
 alignment, ever** — the thing clang-format hardwires and cannot turn off for
 multi-line ternaries, bare parenthesized expressions, `for` clauses, and
@@ -26,22 +26,22 @@ the list to explode (`{}` lists only). Binary operators and the ternary `:`
 ## Usage
 
 ```sh
-cfmt < in.c > out.c         # stdin → stdout
-cfmt -i file.c …            # rewrite files in place
-cfmt --check file.c …       # exit non-zero if any file is not formatted
-cfmt --width 80 < in.c      # column limit (default 100); tab width is 4
+jphfmt < in.c > out.c         # stdin → stdout
+jphfmt -i file.c …            # rewrite files in place
+jphfmt --check file.c …       # exit non-zero if any file is not formatted
+jphfmt --width 80 < in.c      # column limit (default 100); tab width is 4
 ```
 
-Format an entire tree (cfmt accepts multiple files; use shell globs to discover them):
+Format an entire tree (jphfmt accepts multiple files; use shell globs to discover them):
 
 ```sh
-cfmt -i **/*.c **/*.h       # bash (shopt -s globstar) / zsh
-cfmt -i **/*.{c,h}          # same, brace expansion
-find . -name '*.[ch]' -exec cfmt -i {} +  # POSIX sh
-git ls-files '*.c' '*.h' | xargs cfmt --check  # CI: only tracked files
+jphfmt -i **/*.c **/*.h       # bash (shopt -s globstar) / zsh
+jphfmt -i **/*.{c,h}          # same, brace expansion
+find . -name '*.[ch]' -exec jphfmt -i {} +  # POSIX sh
+git ls-files '*.c' '*.h' | xargs jphfmt --check  # CI: only tracked files
 ```
 
-Input that `cfmt` cannot confidently structure is emitted verbatim, so it never
+Input that `jphfmt` cannot confidently structure is emitted verbatim, so it never
 corrupts code: formatting only ever changes whitespace, magic-comma explosion,
 and `\` line continuations — never any other token.
 
@@ -66,8 +66,8 @@ source → lexer (logos, lossless: comments/whitespace are trivia tokens)
 
 `cargo test` (or `camas test`) runs the conformance suite:
 
-- **Golden acceptance** — `tests/golden.c` is `cfmt`'s fixpoint on
-  `showcase.c` with its `// clang-format off|on` guards removed; `cfmt` must
+- **Golden acceptance** — `tests/golden.c` is `jphfmt`'s fixpoint on
+  `showcase.c` with its `// clang-format off|on` guards removed; `jphfmt` must
   reproduce the hand-laid forms those guards protected.
 - Per-construct unit tests for every milestone.
 - Idempotency, semantic preservation (whitespace/comma/continuation-only), and

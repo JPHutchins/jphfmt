@@ -1,4 +1,4 @@
-//! The structuring pass. It reformats the constructs cfmt understands with the §2.2 rule and
+//! The structuring pass. It reformats the constructs jphfmt understands with the §2.2 rule and
 //! emits everything else byte-for-byte:
 //!
 //! * function-call / declaration argument lists (M2), detected by the house rule that a callee
@@ -21,7 +21,7 @@ pub const DEFAULT_WIDTH: usize = 100;
 /// Format C source with the default column limit ([`DEFAULT_WIDTH`]). Idempotent.
 ///
 /// ```
-/// assert_eq!(cfmt::format("int*p = f(a,b);\n"), "int * p = f(a, b);\n");
+/// assert_eq!(jphfmt::format("int*p = f(a,b);\n"), "int * p = f(a, b);\n");
 /// ```
 pub fn format(src: &str) -> String {
     format_with_width(src, DEFAULT_WIDTH)
@@ -31,7 +31,7 @@ pub fn format(src: &str) -> String {
 /// [`TAB_WIDTH`] (§8.5 default).
 ///
 /// ```
-/// let narrow = cfmt::format_with_width("call(aaa, bbb, ccc);\n", 10);
+/// let narrow = jphfmt::format_with_width("call(aaa, bbb, ccc);\n", 10);
 /// assert_eq!(narrow, "call(\n\taaa,\n\tbbb,\n\tccc\n);\n");
 /// ```
 pub fn format_with_width(src: &str, width: usize) -> String {

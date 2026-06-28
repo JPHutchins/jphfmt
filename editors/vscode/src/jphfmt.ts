@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 
-/// The outcome of running cfmt over a buffer: a tagged union so callers match exhaustively.
+/// The outcome of running jphfmt over a buffer: a tagged union so callers match exhaustively.
 export type FormatResult =
   | { readonly kind: "formatted"; readonly text: string }
   | { readonly kind: "failed"; readonly message: string };
 
-/// Run `cfmt --width <width>` over `source` on stdin and resolve with its result. Never rejects:
+/// Run `jphfmt --width <width>` over `source` on stdin and resolve with its result. Never rejects:
 /// a spawn error or non-zero exit is surfaced as a `failed` variant.
 export const formatSource = (
   binary: string,
@@ -33,7 +33,7 @@ export const formatSource = (
               kind: "failed",
               message:
                 Buffer.concat(stderr).toString("utf8").trim() ||
-                `cfmt exited with code ${String(code ?? "unknown")}`,
+                `jphfmt exited with code ${String(code ?? "unknown")}`,
             },
       );
     });

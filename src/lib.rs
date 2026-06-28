@@ -1,4 +1,4 @@
-//! cfmt — a zero-config, opinionated C formatter.
+//! jphfmt — a zero-config, opinionated C formatter.
 //!
 //! Pipeline: a lossless [`lexer`] feeds a pass that builds Wadler [`doc`] documents for the
 //! constructs it understands and renders them with the fits-or-fully-break rule (§2.2), emitting

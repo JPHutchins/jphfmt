@@ -11,7 +11,7 @@ let client: LanguageClient | undefined;
 
 export const activate = (context: ExtensionContext): void => {
   const module = context.asAbsolutePath(join("out", "server.js"));
-  const config = workspace.getConfiguration("cfmt");
+  const config = workspace.getConfiguration("jphfmt");
   const serverOptions: ServerOptions = {
     run: { module, transport: TransportKind.ipc },
     debug: { module, transport: TransportKind.ipc },
@@ -22,11 +22,11 @@ export const activate = (context: ExtensionContext): void => {
       { scheme: "file", language: "cpp", pattern: "**/*.h" },
     ],
     initializationOptions: {
-      path: config.get<string>("path", "cfmt"),
+      path: config.get<string>("path", "jphfmt"),
       width: config.get<number>("width", 100),
     },
   };
-  client = new LanguageClient("cfmt", "cfmt", serverOptions, clientOptions);
+  client = new LanguageClient("jphfmt", "jphfmt", serverOptions, clientOptions);
   void client.start();
 };
 

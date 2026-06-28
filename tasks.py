@@ -27,7 +27,7 @@ def rust_paths(changed: tuple[str, ...]) -> tuple[str, ...]:
 	return tuple(c for c in changed if c != VSCODE_DIR and not c.startswith(VSCODE_DIR + "/"))
 
 
-# ---- Rust: the cfmt crate (scoped to everything outside editors/vscode) ----
+# ---- Rust: the jphfmt crate (scoped to everything outside editors/vscode) ----
 rust_fmt = Task("cargo fmt --all", mutates=True, paths=rust_paths)
 rust_fmt_check = Task("cargo fmt --all -- --check", paths=rust_paths)
 clippy = Task("cargo clippy --all-targets --all-features -- -D warnings", paths=rust_paths)

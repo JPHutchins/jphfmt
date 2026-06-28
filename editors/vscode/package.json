@@ -1,13 +1,13 @@
 {
-  "name": "cfmt",
-  "displayName": "cfmt — opinionated C formatter",
-  "description": "Format C with cfmt: one uniform bracket rule, no column alignment.",
+  "name": "jphfmt",
+  "displayName": "jphfmt — opinionated C formatter",
+  "description": "Format C with jphfmt: one uniform bracket rule, no column alignment.",
   "version": "0.1.0",
   "publisher": "JPHutchins",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JPHutchins/cfmt.git"
+    "url": "https://github.com/JPHutchins/jphfmt.git"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -22,17 +22,17 @@
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
-      "title": "cfmt",
+      "title": "jphfmt",
       "properties": {
-        "cfmt.path": {
+        "jphfmt.path": {
           "type": "string",
-          "default": "cfmt",
-          "description": "Path to the cfmt executable."
+          "default": "jphfmt",
+          "description": "Path to the jphfmt executable."
         },
-        "cfmt.width": {
+        "jphfmt.width": {
           "type": "number",
           "default": 100,
-          "description": "Column limit passed to cfmt --width."
+          "description": "Column limit passed to jphfmt --width."
         }
       }
     }

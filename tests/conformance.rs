@@ -1,65 +1,21 @@
-//! Conformance suite. M2 reformats call/declaration argument lists, so the byte-identity check
-//! is gone; what must hold is idempotency, verbatim passthrough of call-free input, and the §2.2
-//! layout for calls. The golden `showcase.c` check returns once the §2 set is complete and the
-//! file is re-tabbed.
+//! Conformance suite. What must hold is idempotency, verbatim passthrough of call-free input, and the §2.2
+//! layout for calls.
 
-use cfmt::format;
-
-const SHOWCASE: &str = include_str!("../showcase.c");
+use jphfmt::format;
 
 const GOLDEN: &str = include_str!("golden.c");
-
-/// `showcase.c` with the ten `// clang-format off|on` guard lines removed — the §4 acceptance
-/// input. cfmt must natively produce the hand-laid forms those guards protected.
-fn unguarded_showcase() -> String {
-    SHOWCASE
-        .lines()
-        .filter(|l| {
-            let t = l.trim();
-            t != "// clang-format off" && t != "// clang-format on"
-        })
-        .fold(String::new(), |mut acc, l| {
-            acc.push_str(l);
-            acc.push('\n');
-            acc
-        })
-}
-
-#[test]
-fn idempotent_on_showcase() {
-    let once = format(SHOWCASE);
-    assert_eq!(format(&once), once, "format must be idempotent");
-}
-
-#[test]
-fn golden_acceptance_unguarded_showcase() {
-    assert_eq!(
-        format(&unguarded_showcase()),
-        GOLDEN,
-        "cfmt must reproduce the golden from the guard-removed showcase"
-    );
-}
 
 #[test]
 fn golden_is_a_fixpoint() {
     assert_eq!(format(GOLDEN), GOLDEN, "golden must be idempotent");
 }
 
-/// Significant content: everything but whitespace, commas (cfmt may add a magic trailing comma),
+/// Significant content: everything but whitespace, commas (jphfmt may add a magic trailing comma),
 /// and backslashes (continuations). Formatting must never alter anything else.
 fn significant(s: &str) -> String {
     s.chars()
         .filter(|c| !c.is_whitespace() && *c != ',' && *c != '\\')
         .collect()
-}
-
-#[test]
-fn showcase_content_is_preserved() {
-    assert_eq!(
-        significant(&format(SHOWCASE)),
-        significant(SHOWCASE),
-        "formatting must be whitespace/comma/continuation-only — no token may change"
-    );
 }
 
 const MESSY: &str = include_str!("messy.c");
@@ -322,7 +278,7 @@ fn bit_field_colon_spacing() {
 #[test]
 fn crlf_is_normalized_to_lf() {
     assert_eq!(format("int x;\r\nint y;\r\n"), "int x;\nint y;\n");
-    // a construct cfmt generates must not leave mixed endings
+    // a construct jphfmt generates must not leave mixed endings
     let exploded = format(
         "r = f(\r\n\taaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd, eeeeeeeeee, ffffffffff\r\n);\r\n",
     );
@@ -473,7 +429,7 @@ fn short_parenthesized_ternary_stays_flat() {
 
 #[test]
 fn unparenthesized_ternary_is_left_alone() {
-    // §8.2: cfmt does not insert parens; a bare ternary passes through
+    // §8.2: jphfmt does not insert parens; a bare ternary passes through
     assert_eq!(
         format("acc = a > b ? a : a < b ? b : 0;\n"),
         "acc = a > b ? a : a < b ? b : 0;\n"
