@@ -41,7 +41,11 @@ clippy_fix = Task(
 	paths=rust_paths,
 )
 test = Parallel(
-    Task("cargo +{RUST} test --all-features", paths=rust_paths),
+    Task(
+        "cargo +{RUST} test --all-features",
+        env={"CARGO_TARGET_DIR": str(Path("target") / "{RUST}")},
+        paths=rust_paths,
+    ),
     matrix={"RUST": ("stable", MSRV)},
     name="test",
 )
