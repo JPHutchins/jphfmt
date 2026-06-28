@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace Doc::nest -> Doc with Default::default()
+@@ -41,17 +41,17 @@
+     }
+     pub fn concat(items: impl IntoIterator<Item = Doc>) -> Doc {
+         Doc::Concat(items.into_iter().collect())
+     }
+     pub fn group(inner: Doc) -> Doc {
+         Doc::Group(Box::new(inner))
+     }
+     pub fn nest(inner: Doc) -> Doc {
+-        Doc::Nest(Box::new(inner))
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum Mode {
+     Flat,
+     Break,
+ }

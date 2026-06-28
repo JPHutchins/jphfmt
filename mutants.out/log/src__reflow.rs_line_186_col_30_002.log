@@ -1,0 +1,526 @@
+
+*** src/reflow.rs:186:30: replace > with >= in space_pointers
+
+*** mutation diff:
+--- src/reflow.rs
++++ replace > with >= in space_pointers
+@@ -178,17 +178,17 @@
+ 
+ /// Middle-align pointer `*` (§2.5: `T * p`, `T ** p`). A `*` cluster is a pointer only when
+ /// preceded by a type keyword/qualifier or a `struct`/`union`/`enum` tag; multiply, deref,
+ /// function pointers `(*f)`, and bare-typedef pointers are left as is (§6).
+ fn space_pointers(pieces: &mut [Piece]) {
+     let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
+     let mut j = 0;
+     while j < pieces.len() {
+-        let prev_is_type = j > 0
++        let prev_is_type = j >= /* ~ changed by cargo-mutants ~ */ 0
+             && (is_type_context(pieces[j - 1].1.text)
+                 || (pieces[j - 1].1.kind == TokenKind::Ident
+                     && j >= 2
+                     && matches!(pieces[j - 2].1.text, "struct" | "union" | "enum")));
+         if is_star(&pieces[j].1) && prev_is_type && same_line(&pieces[j].0) {
+             let mut k = j;
+             while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
+                 k += 1;
+
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=cfmt@0.1.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh regex-syntax v0.8.11
+       Fresh fnv v1.0.7
+       Fresh memchr v2.8.2
+       Fresh aho-corasick v1.1.4
+       Fresh quote v1.0.46
+       Fresh syn v2.0.118
+       Fresh getrandom v0.3.4
+       Fresh regex-automata v0.4.14
+       Fresh logos-codegen v0.16.1
+       Fresh rand_core v0.9.5
+       Fresh linux-raw-sys v0.12.1
+       Fresh bitflags v2.13.0
+       Fresh autocfg v1.5.1
+       Fresh rustix v1.1.4
+       Fresh logos-derive v0.16.1
+       Fresh zerocopy v0.8.52
+       Fresh getrandom v0.4.3
+       Fresh fastrand v2.4.1
+       Fresh once_cell v1.21.4
+       Fresh tempfile v3.27.0
+       Fresh ppv-lite86 v0.2.21
+       Fresh logos v0.16.1
+       Fresh wait-timeout v0.2.1
+       Fresh quick-error v1.2.3
+       Fresh bit-vec v0.8.0
+       Fresh rusty-fork v0.3.1
+       Fresh bit-set v0.8.0
+       Fresh num-traits v0.2.19
+       Fresh rand_chacha v0.9.0
+       Fresh rand v0.9.4
+       Fresh rand_xorshift v0.4.0
+       Fresh unarray v0.1.4
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-VApY9p.tmp): the file `src/reflow.rs` has changed (1782619300.203378666s, 1s after last build at 1782619299.381316573s)
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-VApY9p.tmp)
+       Fresh proptest v1.11.0
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+warning: comparison is useless due to type limits
+   --> src/reflow.rs:186:28
+    |
+186 |         let prev_is_type = j >= /* ~ changed by cargo-mutants ~ */ 0
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `cfmt` (lib) generated 1 warning
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+warning: `cfmt` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+  Executable `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+  Executable `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+  Executable `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+  Executable `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/properties-cb1d676eedf1110f`
+
+*** result: Success
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=cfmt@0.1.0
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh regex-syntax v0.8.11
+       Fresh memchr v2.8.2
+       Fresh fnv v1.0.7
+       Fresh bitflags v2.13.0
+       Fresh linux-raw-sys v0.12.1
+       Fresh autocfg v1.5.1
+       Fresh fastrand v2.4.1
+       Fresh once_cell v1.21.4
+       Fresh wait-timeout v0.2.1
+       Fresh bit-vec v0.8.0
+       Fresh quick-error v1.2.3
+       Fresh unarray v0.1.4
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh proc-macro2 v1.0.106
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.3.4
+       Fresh rustix v1.1.4
+       Fresh getrandom v0.4.3
+       Fresh zerocopy v0.8.52
+       Fresh quote v1.0.46
+       Fresh rand_core v0.9.5
+       Fresh tempfile v3.27.0
+       Fresh ppv-lite86 v0.2.21
+       Fresh num-traits v0.2.19
+       Fresh syn v2.0.118
+       Fresh rand v0.9.4
+       Fresh rusty-fork v0.3.1
+       Fresh rand_xorshift v0.4.0
+       Fresh rand_chacha v0.9.0
+       Fresh logos-codegen v0.16.1
+       Fresh proptest v1.11.0
+       Fresh logos-derive v0.16.1
+       Fresh logos v0.16.1
+warning: comparison is useless due to type limits
+   --> src/reflow.rs:186:28
+    |
+186 |         let prev_is_type = j >= /* ~ changed by cargo-mutants ~ */ 0
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `cfmt` (lib) generated 1 warning
+warning: `cfmt` (lib test) generated 1 warning (1 duplicate)
+       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-VApY9p.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+
+running 4 tests
+test doc::tests::breaks_indent_relative_to_base_level ... ok
+test doc::tests::flat_when_it_fits ... ok
+test doc::tests::fully_breaks_when_it_overflows ... ok
+test doc::tests::trailing_reserved_width_forces_a_break ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-c-format-VApY9p.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+
+running 51 tests
+test bit_field_colon_spacing ... FAILED
+test ambiguous_star_is_left_alone ... FAILED
+test blank_line_runs_collapse_to_one_everywhere ... FAILED
+test block_comment_internals_are_untouched ... FAILED
+test brace_attaches_for_functions_and_control ... FAILED
+test call_with_line_comment_passes_through ... FAILED
+test casts_get_a_trailing_space ... FAILED
+test collapses_a_call_that_now_fits ... FAILED
+test collapses_initializer_without_trailing_comma ... FAILED
+test compound_literal_arg_explodes_its_initializer_when_long ... FAILED
+test compound_literal_brace_stays_tight ... FAILED
+test compound_literal_initializer_explodes ... FAILED
+test compound_literals_in_function_args ... FAILED
+test control_headers_are_not_calls ... FAILED
+test control_keyword_gets_one_space_before_paren ... FAILED
+test crlf_is_normalized_to_lf ... FAILED
+test declaration_with_brace_explodes_and_keeps_brace_attached ... FAILED
+test do_while_macro_passes_through ... FAILED
+test enum_body_is_padded_when_flat ... FAILED
+test enum_magic_comma_explodes ... FAILED
+test exactly_one_trailing_newline ... FAILED
+test for_header_is_not_treated_as_a_call ... FAILED
+test function_like_macro_body_opens_on_define_line ... FAILED
+test function_pointer_star_is_not_spaced ... FAILED
+test generic_macro_explodes_one_association_per_line ... FAILED
+test golden_has_no_space_indented_code ... ok
+test indentation_is_normalized_to_tabs ... FAILED
+test initializer_with_comment_keeps_structure_but_retabs ... FAILED
+test long_call_explodes_one_per_line ... FAILED
+test long_for_header_explodes_one_clause_per_line ... FAILED
+test long_if_condition_explodes_with_trailing_operators ... FAILED
+test long_ternary_chain_explodes_flat_with_trailing_colons ... FAILED
+test nested_paren_comma_is_not_a_split_point ... FAILED
+test nested_initializer_collapses_independently ... FAILED
+test short_initializer_stays_flat_and_tight ... FAILED
+test idempotent_on_showcase ... FAILED
+test short_parenthesized_ternary_stays_flat ... FAILED
+test golden_is_a_fixpoint ... FAILED
+test messy_real_world_input_is_idempotent_and_safe ... FAILED
+test statement_expression_in_code_block_indents ... FAILED
+test statement_expression_macro_blocks_with_continuations ... FAILED
+test magic_trailing_comma_forces_explosion_with_trailing_comma ... FAILED
+test struct_tag_pointer_is_middle_spaced ... FAILED
+test short_control_headers_unchanged ... FAILED
+test short_object_macro_unchanged ... FAILED
+test unparenthesized_ternary_is_left_alone ... FAILED
+test pointers_are_middle_spaced_after_type_keywords ... FAILED
+test passthrough_for_call_free_input ... FAILED
+test golden_acceptance_unguarded_showcase ... FAILED
+test short_call_stays_flat ... FAILED
+test showcase_content_is_preserved ... FAILED
+
+failures:
+
+---- bit_field_colon_spacing stdout ----
+
+thread 'bit_field_colon_spacing' (484679) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- ambiguous_star_is_left_alone stdout ----
+
+thread 'ambiguous_star_is_left_alone' (484678) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- blank_line_runs_collapse_to_one_everywhere stdout ----
+
+thread 'blank_line_runs_collapse_to_one_everywhere' (484680) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- block_comment_internals_are_untouched stdout ----
+
+thread 'block_comment_internals_are_untouched' (484681) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- brace_attaches_for_functions_and_control stdout ----
+
+thread 'brace_attaches_for_functions_and_control' (484682) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- call_with_line_comment_passes_through stdout ----
+
+thread 'call_with_line_comment_passes_through' (484683) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- casts_get_a_trailing_space stdout ----
+
+thread 'casts_get_a_trailing_space' (484684) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- collapses_a_call_that_now_fits stdout ----
+
+thread 'collapses_a_call_that_now_fits' (484685) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- collapses_initializer_without_trailing_comma stdout ----
+
+thread 'collapses_initializer_without_trailing_comma' (484686) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- compound_literal_arg_explodes_its_initializer_when_long stdout ----
+
+thread 'compound_literal_arg_explodes_its_initializer_when_long' (484687) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- compound_literal_brace_stays_tight stdout ----
+
+thread 'compound_literal_brace_stays_tight' (484688) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- compound_literal_initializer_explodes stdout ----
+
+thread 'compound_literal_initializer_explodes' (484689) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- compound_literals_in_function_args stdout ----
+
+thread 'compound_literals_in_function_args' (484690) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- control_headers_are_not_calls stdout ----
+
+thread 'control_headers_are_not_calls' (484691) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- control_keyword_gets_one_space_before_paren stdout ----
+
+thread 'control_keyword_gets_one_space_before_paren' (484692) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- crlf_is_normalized_to_lf stdout ----
+
+thread 'crlf_is_normalized_to_lf' (484693) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- declaration_with_brace_explodes_and_keeps_brace_attached stdout ----
+
+thread 'declaration_with_brace_explodes_and_keeps_brace_attached' (484694) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- do_while_macro_passes_through stdout ----
+
+thread 'do_while_macro_passes_through' (484695) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- enum_body_is_padded_when_flat stdout ----
+
+thread 'enum_body_is_padded_when_flat' (484696) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- enum_magic_comma_explodes stdout ----
+
+thread 'enum_magic_comma_explodes' (484697) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- exactly_one_trailing_newline stdout ----
+
+thread 'exactly_one_trailing_newline' (484698) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- for_header_is_not_treated_as_a_call stdout ----
+
+thread 'for_header_is_not_treated_as_a_call' (484699) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- function_like_macro_body_opens_on_define_line stdout ----
+
+thread 'function_like_macro_body_opens_on_define_line' (484700) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- function_pointer_star_is_not_spaced stdout ----
+
+thread 'function_pointer_star_is_not_spaced' (484701) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- generic_macro_explodes_one_association_per_line stdout ----
+
+thread 'generic_macro_explodes_one_association_per_line' (484702) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- indentation_is_normalized_to_tabs stdout ----
+
+thread 'indentation_is_normalized_to_tabs' (484707) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- initializer_with_comment_keeps_structure_but_retabs stdout ----
+
+thread 'initializer_with_comment_keeps_structure_but_retabs' (484708) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- long_call_explodes_one_per_line stdout ----
+
+thread 'long_call_explodes_one_per_line' (484709) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- long_for_header_explodes_one_clause_per_line stdout ----
+
+thread 'long_for_header_explodes_one_clause_per_line' (484710) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- long_if_condition_explodes_with_trailing_operators stdout ----
+
+thread 'long_if_condition_explodes_with_trailing_operators' (484711) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- long_ternary_chain_explodes_flat_with_trailing_colons stdout ----
+
+thread 'long_ternary_chain_explodes_flat_with_trailing_colons' (484712) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- nested_paren_comma_is_not_a_split_point stdout ----
+
+thread 'nested_paren_comma_is_not_a_split_point' (484716) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- nested_initializer_collapses_independently stdout ----
+
+thread 'nested_initializer_collapses_independently' (484715) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- short_initializer_stays_flat_and_tight stdout ----
+
+thread 'short_initializer_stays_flat_and_tight' (484721) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- idempotent_on_showcase stdout ----
+
+thread 'idempotent_on_showcase' (484706) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- short_parenthesized_ternary_stays_flat stdout ----
+
+thread 'short_parenthesized_ternary_stays_flat' (484723) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- golden_is_a_fixpoint stdout ----
+
+thread 'golden_is_a_fixpoint' (484705) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- messy_real_world_input_is_idempotent_and_safe stdout ----
+
+thread 'messy_real_world_input_is_idempotent_and_safe' (484714) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- statement_expression_in_code_block_indents stdout ----
+
+thread 'statement_expression_in_code_block_indents' (484725) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- statement_expression_macro_blocks_with_continuations stdout ----
+
+thread 'statement_expression_macro_blocks_with_continuations' (484726) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- magic_trailing_comma_forces_explosion_with_trailing_comma stdout ----
+
+thread 'magic_trailing_comma_forces_explosion_with_trailing_comma' (484713) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- struct_tag_pointer_is_middle_spaced stdout ----
+
+thread 'struct_tag_pointer_is_middle_spaced' (484727) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- short_control_headers_unchanged stdout ----
+
+thread 'short_control_headers_unchanged' (484720) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- short_object_macro_unchanged stdout ----
+
+thread 'short_object_macro_unchanged' (484722) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- unparenthesized_ternary_is_left_alone stdout ----
+
+thread 'unparenthesized_ternary_is_left_alone' (484728) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- pointers_are_middle_spaced_after_type_keywords stdout ----
+
+thread 'pointers_are_middle_spaced_after_type_keywords' (484718) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- passthrough_for_call_free_input stdout ----
+
+thread 'passthrough_for_call_free_input' (484717) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- golden_acceptance_unguarded_showcase stdout ----
+
+thread 'golden_acceptance_unguarded_showcase' (484703) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- short_call_stays_flat stdout ----
+
+thread 'short_call_stays_flat' (484719) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+---- showcase_content_is_preserved stdout ----
+
+thread 'showcase_content_is_preserved' (484724) panicked at src/reflow.rs:187:40:
+attempt to subtract with overflow
+
+
+failures:
+    ambiguous_star_is_left_alone
+    bit_field_colon_spacing
+    blank_line_runs_collapse_to_one_everywhere
+    block_comment_internals_are_untouched
+    brace_attaches_for_functions_and_control
+    call_with_line_comment_passes_through
+    casts_get_a_trailing_space
+    collapses_a_call_that_now_fits
+    collapses_initializer_without_trailing_comma
+    compound_literal_arg_explodes_its_initializer_when_long
+    compound_literal_brace_stays_tight
+    compound_literal_initializer_explodes
+    compound_literals_in_function_args
+    control_headers_are_not_calls
+    control_keyword_gets_one_space_before_paren
+    crlf_is_normalized_to_lf
+    declaration_with_brace_explodes_and_keeps_brace_attached
+    do_while_macro_passes_through
+    enum_body_is_padded_when_flat
+    enum_magic_comma_explodes
+    exactly_one_trailing_newline
+    for_header_is_not_treated_as_a_call
+    function_like_macro_body_opens_on_define_line
+    function_pointer_star_is_not_spaced
+    generic_macro_explodes_one_association_per_line
+    golden_acceptance_unguarded_showcase
+    golden_is_a_fixpoint
+    idempotent_on_showcase
+    indentation_is_normalized_to_tabs
+    initializer_with_comment_keeps_structure_but_retabs
+    long_call_explodes_one_per_line
+    long_for_header_explodes_one_clause_per_line
+    long_if_condition_explodes_with_trailing_operators
+    long_ternary_chain_explodes_flat_with_trailing_colons
+    magic_trailing_comma_forces_explosion_with_trailing_comma
+    messy_real_world_input_is_idempotent_and_safe
+    nested_initializer_collapses_independently
+    nested_paren_comma_is_not_a_split_point
+    passthrough_for_call_free_input
+    pointers_are_middle_spaced_after_type_keywords
+    short_call_stays_flat
+    short_control_headers_unchanged
+    short_initializer_stays_flat_and_tight
+    short_object_macro_unchanged
+    short_parenthesized_ternary_stays_flat
+    showcase_content_is_preserved
+    statement_expression_in_code_block_indents
+    statement_expression_macro_blocks_with_continuations
+    struct_tag_pointer_is_middle_spaced
+    unparenthesized_ternary_is_left_alone
+
+test result: FAILED. 1 passed; 50 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p cfmt --test conformance`
+
+*** result: Failure(101)

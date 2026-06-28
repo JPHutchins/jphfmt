@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace += with -= in render
+@@ -74,17 +74,17 @@
+                     stack.push((level, mode, child));
+                 }
+             }
+             Doc::Nest(inner) => stack.push((level + 1, mode, inner)),
+             Doc::Line | Doc::SoftLine => match mode {
+                 Mode::Flat => {
+                     if matches!(d, Doc::Line) {
+                         out.push(' ');
+-                        col += 1;
++                        col -= /* ~ changed by cargo-mutants ~ */ 1;
+                     }
+                 }
+                 Mode::Break => {
+                     out.push('\n');
+                     for _ in 0..level {
+                         out.push('\t');
+                     }
+                     col = level * TAB_WIDTH;

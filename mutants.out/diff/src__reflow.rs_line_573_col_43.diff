@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in format_stmt_expr
+@@ -565,17 +565,17 @@
+     let unformattable = inner.iter().any(|t| {
+         (t.kind == TokenKind::Punct && t.text == "{")
+             || matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+     });
+     if unformattable || !is_balanced(inner) {
+         return None;
+     }
+     let statements: Vec<String> =
+-        split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
++        split_top_level(inner, |t| t.kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Punct && t.text == ";")
+             .iter()
+             .map(|s| render_segment(s))
+             .filter(|s| !s.is_empty())
+             .collect();
+     if statements.is_empty() {
+         return None;
+     }
+     let inner_indent = "\t".repeat(base_level + 1);

@@ -1,0 +1,38 @@
+--- src/reflow.rs
++++ replace is_type_context -> bool with true
+@@ -80,34 +80,17 @@
+     out.push_str(&line);
+     out
+ }
+ 
+ /// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
+ /// not a multiply. User typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p` pass through
+ /// (§2.5 pointers, §6 "prefer passthrough when ambiguous").
+ fn is_type_context(text: &str) -> bool {
+-    matches!(
+-        text,
+-        "void"
+-            | "char"
+-            | "short"
+-            | "int"
+-            | "long"
+-            | "float"
+-            | "double"
+-            | "signed"
+-            | "unsigned"
+-            | "_Bool"
+-            | "bool"
+-            | "const"
+-            | "volatile"
+-            | "_Atomic"
+-            | "restrict"
+-    )
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// A significant token paired with the whitespace that preceded it.
+ type Piece<'src> = (String, Token<'src>);
+ 
+ fn same_line(gap: &str) -> bool {
+     !gap.contains('\n')
+ }

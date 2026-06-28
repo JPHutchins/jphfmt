@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace -= with += in fits
+@@ -116,17 +116,17 @@
+     let mut rest_idx = rest.len();
+     loop {
+         let (mode, d) = if let Some(item) = work.pop() {
+             item
+         } else {
+             if rest_idx == 0 {
+                 return true;
+             }
+-            rest_idx -= 1;
++            rest_idx += /* ~ changed by cargo-mutants ~ */ 1;
+             let (_, mode, d) = rest[rest_idx];
+             (mode, d)
+         };
+         match d {
+             Doc::Text(s) => {
+                 let w = display_width(s);
+                 if w > remaining {
+                     return false;

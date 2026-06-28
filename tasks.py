@@ -51,9 +51,18 @@ eslint = Task("npm run lint", cwd=VSCODE, paths=VSCODE_DIR)
 eslint_fix = Task("npm run lint:fix", cwd=VSCODE, mutates=True, paths=VSCODE_DIR)
 ts_typecheck = Task("npm run typecheck", cwd=VSCODE, paths=VSCODE_DIR)
 ts_build = Task("npm run build", cwd=VSCODE, paths=VSCODE_DIR)
+knip = Task("npx --yes knip", cwd=VSCODE, paths=VSCODE_DIR)
 
-# Every read-only validation, maximally parallel across both ecosystems. Compile-validation is
-# `cargo test`/`doc` for Rust and `tsc --noEmit` (typecheck) for TypeScript.
+# ---- Cross-cutting checkers ----
+# typos runs reproducibly via uvx (no install) and covers the whole tree.
+typos = Task("uvx typos", paths=".")
+# These need their cargo tool installed, so they live outside `check` and get their own CI jobs:
+# cargo-audit (RUSTSEC advisories) and cargo-mutants (mutation testing — proves the tests bite).
+audit = Task("cargo audit", paths=rust_paths)
+mutants = Task("cargo mutants", paths=rust_paths)
+
+# Every read-only validation that runs without a per-tool install, maximally parallel across both
+# ecosystems. Compile-validation is `cargo test`/`doc` for Rust and `tsc --noEmit` for TypeScript.
 check = Parallel(
 	rust_fmt_check,
 	clippy,
@@ -62,6 +71,8 @@ check = Parallel(
 	ts_fmt_check,
 	eslint,
 	ts_typecheck,
+	knip,
+	typos,
 )
 
 # Every deterministic fixer. The two ecosystems run in parallel; each is ordered internally

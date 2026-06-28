@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete ! in format_stmt_expr
+@@ -568,17 +568,17 @@
+     });
+     if unformattable || !is_balanced(inner) {
+         return None;
+     }
+     let statements: Vec<String> =
+         split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
+             .iter()
+             .map(|s| render_segment(s))
+-            .filter(|s| !s.is_empty())
++            .filter(|s|  /* ~ changed by cargo-mutants ~ */s.is_empty())
+             .collect();
+     if statements.is_empty() {
+         return None;
+     }
+     let inner_indent = "\t".repeat(base_level + 1);
+     let close_indent = "\t".repeat(base_level);
+     let mut s = String::from("({");
+     for statement in &statements {

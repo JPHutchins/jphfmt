@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace < with <= in structure
+@@ -345,17 +345,17 @@
+ /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
+ /// formatting a fragment such as a macro body that follows a prefix).
+ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
+     let mut out = String::new();
+     let mut col = start_col;
+     let mut i = 0usize;
+     let mut paren_depth = 0i32;
+     let mut in_init = false;
+-    while i < toks.len() {
++    while i <= /* ~ changed by cargo-mutants ~ */ toks.len() {
+         let t = toks[i];
+ 
+         if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(&out) {
+             let is_define = next_nontrivia(toks, i + 1)
+                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
+             i = if is_define {
+                 emit_define(toks, i, &mut out, &mut col, width)
+             } else {

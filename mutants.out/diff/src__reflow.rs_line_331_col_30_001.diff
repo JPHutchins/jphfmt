@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace / with * in retab
+@@ -323,17 +323,17 @@
+         let pure_indent =
+             t.kind == TokenKind::Whitespace && t.text.bytes().all(|b| b == b' ' || b == b'\t');
+         if at_line_start && pure_indent {
+             let cols: usize = t
+                 .text
+                 .chars()
+                 .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
+                 .sum();
+-            for _ in 0..cols / TAB_WIDTH {
++            for _ in 0..cols * /* ~ changed by cargo-mutants ~ */ TAB_WIDTH {
+                 out.push('\t');
+             }
+             for _ in 0..cols % TAB_WIDTH {
+                 out.push(' ');
+             }
+         } else {
+             out.push_str(t.text);
+         }

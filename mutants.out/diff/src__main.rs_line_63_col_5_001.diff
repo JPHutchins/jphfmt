@@ -1,0 +1,23 @@
+--- src/main.rs
++++ replace read_stdin -> std::io::Result<String> with Ok("xyzzy".into())
+@@ -55,19 +55,17 @@
+     }
+     if mode == Mode::InPlace && files.is_empty() {
+         return Err("-i requires at least one FILE".to_owned());
+     }
+     Ok(Args { mode, width, files })
+ }
+ 
+ fn read_stdin() -> std::io::Result<String> {
+-    let mut buf = String::new();
+-    std::io::stdin().read_to_string(&mut buf)?;
+-    Ok(buf)
++    Ok("xyzzy".into()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Returns `true` if any input differed from its formatted form.
+ fn run(args: &Args) -> std::io::Result<bool> {
+     if args.files.is_empty() {
+         let src = read_stdin()?;
+         let out = format_with_width(&src, args.width);
+         if args.mode != Mode::Check {

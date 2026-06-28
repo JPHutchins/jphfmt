@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace += with -= in render
+@@ -96,17 +96,17 @@
+                 } else {
+                     Mode::Break
+                 };
+                 stack.push((level, mode, inner));
+             }
+             Doc::IfBreak { broken, flat } => {
+                 let s = if mode == Mode::Break { broken } else { flat };
+                 out.push_str(s);
+-                col += display_width(s);
++                col -= /* ~ changed by cargo-mutants ~ */ display_width(s);
+             }
+             Doc::ForceBreak(inner) => stack.push((level, Mode::Break, inner)),
+         }
+     }
+     out
+ }
+ 
+ /// Does `doc`, laid out flat, fit in `remaining` columns before the line would break — including

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in structure
+@@ -412,17 +412,17 @@
+             emit_str(&mut out, &mut col, &rendered);
+             i = close + 1;
+             continue;
+         }
+ 
+         // GNU statement-expression `({ ... })` — block-indent its statements.
+         if t.kind == TokenKind::Punct
+             && t.text == "("
+-            && toks
++            || /* ~ changed by cargo-mutants ~ */ toks
+                 .get(i + 1)
+                 .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
+         {
+             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+             if let Some((block, next)) = format_stmt_expr(toks, i, base_level) {
+                 emit_str(&mut out, &mut col, &block);
+                 i = next;
+                 continue;

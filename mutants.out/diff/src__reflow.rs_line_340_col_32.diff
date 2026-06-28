@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in retab
+@@ -332,17 +332,17 @@
+                 out.push('\t');
+             }
+             for _ in 0..cols % TAB_WIDTH {
+                 out.push(' ');
+             }
+         } else {
+             out.push_str(t.text);
+         }
+-        at_line_start = t.kind == TokenKind::Newline;
++        at_line_start = t.kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Newline;
+     }
+     out
+ }
+ 
+ /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
+ /// formatting a fragment such as a macro body that follows a prefix).
+ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
+     let mut out = String::new();

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in split_define
+@@ -516,17 +516,17 @@
+     };
+     let prefix: String = toks[start..prefix_end]
+         .iter()
+         .map(|t| t.text)
+         .collect::<String>()
+         + " ";
+     let mut body: Vec<Token> = toks[prefix_end..end]
+         .iter()
+-        .filter(|t| !(t.kind == TokenKind::Punct && t.text == "\\"))
++        .filter(|t| !(t.kind == TokenKind::Punct && t.text != /* ~ changed by cargo-mutants ~ */ "\\"))
+         .copied()
+         .collect();
+     while body.first().is_some_and(is_trivia) {
+         body.remove(0);
+     }
+     while body.last().is_some_and(is_trivia) {
+         body.pop();
+     }

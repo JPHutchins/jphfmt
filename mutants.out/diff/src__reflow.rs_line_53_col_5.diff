@@ -1,0 +1,49 @@
+--- src/reflow.rs
++++ replace collapse_blank_lines -> String with String::new()
+@@ -45,45 +45,17 @@
+         width,
+     ))))
+ }
+ 
+ /// Collapse runs of two or more blank lines to a single blank line everywhere (file scope and
+ /// function bodies). Never inserts a blank line, so grouped declarations and adjacent closers are
+ /// preserved. Comment interiors are untouched — their newlines live inside one comment token.
+ fn collapse_blank_lines(s: &str) -> String {
+-    let mut out = String::with_capacity(s.len());
+-    let mut line = String::new();
+-    let mut has_content = false;
+-    let mut blank_run = 0usize;
+-    for t in tokenize(s) {
+-        match t.kind {
+-            TokenKind::Newline => {
+-                if has_content {
+-                    out.push_str(&line);
+-                    out.push('\n');
+-                    blank_run = 0;
+-                } else {
+-                    blank_run += 1;
+-                    if blank_run <= 1 {
+-                        out.push('\n');
+-                    }
+-                }
+-                line.clear();
+-                has_content = false;
+-            }
+-            TokenKind::Whitespace => line.push_str(t.text),
+-            _ => {
+-                line.push_str(t.text);
+-                has_content = true;
+-            }
+-        }
+-    }
+-    out.push_str(&line);
+-    out
++    String::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
+ /// not a multiply. User typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p` pass through
+ /// (§2.5 pointers, §6 "prefer passthrough when ambiguous").
+ fn is_type_context(text: &str) -> bool {
+     matches!(
+         text,

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace || with && in retab
+@@ -316,17 +316,17 @@
+ /// Normalize every line's leading indentation to hard tabs (§2.1): re-lex the output and rewrite
+ /// each line-leading whitespace run as `cols / TAB_WIDTH` tabs plus the remainder in spaces.
+ /// Comment- and string-safe — their bodies are single tokens, never line-leading whitespace.
+ fn retab(s: &str) -> String {
+     let mut out = String::with_capacity(s.len());
+     let mut at_line_start = true;
+     for t in tokenize(s) {
+         let pure_indent =
+-            t.kind == TokenKind::Whitespace && t.text.bytes().all(|b| b == b' ' || b == b'\t');
++            t.kind == TokenKind::Whitespace && t.text.bytes().all(|b| b == b' ' && /* ~ changed by cargo-mutants ~ */ b == b'\t');
+         if at_line_start && pure_indent {
+             let cols: usize = t
+                 .text
+                 .chars()
+                 .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
+                 .sum();
+             for _ in 0..cols / TAB_WIDTH {
+                 out.push('\t');

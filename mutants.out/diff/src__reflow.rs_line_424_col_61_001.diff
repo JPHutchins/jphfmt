@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace / with * in structure
+@@ -416,17 +416,17 @@
+ 
+         // GNU statement-expression `({ ... })` — block-indent its statements.
+         if t.kind == TokenKind::Punct
+             && t.text == "("
+             && toks
+                 .get(i + 1)
+                 .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
+         {
+-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
++            let base_level = current_line_indent_cols(&out) * /* ~ changed by cargo-mutants ~ */ TAB_WIDTH;
+             if let Some((block, next)) = format_stmt_expr(toks, i, base_level) {
+                 emit_str(&mut out, &mut col, &block);
+                 i = next;
+                 continue;
+             }
+         }
+ 
+         // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its

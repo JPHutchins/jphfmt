@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with - in structure
+@@ -349,17 +349,17 @@
+     let mut col = start_col;
+     let mut i = 0usize;
+     let mut paren_depth = 0i32;
+     let mut in_init = false;
+     while i < toks.len() {
+         let t = toks[i];
+ 
+         if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(&out) {
+-            let is_define = next_nontrivia(toks, i + 1)
++            let is_define = next_nontrivia(toks, i - /* ~ changed by cargo-mutants ~ */ 1)
+                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
+             i = if is_define {
+                 emit_define(toks, i, &mut out, &mut col, width)
+             } else {
+                 emit_directive(toks, i, &mut out, &mut col)
+             };
+             continue;
+         }

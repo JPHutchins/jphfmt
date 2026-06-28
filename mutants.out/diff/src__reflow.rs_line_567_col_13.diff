@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace || with && in format_stmt_expr
+@@ -559,17 +559,17 @@
+ /// at `base_level + 1`, `})` at `base_level`. Returns the block and the index past the `)`, or
+ /// `None` if the braces are unbalanced or a statement nests a block or carries a comment.
+ fn format_stmt_expr(toks: &[Token], open: usize, base_level: usize) -> Option<(String, usize)> {
+     let paren_close = match_bracket(toks, open)?;
+     let brace_close = match_brace(toks, open + 1)?;
+     let inner = &toks[open + 2..brace_close];
+     let unformattable = inner.iter().any(|t| {
+         (t.kind == TokenKind::Punct && t.text == "{")
+-            || matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
++            && /* ~ changed by cargo-mutants ~ */ matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+     });
+     if unformattable || !is_balanced(inner) {
+         return None;
+     }
+     let statements: Vec<String> =
+         split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
+             .iter()
+             .map(|s| render_segment(s))

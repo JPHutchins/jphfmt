@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in current_line_is_blank
+@@ -647,17 +647,17 @@
+     }
+ }
+ 
+ /// True when nothing but whitespace has been emitted on the current output line — so a `#` here
+ /// begins a preprocessor directive.
+ fn current_line_is_blank(out: &str) -> bool {
+     out.rsplit('\n')
+         .next()
+-        .is_none_or(|line| line.chars().all(|c| c == ' ' || c == '\t'))
++        .is_none_or(|line| line.chars().all(|c| c != /* ~ changed by cargo-mutants ~ */ ' ' || c == '\t'))
+ }
+ 
+ /// Indentation, in columns, of the current output line.
+ fn current_line_indent_cols(out: &str) -> usize {
+     let line = out.rsplit('\n').next().unwrap_or(out);
+     let mut cols = 0;
+     for ch in line.chars() {
+         match ch {

@@ -1,0 +1,21 @@
+--- src/main.rs
++++ replace != with == in parse_args
+@@ -42,17 +42,17 @@
+                     .map_err(|_| format!("invalid --width: {value}"))?;
+             }
+             flag if flag.starts_with("--width=") => {
+                 let value = &flag["--width=".len()..];
+                 width = value
+                     .parse()
+                     .map_err(|_| format!("invalid --width: {value}"))?;
+             }
+-            flag if flag.starts_with('-') && flag != "-" => {
++            flag if flag.starts_with('-') && flag == /* ~ changed by cargo-mutants ~ */ "-" => {
+                 return Err(format!("unknown flag: {flag}"));
+             }
+             _ => files.push(arg.clone()),
+         }
+     }
+     if mode == Mode::InPlace && files.is_empty() {
+         return Err("-i requires at least one FILE".to_owned());
+     }

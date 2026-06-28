@@ -1,0 +1,20 @@
+--- src/main.rs
++++ replace match guard args.mode == Mode::Check && changed with false in main
+@@ -99,16 +99,16 @@
+             return ExitCode::FAILURE;
+         }
+     };
+     if args.mode == Mode::Version {
+         println!("cfmt {}", env!("CARGO_PKG_VERSION"));
+         return ExitCode::SUCCESS;
+     }
+     match run(&args) {
+-        Ok(changed) if args.mode == Mode::Check && changed => ExitCode::FAILURE,
++        Ok(changed) if false /* ~ changed by cargo-mutants ~ */ => ExitCode::FAILURE,
+         Ok(_) => ExitCode::SUCCESS,
+         Err(err) => {
+             eprintln!("cfmt: {err}");
+             ExitCode::FAILURE
+         }
+     }
+ }

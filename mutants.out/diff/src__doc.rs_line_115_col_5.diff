@@ -1,0 +1,73 @@
+--- src/doc.rs
++++ replace fits -> bool with true
+@@ -107,69 +107,17 @@
+         }
+     }
+     out
+ }
+ 
+ /// Does `doc`, laid out flat, fit in `remaining` columns before the line would break — including
+ /// the work still queued in `rest` up to the first newline?
+ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
+-    let mut work: Vec<(Mode, &Doc)> = vec![(Mode::Flat, doc)];
+-    let mut rest_idx = rest.len();
+-    loop {
+-        let (mode, d) = if let Some(item) = work.pop() {
+-            item
+-        } else {
+-            if rest_idx == 0 {
+-                return true;
+-            }
+-            rest_idx -= 1;
+-            let (_, mode, d) = rest[rest_idx];
+-            (mode, d)
+-        };
+-        match d {
+-            Doc::Text(s) => {
+-                let w = display_width(s);
+-                if w > remaining {
+-                    return false;
+-                }
+-                remaining -= w;
+-            }
+-            Doc::Concat(items) => {
+-                for child in items.iter().rev() {
+-                    work.push((mode, child));
+-                }
+-            }
+-            Doc::Nest(inner) => work.push((mode, inner)),
+-            Doc::Group(inner) => work.push((Mode::Flat, inner)),
+-            Doc::Line => match mode {
+-                Mode::Flat => {
+-                    if remaining == 0 {
+-                        return false;
+-                    }
+-                    remaining -= 1;
+-                }
+-                Mode::Break => return true,
+-            },
+-            Doc::SoftLine => {
+-                if mode == Mode::Break {
+-                    return true;
+-                }
+-            }
+-            Doc::IfBreak { broken, flat } => {
+-                let s = if mode == Mode::Break { broken } else { flat };
+-                let w = display_width(s);
+-                if w > remaining {
+-                    return false;
+-                }
+-                remaining -= w;
+-            }
+-            Doc::ForceBreak(_) => return false,
+-        }
+-    }
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+     /// A bracketed, comma-separated group shaped like §2.2: flat `(a, b)` or one-per-line broken.
+     fn bracket_group(args: &[&str]) -> Doc {

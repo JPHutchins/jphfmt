@@ -1,0 +1,300 @@
+
+*** src/reflow.rs:403:56: replace + with - in structure
+
+*** mutation diff:
+--- src/reflow.rs
++++ replace + with - in structure
+@@ -395,17 +395,17 @@
+             for tok in &toks[i..brace] {
+                 emit_str(&mut out, &mut col, tok.text);
+             }
+             i = emit_brace(toks, brace, true, &mut out, &mut col, width);
+             continue;
+         }
+ 
+         if is_call_head(toks, i)
+-            && let Some(close) = match_bracket(toks, i + 1)
++            && let Some(close) = match_bracket(toks, i - /* ~ changed by cargo-mutants ~ */ 1)
+             && !contains_comment(&toks[i + 2..close])
+             && is_balanced(&toks[i + 2..close])
+         {
+             emit_str(&mut out, &mut col, t.text);
+             let doc = build_call_doc(&toks[i + 2..close]);
+             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+             let reserved = trailing_reserved(toks, close + 1);
+             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=cfmt@0.1.0
+    Blocking waiting for file lock on package cache
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh memchr v2.8.2
+       Fresh fnv v1.0.7
+       Fresh regex-syntax v0.8.11
+       Fresh linux-raw-sys v0.12.1
+       Fresh bitflags v2.13.0
+       Fresh autocfg v1.5.1
+       Fresh fastrand v2.4.1
+       Fresh once_cell v1.21.4
+       Fresh wait-timeout v0.2.1
+       Fresh bit-vec v0.8.0
+       Fresh quick-error v1.2.3
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh unarray v0.1.4
+       Fresh proc-macro2 v1.0.106
+       Fresh getrandom v0.3.4
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.4.3
+       Fresh rustix v1.1.4
+       Fresh zerocopy v0.8.52
+       Fresh quote v1.0.46
+       Fresh rand_core v0.9.5
+       Fresh tempfile v3.27.0
+       Fresh ppv-lite86 v0.2.21
+       Fresh num-traits v0.2.19
+       Fresh syn v2.0.118
+       Fresh rusty-fork v0.3.1
+       Fresh rand v0.9.4
+       Fresh rand_chacha v0.9.0
+       Fresh rand_xorshift v0.4.0
+       Fresh logos-codegen v0.16.1
+       Fresh proptest v1.11.0
+       Fresh logos-derive v0.16.1
+       Fresh logos v0.16.1
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp): couldn't read metadata for file `target/debug/deps/libcfmt-99f850ce46e24a52.rlib`
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp)
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s
+  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/properties-cb1d676eedf1110f`
+
+*** result: Success
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=cfmt@0.1.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh regex-syntax v0.8.11
+       Fresh memchr v2.8.2
+       Fresh fnv v1.0.7
+       Fresh bitflags v2.13.0
+       Fresh linux-raw-sys v0.12.1
+       Fresh autocfg v1.5.1
+       Fresh once_cell v1.21.4
+       Fresh fastrand v2.4.1
+       Fresh wait-timeout v0.2.1
+       Fresh quick-error v1.2.3
+       Fresh bit-vec v0.8.0
+       Fresh unarray v0.1.4
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh proc-macro2 v1.0.106
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.3.4
+       Fresh getrandom v0.4.3
+       Fresh rustix v1.1.4
+       Fresh zerocopy v0.8.52
+       Fresh quote v1.0.46
+       Fresh rand_core v0.9.5
+       Fresh ppv-lite86 v0.2.21
+       Fresh tempfile v3.27.0
+       Fresh num-traits v0.2.19
+       Fresh syn v2.0.118
+       Fresh rand_xorshift v0.4.0
+       Fresh rand v0.9.4
+       Fresh rand_chacha v0.9.0
+       Fresh rusty-fork v0.3.1
+       Fresh logos-codegen v0.16.1
+       Fresh proptest v1.11.0
+       Fresh logos-derive v0.16.1
+       Fresh logos v0.16.1
+       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+
+running 4 tests
+test doc::tests::breaks_indent_relative_to_base_level ... ok
+test doc::tests::flat_when_it_fits ... ok
+test doc::tests::fully_breaks_when_it_overflows ... ok
+test doc::tests::trailing_reserved_width_forces_a_break ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+
+running 51 tests
+test ambiguous_star_is_left_alone ... ok
+test bit_field_colon_spacing ... ok
+test block_comment_internals_are_untouched ... ok
+test blank_line_runs_collapse_to_one_everywhere ... ok
+test brace_attaches_for_functions_and_control ... ok
+test call_with_line_comment_passes_through ... FAILED
+test collapses_a_call_that_now_fits ... FAILED
+test casts_get_a_trailing_space ... ok
+test collapses_initializer_without_trailing_comma ... ok
+test compound_literal_arg_explodes_its_initializer_when_long ... FAILED
+test compound_literal_brace_stays_tight ... ok
+test compound_literal_initializer_explodes ... ok
+test compound_literals_in_function_args ... FAILED
+test control_headers_are_not_calls ... ok
+test control_keyword_gets_one_space_before_paren ... ok
+test crlf_is_normalized_to_lf ... ok
+test declaration_with_brace_explodes_and_keeps_brace_attached ... FAILED
+test do_while_macro_passes_through ... ok
+test enum_body_is_padded_when_flat ... ok
+test exactly_one_trailing_newline ... ok
+test enum_magic_comma_explodes ... ok
+test for_header_is_not_treated_as_a_call ... ok
+test function_like_macro_body_opens_on_define_line ... FAILED
+test function_pointer_star_is_not_spaced ... ok
+test generic_macro_explodes_one_association_per_line ... FAILED
+test golden_has_no_space_indented_code ... ok
+test indentation_is_normalized_to_tabs ... ok
+test initializer_with_comment_keeps_structure_but_retabs ... ok
+test long_call_explodes_one_per_line ... FAILED
+test long_for_header_explodes_one_clause_per_line ... ok
+test long_if_condition_explodes_with_trailing_operators ... ok
+test long_ternary_chain_explodes_flat_with_trailing_colons ... ok
+test nested_initializer_collapses_independently ... ok
+test messy_real_world_input_is_idempotent_and_safe ... FAILED
+test short_call_stays_flat ... FAILED
+test nested_paren_comma_is_not_a_split_point ... FAILED
+test short_control_headers_unchanged ... ok
+test short_initializer_stays_flat_and_tight ... ok
+test struct_tag_pointer_is_middle_spaced ... ok
+test statement_expression_in_code_block_indents ... ok
+test unparenthesized_ternary_is_left_alone ... ok
+test passthrough_for_call_free_input ... ok
+test golden_is_a_fixpoint ... FAILED
+test pointers_are_middle_spaced_after_type_keywords ... ok
+test golden_acceptance_unguarded_showcase ... FAILED
+test short_object_macro_unchanged ... ok
+test magic_trailing_comma_forces_explosion_with_trailing_comma ... ok
+test statement_expression_macro_blocks_with_continuations ... ok
+test short_parenthesized_ternary_stays_flat ... ok
+test idempotent_on_showcase ... FAILED
+test showcase_content_is_preserved ... FAILED
+
+failures:
+
+---- call_with_line_comment_passes_through stdout ----
+
+thread 'call_with_line_comment_passes_through' (561814) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- collapses_a_call_that_now_fits stdout ----
+
+thread 'collapses_a_call_that_now_fits' (561816) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- compound_literal_arg_explodes_its_initializer_when_long stdout ----
+
+thread 'compound_literal_arg_explodes_its_initializer_when_long' (561818) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- compound_literals_in_function_args stdout ----
+
+thread 'compound_literals_in_function_args' (561821) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- declaration_with_brace_explodes_and_keeps_brace_attached stdout ----
+
+thread 'declaration_with_brace_explodes_and_keeps_brace_attached' (561825) panicked at tests/conformance.rs:479:5:
+assertion `left == right` failed
+  left: "static int do_something_with_a_long_name(int first_parameter, int second_parameter, int third_parameter) {\n"
+ right: "static int do_something_with_a_long_name(\n\tint first_parameter,\n\tint second_parameter,\n\tint third_parameter\n) {\n"
+
+---- function_like_macro_body_opens_on_define_line stdout ----
+
+thread 'function_like_macro_body_opens_on_define_line' (561836) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- generic_macro_explodes_one_association_per_line stdout ----
+
+thread 'generic_macro_explodes_one_association_per_line' (561838) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- long_call_explodes_one_per_line stdout ----
+
+thread 'long_call_explodes_one_per_line' (561846) panicked at tests/conformance.rs:132:5:
+assertion `left == right` failed
+  left: "result = some_function_with_a_fairly_long_name(first_argument_value, second_argument_value, third_argument_value);\n"
+ right: "result = some_function_with_a_fairly_long_name(\n\tfirst_argument_value,\n\tsecond_argument_value,\n\tthird_argument_value\n);\n"
+
+---- messy_real_world_input_is_idempotent_and_safe stdout ----
+
+thread 'messy_real_world_input_is_idempotent_and_safe' (561851) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- short_call_stays_flat stdout ----
+
+thread 'short_call_stays_flat' (561856) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- nested_paren_comma_is_not_a_split_point stdout ----
+
+thread 'nested_paren_comma_is_not_a_split_point' (561853) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- golden_is_a_fixpoint stdout ----
+
+thread 'golden_is_a_fixpoint' (561841) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- golden_acceptance_unguarded_showcase stdout ----
+
+thread 'golden_acceptance_unguarded_showcase' (561839) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- idempotent_on_showcase stdout ----
+
+thread 'idempotent_on_showcase' (561842) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+---- showcase_content_is_preserved stdout ----
+
+thread 'showcase_content_is_preserved' (561861) panicked at src/reflow.rs:403:54:
+attempt to subtract with overflow
+
+
+failures:
+    call_with_line_comment_passes_through
+    collapses_a_call_that_now_fits
+    compound_literal_arg_explodes_its_initializer_when_long
+    compound_literals_in_function_args
+    declaration_with_brace_explodes_and_keeps_brace_attached
+    function_like_macro_body_opens_on_define_line
+    generic_macro_explodes_one_association_per_line
+    golden_acceptance_unguarded_showcase
+    golden_is_a_fixpoint
+    idempotent_on_showcase
+    long_call_explodes_one_per_line
+    messy_real_world_input_is_idempotent_and_safe
+    nested_paren_comma_is_not_a_split_point
+    short_call_stays_flat
+    showcase_content_is_preserved
+
+test result: FAILED. 36 passed; 15 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p cfmt --test conformance`
+
+*** result: Failure(101)

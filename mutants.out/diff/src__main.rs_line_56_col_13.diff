@@ -1,0 +1,21 @@
+--- src/main.rs
++++ replace == with != in parse_args
+@@ -48,17 +48,17 @@
+                     .map_err(|_| format!("invalid --width: {value}"))?;
+             }
+             flag if flag.starts_with('-') && flag != "-" => {
+                 return Err(format!("unknown flag: {flag}"));
+             }
+             _ => files.push(arg.clone()),
+         }
+     }
+-    if mode == Mode::InPlace && files.is_empty() {
++    if mode != /* ~ changed by cargo-mutants ~ */ Mode::InPlace && files.is_empty() {
+         return Err("-i requires at least one FILE".to_owned());
+     }
+     Ok(Args { mode, width, files })
+ }
+ 
+ fn read_stdin() -> std::io::Result<String> {
+     let mut buf = String::new();
+     std::io::stdin().read_to_string(&mut buf)?;

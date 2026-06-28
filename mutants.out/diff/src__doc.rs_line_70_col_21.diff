@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace += with -= in render
+@@ -62,17 +62,17 @@
+ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> String {
+     let mut out = String::new();
+     let mut col = start_col;
+     let mut stack: Vec<(usize, Mode, &Doc)> = vec![(base_level, Mode::Break, doc)];
+     while let Some((level, mode, d)) = stack.pop() {
+         match d {
+             Doc::Text(s) => {
+                 out.push_str(s);
+-                col += display_width(s);
++                col -= /* ~ changed by cargo-mutants ~ */ display_width(s);
+             }
+             Doc::Concat(items) => {
+                 for child in items.iter().rev() {
+                     stack.push((level, mode, child));
+                 }
+             }
+             Doc::Nest(inner) => stack.push((level + 1, mode, inner)),
+             Doc::Line | Doc::SoftLine => match mode {

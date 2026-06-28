@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with - in emit_brace
+@@ -603,17 +603,17 @@
+     out: &mut String,
+     col: &mut usize,
+     width: usize,
+ ) -> usize {
+     let Some(close) = match_brace(toks, open) else {
+         emit_str(out, col, toks[open].text);
+         return open + 1;
+     };
+-    let inner = &toks[open + 1..close];
++    let inner = &toks[open - /* ~ changed by cargo-mutants ~ */ 1..close];
+     let has_comment_or_directive = inner.iter().any(|t| {
+         matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+             || (t.kind == TokenKind::Punct && t.text == "#")
+     });
+     if has_comment_or_directive || !is_balanced(inner) {
+         for tok in &toks[open..=close] {
+             emit_str(out, col, tok.text);
+         }

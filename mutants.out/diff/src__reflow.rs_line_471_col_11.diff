@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace += with -= in structure
+@@ -463,17 +463,17 @@
+                 "(" | "[" => paren_depth += 1,
+                 ")" | "]" => paren_depth = (paren_depth - 1).max(0),
+                 "=" if paren_depth == 0 => in_init = true,
+                 ";" if paren_depth == 0 => in_init = false,
+                 _ => {}
+             }
+         }
+         emit_str(&mut out, &mut col, t.text);
+-        i += 1;
++        i -= /* ~ changed by cargo-mutants ~ */ 1;
+     }
+     out
+ }
+ 
+ /// Format a `#define`: a function-like macro whose body is a single call/`_Generic` or a
+ /// statement-expression is laid out with the body opening on the `#define` line and `\`
+ /// continuations one space after each line; any other body is emitted verbatim.
+ fn emit_define(

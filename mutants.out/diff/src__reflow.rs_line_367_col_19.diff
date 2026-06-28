@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in structure
+@@ -359,17 +359,17 @@
+             i = if is_define {
+                 emit_define(toks, i, &mut out, &mut col, width)
+             } else {
+                 emit_directive(toks, i, &mut out, &mut col)
+             };
+             continue;
+         }
+ 
+-        if t.kind == TokenKind::Ident
++        if t.kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Ident
+             && matches!(t.text, "if" | "while" | "switch" | "for")
+             && let Some(open) = next_paren(toks, i)
+             && let Some(close) = match_bracket(toks, open)
+             && !contains_comment(&toks[open + 1..close])
+             && is_balanced(&toks[open + 1..close])
+         {
+             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
+             emit_str(&mut out, &mut col, t.text);

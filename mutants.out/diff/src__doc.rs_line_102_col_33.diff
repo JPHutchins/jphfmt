@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace == with != in render
+@@ -94,17 +94,17 @@
+                 let mode = if fits(width.saturating_sub(col), inner, &stack) {
+                     Mode::Flat
+                 } else {
+                     Mode::Break
+                 };
+                 stack.push((level, mode, inner));
+             }
+             Doc::IfBreak { broken, flat } => {
+-                let s = if mode == Mode::Break { broken } else { flat };
++                let s = if mode != /* ~ changed by cargo-mutants ~ */ Mode::Break { broken } else { flat };
+                 out.push_str(s);
+                 col += display_width(s);
+             }
+             Doc::ForceBreak(inner) => stack.push((level, Mode::Break, inner)),
+         }
+     }
+     out
+ }

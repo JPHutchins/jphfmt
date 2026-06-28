@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace || with && in emit_brace
+@@ -606,17 +606,17 @@
+ ) -> usize {
+     let Some(close) = match_brace(toks, open) else {
+         emit_str(out, col, toks[open].text);
+         return open + 1;
+     };
+     let inner = &toks[open + 1..close];
+     let has_comment_or_directive = inner.iter().any(|t| {
+         matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+-            || (t.kind == TokenKind::Punct && t.text == "#")
++            && /* ~ changed by cargo-mutants ~ */ (t.kind == TokenKind::Punct && t.text == "#")
+     });
+     if has_comment_or_directive || !is_balanced(inner) {
+         for tok in &toks[open..=close] {
+             emit_str(out, col, tok.text);
+         }
+         return close + 1;
+     }
+     let base_level = current_line_indent_cols(out) / TAB_WIDTH;

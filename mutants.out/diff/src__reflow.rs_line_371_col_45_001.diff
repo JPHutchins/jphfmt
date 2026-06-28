@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with * in structure
+@@ -363,17 +363,17 @@
+             };
+             continue;
+         }
+ 
+         if t.kind == TokenKind::Ident
+             && matches!(t.text, "if" | "while" | "switch" | "for")
+             && let Some(open) = next_paren(toks, i)
+             && let Some(close) = match_bracket(toks, open)
+-            && !contains_comment(&toks[open + 1..close])
++            && !contains_comment(&toks[open * /* ~ changed by cargo-mutants ~ */ 1..close])
+             && is_balanced(&toks[open + 1..close])
+         {
+             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
+             emit_str(&mut out, &mut col, t.text);
+             emit_str(&mut out, &mut col, " ");
+             let inner = &toks[open + 1..close];
+             let doc = if t.text == "for" {
+                 build_for_doc(inner)

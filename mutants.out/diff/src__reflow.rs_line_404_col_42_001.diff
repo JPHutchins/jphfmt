@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with * in structure
+@@ -396,17 +396,17 @@
+                 emit_str(&mut out, &mut col, tok.text);
+             }
+             i = emit_brace(toks, brace, true, &mut out, &mut col, width);
+             continue;
+         }
+ 
+         if is_call_head(toks, i)
+             && let Some(close) = match_bracket(toks, i + 1)
+-            && !contains_comment(&toks[i + 2..close])
++            && !contains_comment(&toks[i * /* ~ changed by cargo-mutants ~ */ 2..close])
+             && is_balanced(&toks[i + 2..close])
+         {
+             emit_str(&mut out, &mut col, t.text);
+             let doc = build_call_doc(&toks[i + 2..close]);
+             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+             let reserved = trailing_reserved(toks, close + 1);
+             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+             emit_str(&mut out, &mut col, &rendered);

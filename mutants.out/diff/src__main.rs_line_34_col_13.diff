@@ -1,0 +1,21 @@
+--- src/main.rs
++++ delete match arm "-i" | "--in-place" in parse_args
+@@ -26,17 +26,17 @@
+ 
+ fn parse_args(argv: &[String]) -> Result<Args, String> {
+     let mut mode = Mode::Stdout;
+     let mut width = DEFAULT_WIDTH;
+     let mut files = Vec::new();
+     let mut rest = argv.iter();
+     while let Some(arg) = rest.next() {
+         match arg.as_str() {
+-            "-i" | "--in-place" => mode = Mode::InPlace,
++             /* ~ changed by cargo-mutants ~ */
+             "--check" => mode = Mode::Check,
+             "-V" | "--version" => mode = Mode::Version,
+             "-h" | "--help" => return Err(USAGE.to_owned()),
+             "--width" => {
+                 let value = rest.next().ok_or("--width requires a value")?;
+                 width = value
+                     .parse()
+                     .map_err(|_| format!("invalid --width: {value}"))?;

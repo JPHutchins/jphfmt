@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete match arm "(" | "[" in structure
+@@ -455,17 +455,17 @@
+             && match_brace(toks, i).is_some()
+         {
+             i = emit_brace(toks, i, false, &mut out, &mut col, width);
+             continue;
+         }
+ 
+         if t.kind == TokenKind::Punct {
+             match t.text {
+-                "(" | "[" => paren_depth += 1,
++                 /* ~ changed by cargo-mutants ~ */
+                 ")" | "]" => paren_depth = (paren_depth - 1).max(0),
+                 "=" if paren_depth == 0 => in_init = true,
+                 ";" if paren_depth == 0 => in_init = false,
+                 _ => {}
+             }
+         }
+         emit_str(&mut out, &mut col, t.text);
+         i += 1;

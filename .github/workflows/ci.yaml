@@ -30,6 +30,30 @@ jobs:
       - name: Build + test on the declared rust-version
         run: cargo test --all-features
 
+  # RUSTSEC advisory scan — its own parallel job (needs the cargo-audit binary).
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx camas audit
+
+  # Mutation testing — proves the tests actually bite. Its own parallel job (it is the slow one).
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx camas mutants
+
   # Release jobs run only for v* tags, after validation passes.
   binaries:
     needs: [validate, msrv]

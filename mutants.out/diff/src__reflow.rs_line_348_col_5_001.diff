@@ -1,0 +1,146 @@
+--- src/reflow.rs
++++ replace structure -> String with "xyzzy".into()
+@@ -340,142 +340,17 @@
+         at_line_start = t.kind == TokenKind::Newline;
+     }
+     out
+ }
+ 
+ /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
+ /// formatting a fragment such as a macro body that follows a prefix).
+ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
+-    let mut out = String::new();
+-    let mut col = start_col;
+-    let mut i = 0usize;
+-    let mut paren_depth = 0i32;
+-    let mut in_init = false;
+-    while i < toks.len() {
+-        let t = toks[i];
+-
+-        if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(&out) {
+-            let is_define = next_nontrivia(toks, i + 1)
+-                .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
+-            i = if is_define {
+-                emit_define(toks, i, &mut out, &mut col, width)
+-            } else {
+-                emit_directive(toks, i, &mut out, &mut col)
+-            };
+-            continue;
+-        }
+-
+-        if t.kind == TokenKind::Ident
+-            && matches!(t.text, "if" | "while" | "switch" | "for")
+-            && let Some(open) = next_paren(toks, i)
+-            && let Some(close) = match_bracket(toks, open)
+-            && !contains_comment(&toks[open + 1..close])
+-            && is_balanced(&toks[open + 1..close])
+-        {
+-            // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
+-            emit_str(&mut out, &mut col, t.text);
+-            emit_str(&mut out, &mut col, " ");
+-            let inner = &toks[open + 1..close];
+-            let doc = if t.text == "for" {
+-                build_for_doc(inner)
+-            } else {
+-                build_cond_doc(inner)
+-            };
+-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+-            let reserved = trailing_reserved(toks, close + 1);
+-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+-            emit_str(&mut out, &mut col, &rendered);
+-            i = close + 1;
+-            continue;
+-        }
+-
+-        if t.kind == TokenKind::Ident
+-            && t.text == "enum"
+-            && let Some(brace) = enum_body_brace(toks, i)
+-        {
+-            for tok in &toks[i..brace] {
+-                emit_str(&mut out, &mut col, tok.text);
+-            }
+-            i = emit_brace(toks, brace, true, &mut out, &mut col, width);
+-            continue;
+-        }
+-
+-        if is_call_head(toks, i)
+-            && let Some(close) = match_bracket(toks, i + 1)
+-            && !contains_comment(&toks[i + 2..close])
+-            && is_balanced(&toks[i + 2..close])
+-        {
+-            emit_str(&mut out, &mut col, t.text);
+-            let doc = build_call_doc(&toks[i + 2..close]);
+-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+-            let reserved = trailing_reserved(toks, close + 1);
+-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+-            emit_str(&mut out, &mut col, &rendered);
+-            i = close + 1;
+-            continue;
+-        }
+-
+-        // GNU statement-expression `({ ... })` — block-indent its statements.
+-        if t.kind == TokenKind::Punct
+-            && t.text == "("
+-            && toks
+-                .get(i + 1)
+-                .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
+-        {
+-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+-            if let Some((block, next)) = format_stmt_expr(toks, i, base_level) {
+-                emit_str(&mut out, &mut col, &block);
+-                i = next;
+-                continue;
+-            }
+-        }
+-
+-        // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its
+-        // own line with the colon trailing (§2.4). Parens are author-written (§8.2), not inserted.
+-        if t.kind == TokenKind::Punct
+-            && t.text == "("
+-            && let Some(close) = match_bracket(toks, i)
+-            && has_top_level_question(&toks[i + 1..close])
+-            && !contains_comment(&toks[i + 1..close])
+-            && is_balanced(&toks[i + 1..close])
+-        {
+-            let doc = build_ternary_doc(&toks[i + 1..close]);
+-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+-            let reserved = trailing_reserved(toks, close + 1);
+-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+-            emit_str(&mut out, &mut col, &rendered);
+-            i = close + 1;
+-            continue;
+-        }
+-
+-        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
+-        if in_init
+-            && t.kind == TokenKind::Punct
+-            && t.text == "{"
+-            && last_nonspace_char(&out) != Some('(')
+-            && match_brace(toks, i).is_some()
+-        {
+-            i = emit_brace(toks, i, false, &mut out, &mut col, width);
+-            continue;
+-        }
+-
+-        if t.kind == TokenKind::Punct {
+-            match t.text {
+-                "(" | "[" => paren_depth += 1,
+-                ")" | "]" => paren_depth = (paren_depth - 1).max(0),
+-                "=" if paren_depth == 0 => in_init = true,
+-                ";" if paren_depth == 0 => in_init = false,
+-                _ => {}
+-            }
+-        }
+-        emit_str(&mut out, &mut col, t.text);
+-        i += 1;
+-    }
+-    out
++    "xyzzy".into() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Format a `#define`: a function-like macro whose body is a single call/`_Generic` or a
+ /// statement-expression is laid out with the body opening on the `#define` line and `\`
+ /// continuations one space after each line; any other body is emitted verbatim.
+ fn emit_define(
+     toks: &[Token],
+     start: usize,

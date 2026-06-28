@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with * in structure
+@@ -376,17 +376,17 @@
+             emit_str(&mut out, &mut col, " ");
+             let inner = &toks[open + 1..close];
+             let doc = if t.text == "for" {
+                 build_for_doc(inner)
+             } else {
+                 build_cond_doc(inner)
+             };
+             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+-            let reserved = trailing_reserved(toks, close + 1);
++            let reserved = trailing_reserved(toks, close * /* ~ changed by cargo-mutants ~ */ 1);
+             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+             emit_str(&mut out, &mut col, &rendered);
+             i = close + 1;
+             continue;
+         }
+ 
+         if t.kind == TokenKind::Ident
+             && t.text == "enum"

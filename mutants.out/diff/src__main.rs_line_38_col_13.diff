@@ -1,0 +1,26 @@
+--- src/main.rs
++++ delete match arm "--width" in parse_args
+@@ -30,22 +30,17 @@
+     let mut files = Vec::new();
+     let mut rest = argv.iter();
+     while let Some(arg) = rest.next() {
+         match arg.as_str() {
+             "-i" | "--in-place" => mode = Mode::InPlace,
+             "--check" => mode = Mode::Check,
+             "-V" | "--version" => mode = Mode::Version,
+             "-h" | "--help" => return Err(USAGE.to_owned()),
+-            "--width" => {
+-                let value = rest.next().ok_or("--width requires a value")?;
+-                width = value
+-                    .parse()
+-                    .map_err(|_| format!("invalid --width: {value}"))?;
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             flag if flag.starts_with("--width=") => {
+                 let value = &flag["--width=".len()..];
+                 width = value
+                     .parse()
+                     .map_err(|_| format!("invalid --width: {value}"))?;
+             }
+             flag if flag.starts_with('-') && flag != "-" => {
+                 return Err(format!("unknown flag: {flag}"));

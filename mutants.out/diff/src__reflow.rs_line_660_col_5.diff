@@ -1,0 +1,30 @@
+--- src/reflow.rs
++++ replace current_line_indent_cols -> usize with 0
+@@ -652,26 +652,17 @@
+ fn current_line_is_blank(out: &str) -> bool {
+     out.rsplit('\n')
+         .next()
+         .is_none_or(|line| line.chars().all(|c| c == ' ' || c == '\t'))
+ }
+ 
+ /// Indentation, in columns, of the current output line.
+ fn current_line_indent_cols(out: &str) -> usize {
+-    let line = out.rsplit('\n').next().unwrap_or(out);
+-    let mut cols = 0;
+-    for ch in line.chars() {
+-        match ch {
+-            '\t' => cols += TAB_WIDTH,
+-            ' ' => cols += 1,
+-            _ => break,
+-        }
+-    }
+-    cols
++    0 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The last non-whitespace character emitted, used to tell a compound literal `){` from a
+ /// statement-expression `({`.
+ fn last_nonspace_char(out: &str) -> Option<char> {
+     out.chars().rev().find(|c| !c.is_whitespace())
+ }
+ 
