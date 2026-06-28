@@ -151,7 +151,7 @@ jobs:
           fi
 
   crate:
-    needs: binaries
+    needs: [binaries, audit]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -163,7 +163,7 @@ jobs:
         run: cargo publish
 
   extension:
-    needs: binaries
+    needs: [binaries, audit]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
