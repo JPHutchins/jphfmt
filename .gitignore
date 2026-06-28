@@ -1,3 +1,6 @@
 /target
 /.camas
 .claude/settings.local.json
+editors/vscode/node_modules
+editors/vscode/out
+editors/vscode/*.vsix
