@@ -104,7 +104,7 @@ fn passthrough_for_call_free_input() {
     let snippets = [
         "int x = 1'000'000;\n",
         "/* block * / not the end */ x; // trailing\n",
-        "char const *p = \"a\\\"b\\n\"; char c = '\\'';\n",
+        "char const * p = \"a\\\"b\\n\"; char c = '\\'';\n",
         "#define M(a) ((a) + 1) \\\n\t+ 2\n",
         "auto s = u\"\u{3b7} \u{3bc}\u{3ac}\u{3b8}\u{3b7}\u{3c3}\u{3b9}\u{3c2}\";\n",
         "a->b = c << 2; d.e = f ? g : h;\n",
@@ -219,6 +219,35 @@ fn call_with_line_comment_passes_through() {
         src,
         "comment-bearing calls must not be reflowed"
     );
+}
+
+#[test]
+fn control_keyword_gets_one_space_before_paren() {
+    assert_eq!(format("if(x) y;\n"), "if (x) y;\n");
+    assert_eq!(format("while(y) z;\n"), "while (y) z;\n");
+    assert_eq!(format("switch(c) {\n}\n"), "switch (c) {\n}\n");
+}
+
+#[test]
+fn pointers_are_middle_spaced_after_type_keywords() {
+    assert_eq!(format("int*p;\n"), "int * p;\n");
+    assert_eq!(format("int **p;\n"), "int ** p;\n");
+    assert_eq!(format("char const*const q;\n"), "char const * const q;\n");
+    assert_eq!(format("void*f(void);\n"), "void * f(void);\n");
+}
+
+#[test]
+fn ambiguous_star_is_left_alone() {
+    // multiply and user-typedef pointers can't be told apart at the token level (§6)
+    assert_eq!(format("z = a*b;\n"), "z = a*b;\n");
+    assert_eq!(format("z = a * b;\n"), "z = a * b;\n");
+    assert_eq!(format("mytype*p;\n"), "mytype*p;\n");
+}
+
+#[test]
+fn function_pointer_star_is_not_spaced() {
+    let src = "int (*cb)(void);\n";
+    assert_eq!(format(src), src);
 }
 
 #[test]

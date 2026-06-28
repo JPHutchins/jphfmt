@@ -14,6 +14,8 @@ All notable changes to cfmt are documented here. The format follows
   initializers, `enum` bodies (with the §2.3 magic trailing comma),
   `for`/`if`/`while`/`switch` headers, function-like and statement-expression
   macros, and parenthesized ternaries.
+- §2.5 spacing: a space before `(` for control keywords (`if (`), and pointer
+  middle-spacing after a type keyword/qualifier (`int*p` → `int * p`).
 - Hard-tab indentation and LF line-ending normalization with a single trailing
   newline (§2.1).
 - CLI: stdin→stdout, `-i`/`--in-place`, `--check`, `--width N`, `--version`.
@@ -23,5 +25,10 @@ All notable changes to cfmt are documented here. The format follows
 
 - Comment attachment/reflow is deferred: a list containing a comment passes
   through (re-tabbed) rather than being re-laid-out.
+- Some §2.5 spacing is token-level ambiguous and therefore preserved rather than
+  normalized (§6 "prefer passthrough when ambiguous"): cast spacing, bit-field
+  colons, brace-attach (`) {` vs the tight `({`/compound-literal `){`), and
+  pointers after a user typedef (`mytype*p`). Already-correct input is preserved;
+  these messy forms are simply left as-is.
 - Input must be valid UTF-8.
 - Tab width for the overflow measurement is fixed at 4.

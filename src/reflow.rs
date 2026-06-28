@@ -25,7 +25,89 @@ pub fn format(src: &str) -> String {
 /// Format with an explicit column limit. Tab width for the overflow measurement is fixed at
 /// [`TAB_WIDTH`] (§8.5 default).
 pub fn format_with_width(src: &str, width: usize) -> String {
-    normalize_endings(&retab(&structure(&tokenize(src), 0, width)))
+    normalize_endings(&space_pointers(&retab(&structure(
+        &tokenize(src),
+        0,
+        width,
+    ))))
+}
+
+/// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
+/// not a multiply. User typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p` pass through
+/// (§2.5 pointers, §6 "prefer passthrough when ambiguous").
+fn is_type_context(text: &str) -> bool {
+    matches!(
+        text,
+        "void"
+            | "char"
+            | "short"
+            | "int"
+            | "long"
+            | "float"
+            | "double"
+            | "signed"
+            | "unsigned"
+            | "_Bool"
+            | "bool"
+            | "const"
+            | "volatile"
+            | "_Atomic"
+            | "restrict"
+    )
+}
+
+/// Middle-align pointer `*` in declarations (§2.5: `T * p`, `T ** p`, `T * const`). Only a `*`
+/// cluster whose preceding token is a [`is_type_context`] keyword is touched; everything else
+/// (multiply, deref, function-pointer `(*f)`, user-typedef pointers) is left exactly as is.
+fn space_pointers(s: &str) -> String {
+    let mut pieces: Vec<(String, Token)> = Vec::new();
+    let mut gap = String::new();
+    for t in tokenize(s) {
+        if is_trivia(&t) {
+            gap.push_str(t.text);
+        } else {
+            pieces.push((std::mem::take(&mut gap), t));
+        }
+    }
+    let trailing = gap;
+    let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
+    let same_line = |g: &str| !g.contains('\n');
+    let mut j = 0;
+    while j < pieces.len() {
+        let star_run = is_star(&pieces[j].1)
+            && j > 0
+            && is_type_context(pieces[j - 1].1.text)
+            && same_line(&pieces[j].0);
+        if star_run {
+            let mut k = j;
+            while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
+                k += 1;
+            }
+            pieces[j].0 = " ".to_owned();
+            for piece in &mut pieces[j + 1..=k] {
+                piece.0.clear();
+            }
+            if let Some(after) = pieces.get_mut(k + 1)
+                && same_line(&after.0)
+            {
+                after.0 = if after.1.kind == TokenKind::Ident {
+                    " ".to_owned()
+                } else {
+                    String::new()
+                };
+            }
+            j = k + 1;
+            continue;
+        }
+        j += 1;
+    }
+    let mut out = String::with_capacity(s.len());
+    for (g, t) in &pieces {
+        out.push_str(g);
+        out.push_str(t.text);
+    }
+    out.push_str(&trailing);
+    out
 }
 
 /// Normalize every line ending to LF and guarantee exactly one trailing newline (§2.1). An
@@ -99,9 +181,9 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
             && let Some(close) = match_bracket(toks, open)
             && !contains_comment(&toks[open + 1..close])
         {
-            for tok in &toks[i..open] {
-                emit_str(&mut out, &mut col, tok.text);
-            }
+            // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
+            emit_str(&mut out, &mut col, t.text);
+            emit_str(&mut out, &mut col, " ");
             let inner = &toks[open + 1..close];
             let doc = if t.text == "for" {
                 build_for_doc(inner)
