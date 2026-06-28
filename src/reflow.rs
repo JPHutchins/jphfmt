@@ -25,7 +25,21 @@ pub fn format(src: &str) -> String {
 /// Format with an explicit column limit. Tab width for the overflow measurement is fixed at
 /// [`TAB_WIDTH`] (§8.5 default).
 pub fn format_with_width(src: &str, width: usize) -> String {
-    retab(&structure(&tokenize(src), 0, width))
+    normalize_endings(&retab(&structure(&tokenize(src), 0, width)))
+}
+
+/// Normalize every line ending to LF and guarantee exactly one trailing newline (§2.1). An
+/// all-whitespace input yields the empty string.
+fn normalize_endings(s: &str) -> String {
+    let lf = s.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = lf.trim_end();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(trimmed.len() + 1);
+    out.push_str(trimmed);
+    out.push('\n');
+    out
 }
 
 /// Normalize every line's leading indentation to hard tabs (§2.1): re-lex the output and rewrite

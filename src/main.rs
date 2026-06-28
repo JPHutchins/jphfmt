@@ -12,7 +12,11 @@ enum Mode {
     InPlace,
     /// Report (via exit code) whether any input is not already formatted; write nothing.
     Check,
+    /// Print the version and exit.
+    Version,
 }
+
+const USAGE: &str = "usage: cfmt [-i | --check] [--width N] [FILE...]";
 
 struct Args {
     mode: Mode,
@@ -29,9 +33,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         match arg.as_str() {
             "-i" | "--in-place" => mode = Mode::InPlace,
             "--check" => mode = Mode::Check,
-            "-h" | "--help" => {
-                return Err("usage: cfmt [-i | --check] [--width N] [FILE...]".to_owned());
-            }
+            "-V" | "--version" => mode = Mode::Version,
+            "-h" | "--help" => return Err(USAGE.to_owned()),
             "--width" => {
                 let value = rest.next().ok_or("--width requires a value")?;
                 width = value
@@ -81,7 +84,7 @@ fn run(args: &Args) -> std::io::Result<bool> {
         match args.mode {
             Mode::Stdout => std::io::stdout().write_all(out.as_bytes())?,
             Mode::InPlace if changed => std::fs::write(path, out)?,
-            Mode::InPlace | Mode::Check => {}
+            Mode::InPlace | Mode::Check | Mode::Version => {}
         }
     }
     Ok(any_changed)
@@ -96,6 +99,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if args.mode == Mode::Version {
+        println!("cfmt {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     match run(&args) {
         Ok(changed) if args.mode == Mode::Check && changed => ExitCode::FAILURE,
         Ok(_) => ExitCode::SUCCESS,

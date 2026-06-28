@@ -222,6 +222,27 @@ fn call_with_line_comment_passes_through() {
 }
 
 #[test]
+fn crlf_is_normalized_to_lf() {
+    assert_eq!(format("int x;\r\nint y;\r\n"), "int x;\nint y;\n");
+    // a construct cfmt generates must not leave mixed endings
+    let exploded = format(
+        "r = f(\r\n\taaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd, eeeeeeeeee, ffffffffff\r\n);\r\n",
+    );
+    assert!(
+        !exploded.contains('\r'),
+        "output must be pure LF: {exploded:?}"
+    );
+}
+
+#[test]
+fn exactly_one_trailing_newline() {
+    assert_eq!(format("int x;"), "int x;\n");
+    assert_eq!(format("int x;\n\n\n"), "int x;\n");
+    assert_eq!(format(""), "");
+    assert_eq!(format("\n\n  \n"), "");
+}
+
+#[test]
 fn block_comment_internals_are_untouched() {
     let src = "/*\n * aligned\n *   deeper\n */\nint x;\n";
     assert_eq!(format(src), src, "comment bodies are sacred (§2.1)");

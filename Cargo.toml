@@ -2,6 +2,14 @@
 name = "cfmt"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+authors = ["J.P. Hutchins <jp@intercreate.io>"]
+description = "A zero-config, opinionated C formatter: one uniform bracket rule, no column alignment."
+license = "Apache-2.0"
+repository = "https://github.com/intercreate/cfmt"
+readme = "README.md"
+keywords = ["formatter", "c", "cli", "gofmt", "opinionated"]
+categories = ["development-tools", "command-line-utilities"]
 
 [lib]
 name = "cfmt"
