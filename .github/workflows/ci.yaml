@@ -14,18 +14,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - run: |
+          msrv=$(grep -oP 'rust-version\s*=\s*"\K[^"]+' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@v8.2.0
       - run: uvx camas
-
-  msrv:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - run: cargo test --all-features
 
   # RUSTSEC advisory scan — its own parallel job (needs the cargo-audit binary).
   audit:
@@ -42,7 +38,7 @@ jobs:
   # Build release binaries on every push/PR to catch breakage early.
   # Uploaded as CI artifacts (raw binary); promoted to the release page only on v* tags.
   binaries:
-    needs: [validate, msrv]
+    needs: validate
     permissions:
       contents: write
     strategy:

@@ -14,9 +14,13 @@ whole-project tools), so a scoped run (the FileChanged hook's ``camas mcp fix
 editing Rust never runs the TS toolchain and vice-versa. Full runs are unaffected.
 """
 
+import tomllib
 from pathlib import Path
 
 from camas import Claude, Config, Parallel, Sequential, Task, run_cli
+
+CARGO_TOML = tomllib.loads(Path("Cargo.toml").read_text())
+MSRV = CARGO_TOML["package"]["rust-version"]
 
 VSCODE_DIR = "editors/vscode"
 VSCODE = Path(VSCODE_DIR)
@@ -36,7 +40,11 @@ clippy_fix = Task(
 	mutates=True,
 	paths=rust_paths,
 )
-test = Task("cargo test --all-features", paths=rust_paths)
+test = Parallel(
+    Task("cargo +{RUST} test --all-features", paths=rust_paths),
+    matrix={"RUST": ("stable", MSRV)},
+    name="test",
+)
 doc = Task(
 	"cargo doc --no-deps --all-features",
 	env={"RUSTDOCFLAGS": "-D warnings"},
