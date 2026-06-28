@@ -17,7 +17,10 @@ export const activate = (context: ExtensionContext): void => {
     debug: { module, transport: TransportKind.ipc },
   };
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "c" }],
+    documentSelector: [
+      { scheme: "file", language: "c" },
+      { scheme: "file", language: "cpp", pattern: "**/*.h" },
+    ],
     initializationOptions: {
       path: config.get<string>("path", "cfmt"),
       width: config.get<number>("width", 100),
