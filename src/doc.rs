@@ -115,16 +115,15 @@ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
     let mut work: Vec<(Mode, &Doc)> = vec![(Mode::Flat, doc)];
     let mut rest_idx = rest.len();
     loop {
-        let (mode, d) = match work.pop() {
-            Some(item) => item,
-            None => {
-                if rest_idx == 0 {
-                    return true;
-                }
-                rest_idx -= 1;
-                let (_, mode, d) = rest[rest_idx];
-                (mode, d)
+        let (mode, d) = if let Some(item) = work.pop() {
+            item
+        } else {
+            if rest_idx == 0 {
+                return true;
             }
+            rest_idx -= 1;
+            let (_, mode, d) = rest[rest_idx];
+            (mode, d)
         };
         match d {
             Doc::Text(s) => {

@@ -35,7 +35,50 @@ pub fn format(src: &str) -> String {
 /// assert_eq!(narrow, "call(\n\taaa,\n\tbbb,\n\tccc\n);\n");
 /// ```
 pub fn format_with_width(src: &str, width: usize) -> String {
-    normalize_endings(&space_tokens(&retab(&structure(&tokenize(src), 0, width))))
+    // Token spacing runs first so the layout measures final widths — otherwise a space added
+    // afterward (`(int)x` -> `(int) x`) could widen a line and flip a fits/explode decision on
+    // the next pass, breaking idempotency.
+    let spaced = space_tokens(src);
+    normalize_endings(&collapse_blank_lines(&retab(&structure(
+        &tokenize(&spaced),
+        0,
+        width,
+    ))))
+}
+
+/// Collapse runs of two or more blank lines to a single blank line everywhere (file scope and
+/// function bodies). Never inserts a blank line, so grouped declarations and adjacent closers are
+/// preserved. Comment interiors are untouched — their newlines live inside one comment token.
+fn collapse_blank_lines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut line = String::new();
+    let mut has_content = false;
+    let mut blank_run = 0usize;
+    for t in tokenize(s) {
+        match t.kind {
+            TokenKind::Newline => {
+                if has_content {
+                    out.push_str(&line);
+                    out.push('\n');
+                    blank_run = 0;
+                } else {
+                    blank_run += 1;
+                    if blank_run <= 1 {
+                        out.push('\n');
+                    }
+                }
+                line.clear();
+                has_content = false;
+            }
+            TokenKind::Whitespace => line.push_str(t.text),
+            _ => {
+                line.push_str(t.text);
+                has_content = true;
+            }
+        }
+    }
+    out.push_str(&line);
+    out
 }
 
 /// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
@@ -326,6 +369,7 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
             && let Some(open) = next_paren(toks, i)
             && let Some(close) = match_bracket(toks, open)
             && !contains_comment(&toks[open + 1..close])
+            && is_balanced(&toks[open + 1..close])
         {
             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
             emit_str(&mut out, &mut col, t.text);
@@ -358,6 +402,7 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
         if is_call_head(toks, i)
             && let Some(close) = match_bracket(toks, i + 1)
             && !contains_comment(&toks[i + 2..close])
+            && is_balanced(&toks[i + 2..close])
         {
             emit_str(&mut out, &mut col, t.text);
             let doc = build_call_doc(&toks[i + 2..close]);
@@ -391,6 +436,7 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
             && let Some(close) = match_bracket(toks, i)
             && has_top_level_question(&toks[i + 1..close])
             && !contains_comment(&toks[i + 1..close])
+            && is_balanced(&toks[i + 1..close])
         {
             let doc = build_ternary_doc(&toks[i + 1..close]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
@@ -520,7 +566,7 @@ fn format_stmt_expr(toks: &[Token], open: usize, base_level: usize) -> Option<(S
         (t.kind == TokenKind::Punct && t.text == "{")
             || matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
     });
-    if unformattable {
+    if unformattable || !is_balanced(inner) {
         return None;
     }
     let statements: Vec<String> =
@@ -567,7 +613,7 @@ fn emit_brace(
         matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
             || (t.kind == TokenKind::Punct && t.text == "#")
     });
-    if has_comment_or_directive {
+    if has_comment_or_directive || !is_balanced(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
         }
@@ -800,6 +846,31 @@ fn contains_comment(toks: &[Token]) -> bool {
         .any(|t| matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment))
 }
 
+/// Whether `()`, `[]`, and `{}` are all balanced (never negative, net zero) in `toks`. Unbalanced
+/// inner brackets defeat depth-aware splitting, so such a construct is unstructurable and is passed
+/// through verbatim rather than risk mis-splitting (which could accumulate commas across passes).
+fn is_balanced(toks: &[Token]) -> bool {
+    let (mut paren, mut brack, mut brace) = (0i32, 0i32, 0i32);
+    for t in toks {
+        if t.kind != TokenKind::Punct {
+            continue;
+        }
+        match t.text {
+            "(" => paren += 1,
+            ")" => paren -= 1,
+            "[" => brack += 1,
+            "]" => brack -= 1,
+            "{" => brace += 1,
+            "}" => brace -= 1,
+            _ => {}
+        }
+        if paren < 0 || brack < 0 || brace < 0 {
+            return false;
+        }
+    }
+    paren == 0 && brack == 0 && brace == 0
+}
+
 /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
 fn has_top_level_question(inner: &[Token]) -> bool {
     let mut depth = 0i32;
@@ -848,6 +919,9 @@ fn render_segment(toks: &[Token]) -> String {
 /// argument is built recursively (via [`build_element_doc`]), so a compound-literal argument's
 /// `{...}` is a nested group that can collapse or explode on its own.
 fn build_call_doc(inner: &[Token]) -> Doc {
+    if !is_balanced(inner) {
+        return Doc::Text(format!("({})", render_segment(inner)));
+    }
     let args: Vec<&[Token]> = split_on_commas(inner)
         .into_iter()
         .filter(|a| a.iter().any(|t| !is_trivia(t)))
@@ -876,6 +950,9 @@ fn build_call_doc(inner: &[Token]) -> Doc {
 /// the §2.3 magic comma (a trailing comma in the source forces explosion). `padded` adds an inner
 /// space in the flat form (`enum { A, B }`) versus the tight initializer form (`{1, 2}`).
 fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
+    if !is_balanced(inner) {
+        return Doc::Text(format!("{{{}}}", render_segment(inner)));
+    }
     let segments = split_on_commas(inner);
     let magic = segments.len() > 1 && segments.last().is_some_and(|s| s.iter().all(is_trivia));
     let elements: Vec<&[Token]> = segments
@@ -1019,13 +1096,22 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             TokenKind::Newline => break,
             TokenKind::LineComment | TokenKind::BlockComment => {}
             TokenKind::Punct if matches!(t.text, "(" | "[" | "{") => {
-                w += display_width(t.text);
+                w += col_width(t.text);
                 break;
             }
-            _ => w += display_width(t.text),
+            _ => w += col_width(t.text),
         }
     }
     w
+}
+
+/// Column width of raw token text, counting a tab as [`TAB_WIDTH`] (unlike [`display_width`], which
+/// assumes tab-free text). Used where the measured slice may contain a mid-line whitespace tab, so
+/// the reserve matches the cursor's own tab accounting and formatting stays idempotent.
+fn col_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
+        .sum()
 }
 
 /// Emit a preprocessor directive verbatim, following `\` line continuations; returns the index

@@ -333,6 +333,21 @@ fn crlf_is_normalized_to_lf() {
 }
 
 #[test]
+fn blank_line_runs_collapse_to_one_everywhere() {
+    assert_eq!(format("int a;\n\n\nint b;\n"), "int a;\n\nint b;\n");
+    // inside a function body too
+    assert_eq!(
+        format("void f(void) {\n\tint a;\n\n\n\tint b;\n}\n"),
+        "void f(void) {\n\tint a;\n\n\tint b;\n}\n"
+    );
+    // a single blank, and adjacent lines, are left exactly as-is (never inserts)
+    assert_eq!(
+        format("int a;\nint b;\n\nint c;\n"),
+        "int a;\nint b;\n\nint c;\n"
+    );
+}
+
+#[test]
 fn exactly_one_trailing_newline() {
     assert_eq!(format("int x;"), "int x;\n");
     assert_eq!(format("int x;\n\n\n"), "int x;\n");
