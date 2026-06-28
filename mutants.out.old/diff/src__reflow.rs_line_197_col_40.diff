@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with - in space_pointers
+@@ -189,17 +189,17 @@
+                     && j >= 2
+                     && matches!(pieces[j - 2].1.text, "struct" | "union" | "enum")));
+         if is_star(&pieces[j].1) && prev_is_type && same_line(&pieces[j].0) {
+             let mut k = j;
+             while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
+                 k += 1;
+             }
+             pieces[j].0 = " ".to_owned();
+-            for piece in &mut pieces[j + 1..=k] {
++            for piece in &mut pieces[j - /* ~ changed by cargo-mutants ~ */ 1..=k] {
+                 piece.0.clear();
+             }
+             if let Some(after) = pieces.get_mut(k + 1)
+                 && same_line(&after.0)
+             {
+                 after.0 = if after.1.kind == TokenKind::Ident {
+                     " ".to_owned()
+                 } else {

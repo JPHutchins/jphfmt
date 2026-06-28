@@ -1,0 +1,33 @@
+--- src/main.rs
++++ replace main -> ExitCode with Default::default()
+@@ -86,29 +86,10 @@
+             Mode::InPlace if changed => std::fs::write(path, out)?,
+             Mode::InPlace | Mode::Check | Mode::Version => {}
+         }
+     }
+     Ok(any_changed)
+ }
+ 
+ fn main() -> ExitCode {
+-    let argv: Vec<String> = std::env::args().skip(1).collect();
+-    let args = match parse_args(&argv) {
+-        Ok(args) => args,
+-        Err(msg) => {
+-            eprintln!("cfmt: {msg}");
+-            return ExitCode::FAILURE;
+-        }
+-    };
+-    if args.mode == Mode::Version {
+-        println!("cfmt {}", env!("CARGO_PKG_VERSION"));
+-        return ExitCode::SUCCESS;
+-    }
+-    match run(&args) {
+-        Ok(changed) if args.mode == Mode::Check && changed => ExitCode::FAILURE,
+-        Ok(_) => ExitCode::SUCCESS,
+-        Err(err) => {
+-            eprintln!("cfmt: {err}");
+-            ExitCode::FAILURE
+-        }
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in is_call_head
+@@ -673,17 +673,17 @@
+ /// statement-expression `({`.
+ fn last_nonspace_char(out: &str) -> Option<char> {
+     out.chars().rev().find(|c| !c.is_whitespace())
+ }
+ 
+ /// An identifier immediately followed by `(` (no intervening whitespace) — a call or the
+ /// structurally identical declaration parameter list, excluding control/operator keywords.
+ fn is_call_head(toks: &[Token], i: usize) -> bool {
+-    toks.get(i).is_some_and(|t| t.kind == TokenKind::Ident)
++    toks.get(i).is_some_and(|t| t.kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Ident)
+         && !is_excluded_callee(toks[i].text)
+         && toks
+             .get(i + 1)
+             .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(")
+ }
+ 
+ /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
+ /// excluded: its associations are a comma list and explode exactly per §2.2.

@@ -1,0 +1,25 @@
+--- src/reflow.rs
++++ replace build_ternary_doc -> Doc with Default::default()
+@@ -883,21 +883,17 @@
+         }
+     }
+     false
+ }
+ 
+ /// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
+ /// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
+ fn build_ternary_doc(inner: &[Token]) -> Doc {
+-    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":")
+-        .iter()
+-        .map(|s| render_segment(s))
+-        .collect();
+-    build_clause_group(segments, " :")
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
+ fn render_segment(toks: &[Token]) -> String {
+     let mut s = String::new();
+     let mut pending_space = false;
+     for t in toks {
+         if is_trivia(t) {

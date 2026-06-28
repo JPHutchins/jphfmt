@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace match guard t.text == ":" with false in enum_body_brace
+@@ -715,17 +715,17 @@
+ }
+ 
+ /// The `{` opening an `enum [tag] [: type] { ... }` body that begins at the `enum` keyword `i`,
+ /// or `None` if this `enum` does not introduce a body (a forward declaration or a variable use).
+ fn enum_body_brace(toks: &[Token], i: usize) -> Option<usize> {
+     for (j, t) in toks.iter().enumerate().skip(i + 1) {
+         match t.kind {
+             TokenKind::Whitespace | TokenKind::Newline | TokenKind::Ident => {}
+-            TokenKind::Punct if t.text == ":" => {}
++            TokenKind::Punct if false /* ~ changed by cargo-mutants ~ */ => {}
+             TokenKind::Punct if t.text == "{" => return Some(j),
+             _ => return None,
+         }
+     }
+     None
+ }
+ 
+ /// The `(` that follows control keyword `i` after only trivia, or `None`.

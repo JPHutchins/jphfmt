@@ -1,0 +1,29 @@
+--- src/reflow.rs
++++ replace enum_body_brace -> Option<usize> with None
+@@ -712,25 +712,17 @@
+             | "__asm__"
+             | "__asm"
+     )
+ }
+ 
+ /// The `{` opening an `enum [tag] [: type] { ... }` body that begins at the `enum` keyword `i`,
+ /// or `None` if this `enum` does not introduce a body (a forward declaration or a variable use).
+ fn enum_body_brace(toks: &[Token], i: usize) -> Option<usize> {
+-    for (j, t) in toks.iter().enumerate().skip(i + 1) {
+-        match t.kind {
+-            TokenKind::Whitespace | TokenKind::Newline | TokenKind::Ident => {}
+-            TokenKind::Punct if t.text == ":" => {}
+-            TokenKind::Punct if t.text == "{" => return Some(j),
+-            _ => return None,
+-        }
+-    }
+-    None
++    None /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The `(` that follows control keyword `i` after only trivia, or `None`.
+ fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
+     for (j, t) in toks.iter().enumerate().skip(i + 1) {
+         match t.kind {
+             TokenKind::Whitespace | TokenKind::Newline => {}
+             TokenKind::Punct if t.text == "(" => return Some(j),

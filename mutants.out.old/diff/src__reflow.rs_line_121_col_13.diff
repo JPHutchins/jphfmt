@@ -1,0 +1,26 @@
+--- src/reflow.rs
++++ delete match arm "(" in piece_open_paren
+@@ -113,22 +113,17 @@
+ }
+ 
+ /// Index of the `(` matching the `)` at `close`, scanning the piece list backward.
+ fn piece_open_paren(pieces: &[Piece], close: usize) -> Option<usize> {
+     let mut depth = 0i32;
+     for j in (0..=close).rev() {
+         match pieces[j].1.text {
+             ")" => depth += 1,
+-            "(" => {
+-                depth -= 1;
+-                if depth == 0 {
+-                    return Some(j);
+-                }
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             _ => {}
+         }
+     }
+     None
+ }
+ 
+ /// Index of the `)` matching the `(` at `open`, scanning forward.
+ fn piece_close_paren(pieces: &[Piece], open: usize) -> Option<usize> {

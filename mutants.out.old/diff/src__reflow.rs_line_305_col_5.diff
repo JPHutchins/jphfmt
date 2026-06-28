@@ -1,0 +1,29 @@
+--- src/reflow.rs
++++ replace normalize_endings -> String with String::new()
+@@ -297,25 +297,17 @@
+         }
+     }
+     false
+ }
+ 
+ /// Normalize every line ending to LF and guarantee exactly one trailing newline (§2.1). An
+ /// all-whitespace input yields the empty string.
+ fn normalize_endings(s: &str) -> String {
+-    let lf = s.replace("\r\n", "\n").replace('\r', "\n");
+-    let trimmed = lf.trim_end();
+-    if trimmed.is_empty() {
+-        return String::new();
+-    }
+-    let mut out = String::with_capacity(trimmed.len() + 1);
+-    out.push_str(trimmed);
+-    out.push('\n');
+-    out
++    String::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Normalize every line's leading indentation to hard tabs (§2.1): re-lex the output and rewrite
+ /// each line-leading whitespace run as `cols / TAB_WIDTH` tabs plus the remainder in spaces.
+ /// Comment- and string-safe — their bodies are single tokens, never line-leading whitespace.
+ fn retab(s: &str) -> String {
+     let mut out = String::with_capacity(s.len());
+     let mut at_line_start = true;

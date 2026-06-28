@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace is_trivia -> bool with true
+@@ -833,17 +833,17 @@
+             "&&" if depth == 0 && t.kind == TokenKind::Operator => has_and = true,
+             _ => {}
+         }
+     }
+     has_and.then_some("&&")
+ }
+ 
+ fn is_trivia(t: &Token) -> bool {
+-    matches!(t.kind, TokenKind::Whitespace | TokenKind::Newline)
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn contains_comment(toks: &[Token]) -> bool {
+     toks.iter()
+         .any(|t| matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment))
+ }
+ 
+ /// Whether `()`, `[]`, and `{}` are all balanced (never negative, net zero) in `toks`. Unbalanced

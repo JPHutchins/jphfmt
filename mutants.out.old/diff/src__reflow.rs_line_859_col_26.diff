@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace += with -= in is_balanced
+@@ -851,17 +851,17 @@
+ /// through verbatim rather than risk mis-splitting (which could accumulate commas across passes).
+ fn is_balanced(toks: &[Token]) -> bool {
+     let (mut paren, mut brack, mut brace) = (0i32, 0i32, 0i32);
+     for t in toks {
+         if t.kind != TokenKind::Punct {
+             continue;
+         }
+         match t.text {
+-            "(" => paren += 1,
++            "(" => paren -= /* ~ changed by cargo-mutants ~ */ 1,
+             ")" => paren -= 1,
+             "[" => brack += 1,
+             "]" => brack -= 1,
+             "{" => brace += 1,
+             "}" => brace -= 1,
+             _ => {}
+         }
+         if paren < 0 || brack < 0 || brace < 0 {

@@ -1,0 +1,21 @@
+--- src/main.rs
++++ replace == with != in main
+@@ -94,17 +94,17 @@
+     let argv: Vec<String> = std::env::args().skip(1).collect();
+     let args = match parse_args(&argv) {
+         Ok(args) => args,
+         Err(msg) => {
+             eprintln!("cfmt: {msg}");
+             return ExitCode::FAILURE;
+         }
+     };
+-    if args.mode == Mode::Version {
++    if args.mode != /* ~ changed by cargo-mutants ~ */ Mode::Version {
+         println!("cfmt {}", env!("CARGO_PKG_VERSION"));
+         return ExitCode::SUCCESS;
+     }
+     match run(&args) {
+         Ok(changed) if args.mode == Mode::Check && changed => ExitCode::FAILURE,
+         Ok(_) => ExitCode::SUCCESS,
+         Err(err) => {
+             eprintln!("cfmt: {err}");

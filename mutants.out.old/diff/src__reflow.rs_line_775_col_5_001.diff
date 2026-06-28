@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace match_brace -> Option<usize> with Some(0)
+@@ -767,17 +767,17 @@
+ 
+ /// Index of the `)`/`]` matching the bracket at `open`, or `None` if unbalanced.
+ fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+     matching(toks, open, "(", ")").or_else(|| matching(toks, open, "[", "]"))
+ }
+ 
+ /// Index of the `}` matching the `{` at `open`, or `None` if unbalanced.
+ fn match_brace(toks: &[Token], open: usize) -> Option<usize> {
+-    matching(toks, open, "{", "}")
++    Some(0) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> {
+     if toks.get(open).map(|t| t.text) != Some(lhs) {
+         return None;
+     }
+     let mut depth = 0usize;
+     for (j, t) in toks.iter().enumerate().skip(open) {

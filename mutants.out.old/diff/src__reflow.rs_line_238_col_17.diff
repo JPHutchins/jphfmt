@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace || with && in space_casts
+@@ -230,17 +230,17 @@
+         }
+         let Some(close) = piece_close_paren(pieces, open) else {
+             continue;
+         };
+         let inner = &pieces[open + 1..close];
+         let type_only = inner.iter().all(|p| {
+             p.1.kind == TokenKind::Ident
+                 || matches!(p.1.text, "*" | "[" | "]")
+-                || p.1.kind == TokenKind::Number
++                && /* ~ changed by cargo-mutants ~ */ p.1.kind == TokenKind::Number
+         });
+         let has_type = inner
+             .iter()
+             .any(|p| is_type_context(p.1.text) || matches!(p.1.text, "struct" | "union" | "enum"));
+         let prev_is_value = open > 0
+             && (pieces[open - 1].1.kind == TokenKind::Ident
+                 || matches!(pieces[open - 1].1.text, ")" | "]"));
+         let followed_by_operand = pieces

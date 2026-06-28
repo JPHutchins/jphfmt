@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with * in space_casts
+@@ -226,17 +226,17 @@
+     };
+     for open in 0..pieces.len() {
+         if pieces[open].1.text != "(" {
+             continue;
+         }
+         let Some(close) = piece_close_paren(pieces, open) else {
+             continue;
+         };
+-        let inner = &pieces[open + 1..close];
++        let inner = &pieces[open * /* ~ changed by cargo-mutants ~ */ 1..close];
+         let type_only = inner.iter().all(|p| {
+             p.1.kind == TokenKind::Ident
+                 || matches!(p.1.text, "*" | "[" | "]")
+                 || p.1.kind == TokenKind::Number
+         });
+         let has_type = inner
+             .iter()
+             .any(|p| is_type_context(p.1.text) || matches!(p.1.text, "struct" | "union" | "enum"));

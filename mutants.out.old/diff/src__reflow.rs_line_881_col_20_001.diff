@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace match guard depth == 0 && t.kind == TokenKind::Punct with false in has_top_level_question
+@@ -873,17 +873,17 @@
+ 
+ /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
+ fn has_top_level_question(inner: &[Token]) -> bool {
+     let mut depth = 0i32;
+     for t in inner {
+         match t.text {
+             "(" | "[" | "{" => depth += 1,
+             ")" | "]" | "}" => depth -= 1,
+-            "?" if depth == 0 && t.kind == TokenKind::Punct => return true,
++            "?" if false /* ~ changed by cargo-mutants ~ */ => return true,
+             _ => {}
+         }
+     }
+     false
+ }
+ 
+ /// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
+ /// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).

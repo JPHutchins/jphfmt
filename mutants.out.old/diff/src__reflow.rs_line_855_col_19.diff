@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace != with == in is_balanced
+@@ -847,17 +847,17 @@
+ }
+ 
+ /// Whether `()`, `[]`, and `{}` are all balanced (never negative, net zero) in `toks`. Unbalanced
+ /// inner brackets defeat depth-aware splitting, so such a construct is unstructurable and is passed
+ /// through verbatim rather than risk mis-splitting (which could accumulate commas across passes).
+ fn is_balanced(toks: &[Token]) -> bool {
+     let (mut paren, mut brack, mut brace) = (0i32, 0i32, 0i32);
+     for t in toks {
+-        if t.kind != TokenKind::Punct {
++        if t.kind == /* ~ changed by cargo-mutants ~ */ TokenKind::Punct {
+             continue;
+         }
+         match t.text {
+             "(" => paren += 1,
+             ")" => paren -= 1,
+             "[" => brack += 1,
+             "]" => brack -= 1,
+             "{" => brace += 1,

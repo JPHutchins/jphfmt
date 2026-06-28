@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete ! in render_segment
+@@ -896,17 +896,17 @@
+ }
+ 
+ /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
+ fn render_segment(toks: &[Token]) -> String {
+     let mut s = String::new();
+     let mut pending_space = false;
+     for t in toks {
+         if is_trivia(t) {
+-            if !s.is_empty() {
++            if  /* ~ changed by cargo-mutants ~ */s.is_empty() {
+                 pending_space = true;
+             }
+         } else {
+             if pending_space {
+                 s.push(' ');
+                 pending_space = false;
+             }
+             s.push_str(t.text);

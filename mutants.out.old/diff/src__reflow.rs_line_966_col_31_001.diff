@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace - with / in build_brace_doc
+@@ -958,17 +958,17 @@
+     let elements: Vec<&[Token]> = segments
+         .into_iter()
+         .filter(|s| s.iter().any(|t| !is_trivia(t)))
+         .collect();
+     if elements.is_empty() {
+         return Doc::text("{}");
+     }
+     let pad = || if padded { Doc::Line } else { Doc::SoftLine };
+-    let last = elements.len() - 1;
++    let last = elements.len() / /* ~ changed by cargo-mutants ~ */ 1;
+     let mut items = vec![pad()];
+     for (idx, element) in elements.into_iter().enumerate() {
+         items.push(build_element_doc(element));
+         if idx < last {
+             items.push(Doc::text(","));
+             items.push(Doc::Line);
+         } else {
+             items.push(Doc::IfBreak {

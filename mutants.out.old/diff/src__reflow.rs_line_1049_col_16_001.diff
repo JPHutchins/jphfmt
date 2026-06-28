@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace < with > in build_clause_group
+@@ -1041,17 +1041,17 @@
+ fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
+     if segments.is_empty() {
+         return Doc::text("()");
+     }
+     let last = segments.len() - 1;
+     let mut items = vec![Doc::SoftLine];
+     for (idx, seg) in segments.into_iter().enumerate() {
+         items.push(Doc::Text(seg));
+-        if idx < last {
++        if idx > /* ~ changed by cargo-mutants ~ */ last {
+             items.push(Doc::text(sep.to_owned()));
+             items.push(Doc::Line);
+         }
+     }
+     Doc::group(Doc::concat([
+         Doc::text("("),
+         Doc::nest(Doc::concat(items)),
+         Doc::SoftLine,

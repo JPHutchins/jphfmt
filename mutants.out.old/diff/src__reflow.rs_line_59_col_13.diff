@@ -1,0 +1,34 @@
+--- src/reflow.rs
++++ delete match arm TokenKind::Newline in collapse_blank_lines
+@@ -51,30 +51,17 @@
+ /// preserved. Comment interiors are untouched — their newlines live inside one comment token.
+ fn collapse_blank_lines(s: &str) -> String {
+     let mut out = String::with_capacity(s.len());
+     let mut line = String::new();
+     let mut has_content = false;
+     let mut blank_run = 0usize;
+     for t in tokenize(s) {
+         match t.kind {
+-            TokenKind::Newline => {
+-                if has_content {
+-                    out.push_str(&line);
+-                    out.push('\n');
+-                    blank_run = 0;
+-                } else {
+-                    blank_run += 1;
+-                    if blank_run <= 1 {
+-                        out.push('\n');
+-                    }
+-                }
+-                line.clear();
+-                has_content = false;
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             TokenKind::Whitespace => line.push_str(t.text),
+             _ => {
+                 line.push_str(t.text);
+                 has_content = true;
+             }
+         }
+     }
+     out.push_str(&line);

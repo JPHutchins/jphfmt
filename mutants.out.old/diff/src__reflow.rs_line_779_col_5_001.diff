@@ -1,0 +1,35 @@
+--- src/reflow.rs
++++ replace matching -> Option<usize> with Some(0)
+@@ -771,31 +771,17 @@
+ }
+ 
+ /// Index of the `}` matching the `{` at `open`, or `None` if unbalanced.
+ fn match_brace(toks: &[Token], open: usize) -> Option<usize> {
+     matching(toks, open, "{", "}")
+ }
+ 
+ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> {
+-    if toks.get(open).map(|t| t.text) != Some(lhs) {
+-        return None;
+-    }
+-    let mut depth = 0usize;
+-    for (j, t) in toks.iter().enumerate().skip(open) {
+-        if t.text == lhs {
+-            depth += 1;
+-        } else if t.text == rhs {
+-            depth -= 1;
+-            if depth == 0 {
+-                return Some(j);
+-            }
+-        }
+-    }
+-    None
++    Some(0) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Split `inner` into segments at the depth-zero tokens for which `is_sep` holds.
+ fn split_top_level<'a, 'src>(
+     inner: &'a [Token<'src>],
+     is_sep: impl Fn(&Token) -> bool,
+ ) -> Vec<&'a [Token<'src>]> {
+     let mut segments = Vec::new();

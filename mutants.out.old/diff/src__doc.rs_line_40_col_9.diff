@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace Doc::text -> Doc with Default::default()
+@@ -32,17 +32,17 @@
+     IfBreak { broken: String, flat: String },
+     /// Always broken, and reported as not-fitting so any enclosing group also breaks. Models the
+     /// §2.3 magic trailing comma: its presence forces the list (and its parents) to explode.
+     ForceBreak(Box<Doc>),
+ }
+ 
+ impl Doc {
+     pub fn text(s: impl Into<String>) -> Doc {
+-        Doc::Text(s.into())
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+     pub fn concat(items: impl IntoIterator<Item = Doc>) -> Doc {
+         Doc::Concat(items.into_iter().collect())
+     }
+     pub fn group(inner: Doc) -> Doc {
+         Doc::Group(Box::new(inner))
+     }
+     pub fn nest(inner: Doc) -> Doc {

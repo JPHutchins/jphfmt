@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace > with < in build_brace_doc
+@@ -949,17 +949,17 @@
+ /// Build the document for a `{}` list: comma-separated elements, a trailing comma when broken, and
+ /// the §2.3 magic comma (a trailing comma in the source forces explosion). `padded` adds an inner
+ /// space in the flat form (`enum { A, B }`) versus the tight initializer form (`{1, 2}`).
+ fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
+     if !is_balanced(inner) {
+         return Doc::Text(format!("{{{}}}", render_segment(inner)));
+     }
+     let segments = split_on_commas(inner);
+-    let magic = segments.len() > 1 && segments.last().is_some_and(|s| s.iter().all(is_trivia));
++    let magic = segments.len() < /* ~ changed by cargo-mutants ~ */ 1 && segments.last().is_some_and(|s| s.iter().all(is_trivia));
+     let elements: Vec<&[Token]> = segments
+         .into_iter()
+         .filter(|s| s.iter().any(|t| !is_trivia(t)))
+         .collect();
+     if elements.is_empty() {
+         return Doc::text("{}");
+     }
+     let pad = || if padded { Doc::Line } else { Doc::SoftLine };

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in structure
+@@ -444,17 +444,17 @@
+             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+             emit_str(&mut out, &mut col, &rendered);
+             i = close + 1;
+             continue;
+         }
+ 
+         // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
+         if in_init
+-            && t.kind == TokenKind::Punct
++            || /* ~ changed by cargo-mutants ~ */ t.kind == TokenKind::Punct
+             && t.text == "{"
+             && last_nonspace_char(&out) != Some('(')
+             && match_brace(toks, i).is_some()
+         {
+             i = emit_brace(toks, i, false, &mut out, &mut col, width);
+             continue;
+         }
+ 

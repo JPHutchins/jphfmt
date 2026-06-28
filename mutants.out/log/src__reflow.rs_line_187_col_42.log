@@ -26,76 +26,69 @@
 
 
 *** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=cfmt@0.1.0
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
        Fresh libc v0.2.186
        Fresh cfg-if v1.0.4
        Fresh unicode-ident v1.0.24
-       Fresh regex-syntax v0.8.11
-       Fresh fnv v1.0.7
        Fresh memchr v2.8.2
-       Fresh aho-corasick v1.1.4
-       Fresh linux-raw-sys v0.12.1
-       Fresh bitflags v2.13.0
+       Fresh fnv v1.0.7
+       Fresh regex-syntax v0.8.11
        Fresh autocfg v1.5.1
+       Fresh bitflags v2.13.0
+       Fresh linux-raw-sys v0.12.1
        Fresh once_cell v1.21.4
-       Fresh proc-macro2 v1.0.106
-       Fresh getrandom v0.3.4
-       Fresh regex-automata v0.4.14
-       Fresh getrandom v0.4.3
-       Fresh zerocopy v0.8.52
-       Fresh rustix v1.1.4
        Fresh fastrand v2.4.1
        Fresh wait-timeout v0.2.1
        Fresh bit-vec v0.8.0
        Fresh quick-error v1.2.3
+       Fresh unarray v0.1.4
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh proc-macro2 v1.0.106
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.3.4
+       Fresh getrandom v0.4.3
+       Fresh zerocopy v0.8.52
+       Fresh rustix v1.1.4
        Fresh quote v1.0.46
        Fresh rand_core v0.9.5
        Fresh ppv-lite86 v0.2.21
        Fresh tempfile v3.27.0
-       Fresh bit-set v0.8.0
-       Fresh unarray v0.1.4
-       Fresh syn v2.0.118
-       Fresh rand_xorshift v0.4.0
-       Fresh rand_chacha v0.9.0
-       Fresh rand v0.9.4
        Fresh num-traits v0.2.19
+       Fresh syn v2.0.118
+       Fresh rand_chacha v0.9.0
        Fresh rusty-fork v0.3.1
+       Fresh rand_xorshift v0.4.0
+       Fresh rand v0.9.4
        Fresh logos-codegen v0.16.1
        Fresh proptest v1.11.0
        Fresh logos-derive v0.16.1
        Fresh logos v0.16.1
-       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp): the file `src/reflow.rs` has changed (1782619300.312640392s, 1s after last build at 1782619299.643159368s)
-   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp)
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s
-  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-a84e12700bb01142`
-  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
-  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/conformance-9397798b72f1cc71`
-  Executable `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/properties-cb1d676eedf1110f`
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-BJPT2E.tmp): the file `src/reflow.rs` has changed (1782619771.044219760s, 1s after last build at 1782619770.364463918s)
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-BJPT2E.tmp)
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+  Executable `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+  Executable `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+  Executable `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+  Executable `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/properties-cb1d676eedf1110f`
 
 *** result: Success
 
 *** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=cfmt@0.1.0
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
        Fresh libc v0.2.186
        Fresh cfg-if v1.0.4
        Fresh unicode-ident v1.0.24
-       Fresh fnv v1.0.7
-       Fresh memchr v2.8.2
        Fresh regex-syntax v0.8.11
+       Fresh memchr v2.8.2
+       Fresh fnv v1.0.7
        Fresh bitflags v2.13.0
-       Fresh autocfg v1.5.1
        Fresh linux-raw-sys v0.12.1
+       Fresh autocfg v1.5.1
        Fresh once_cell v1.21.4
        Fresh fastrand v2.4.1
        Fresh wait-timeout v0.2.1
@@ -105,350 +98,362 @@
        Fresh aho-corasick v1.1.4
        Fresh bit-set v0.8.0
        Fresh proc-macro2 v1.0.106
-       Fresh getrandom v0.3.4
        Fresh regex-automata v0.4.14
-       Fresh zerocopy v0.8.52
+       Fresh getrandom v0.3.4
        Fresh getrandom v0.4.3
        Fresh rustix v1.1.4
+       Fresh zerocopy v0.8.52
        Fresh quote v1.0.46
        Fresh rand_core v0.9.5
-       Fresh ppv-lite86 v0.2.21
        Fresh tempfile v3.27.0
+       Fresh ppv-lite86 v0.2.21
        Fresh num-traits v0.2.19
        Fresh syn v2.0.118
-       Fresh rand_chacha v0.9.0
        Fresh rand_xorshift v0.4.0
-       Fresh rand v0.9.4
        Fresh rusty-fork v0.3.1
+       Fresh rand_chacha v0.9.0
+       Fresh rand v0.9.4
        Fresh logos-codegen v0.16.1
        Fresh proptest v1.11.0
        Fresh logos-derive v0.16.1
        Fresh logos v0.16.1
-       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
-     Running `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-BJPT2E.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/cfmt-a84e12700bb01142`
 
 running 4 tests
 test doc::tests::breaks_indent_relative_to_base_level ... ok
-test doc::tests::fully_breaks_when_it_overflows ... ok
 test doc::tests::flat_when_it_fits ... ok
+test doc::tests::fully_breaks_when_it_overflows ... ok
 test doc::tests::trailing_reserved_width_forces_a_break ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+     Running `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running `/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+     Running `/tmp/cargo-mutants-c-format-BJPT2E.tmp/target/debug/deps/conformance-9397798b72f1cc71`
 
-running 51 tests
+running 53 tests
+test ambiguous_star_is_left_alone ... FAILED
 test bit_field_colon_spacing ... FAILED
 test blank_line_runs_collapse_to_one_everywhere ... FAILED
 test block_comment_internals_are_untouched ... FAILED
 test brace_attaches_for_functions_and_control ... FAILED
 test call_with_line_comment_passes_through ... FAILED
-test ambiguous_star_is_left_alone ... FAILED
-test collapses_a_call_that_now_fits ... FAILED
 test casts_get_a_trailing_space ... FAILED
+test collapses_a_call_that_now_fits ... FAILED
 test collapses_initializer_without_trailing_comma ... FAILED
 test compound_literal_arg_explodes_its_initializer_when_long ... FAILED
-test compound_literal_brace_stays_tight ... FAILED
 test compound_literal_initializer_explodes ... FAILED
+test compound_literal_brace_stays_tight ... FAILED
 test compound_literals_in_function_args ... FAILED
+test control_headers_are_not_calls ... FAILED
+test condition_splits_on_the_outer_logical_operator ... FAILED
 test control_keyword_gets_one_space_before_paren ... FAILED
 test crlf_is_normalized_to_lf ... FAILED
-test control_headers_are_not_calls ... FAILED
-test do_while_macro_passes_through ... FAILED
-test enum_magic_comma_explodes ... FAILED
 test declaration_with_brace_explodes_and_keeps_brace_attached ... FAILED
-test exactly_one_trailing_newline ... FAILED
-test function_like_macro_body_opens_on_define_line ... FAILED
-test for_header_is_not_treated_as_a_call ... FAILED
-test function_pointer_star_is_not_spaced ... FAILED
+test do_while_macro_passes_through ... FAILED
 test enum_body_is_padded_when_flat ... FAILED
+test enum_magic_comma_explodes ... FAILED
+test exactly_one_trailing_newline ... FAILED
+test for_header_is_not_treated_as_a_call ... FAILED
+test function_like_macro_body_opens_on_define_line ... FAILED
+test function_pointer_star_is_not_spaced ... FAILED
 test generic_macro_explodes_one_association_per_line ... FAILED
 test golden_has_no_space_indented_code ... ok
 test indentation_is_normalized_to_tabs ... FAILED
 test initializer_with_comment_keeps_structure_but_retabs ... FAILED
+test long_call_explodes_one_per_line ... FAILED
 test long_for_header_explodes_one_clause_per_line ... FAILED
+test long_if_condition_explodes_with_trailing_operators ... FAILED
 test long_ternary_chain_explodes_flat_with_trailing_colons ... FAILED
 test magic_trailing_comma_forces_explosion_with_trailing_comma ... FAILED
 test nested_initializer_collapses_independently ... FAILED
-test passthrough_for_call_free_input ... FAILED
-test nested_paren_comma_is_not_a_split_point ... FAILED
 test messy_real_world_input_is_idempotent_and_safe ... FAILED
-test pointers_are_middle_spaced_after_type_keywords ... FAILED
-test short_initializer_stays_flat_and_tight ... FAILED
-test short_object_macro_unchanged ... FAILED
-test short_parenthesized_ternary_stays_flat ... FAILED
+test passthrough_for_call_free_input ... FAILED
 test golden_is_a_fixpoint ... FAILED
-test long_if_condition_explodes_with_trailing_operators ... FAILED
-test statement_expression_in_code_block_indents ... FAILED
-test golden_acceptance_unguarded_showcase ... FAILED
-test idempotent_on_showcase ... FAILED
-test long_call_explodes_one_per_line ... FAILED
-test statement_expression_macro_blocks_with_continuations ... FAILED
-test unparenthesized_ternary_is_left_alone ... FAILED
 test short_call_stays_flat ... FAILED
-test struct_tag_pointer_is_middle_spaced ... FAILED
-test showcase_content_is_preserved ... FAILED
+test golden_acceptance_unguarded_showcase ... FAILED
+test short_object_macro_unchanged ... FAILED
+test idempotent_on_showcase ... FAILED
+test short_parenthesized_ternary_stays_flat ... FAILED
 test short_control_headers_unchanged ... FAILED
+test unbalanced_brackets_pass_through_verbatim ... FAILED
+test short_initializer_stays_flat_and_tight ... FAILED
+test unparenthesized_ternary_is_left_alone ... FAILED
+test nested_paren_comma_is_not_a_split_point ... FAILED
+test pointers_are_middle_spaced_after_type_keywords ... FAILED
+test struct_tag_pointer_is_middle_spaced ... FAILED
+test statement_expression_macro_blocks_with_continuations ... FAILED
+test showcase_content_is_preserved ... FAILED
+test statement_expression_in_code_block_indents ... FAILED
 
 failures:
 
+---- ambiguous_star_is_left_alone stdout ----
+
+thread 'ambiguous_star_is_left_alone' (833254) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 6 but the index is 6
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
 ---- bit_field_colon_spacing stdout ----
 
-thread 'bit_field_colon_spacing' (484825) panicked at src/reflow.rs:187:33:
+thread 'bit_field_colon_spacing' (833255) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 10 but the index is 10
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ---- blank_line_runs_collapse_to_one_everywhere stdout ----
 
-thread 'blank_line_runs_collapse_to_one_everywhere' (484827) panicked at src/reflow.rs:187:33:
+thread 'blank_line_runs_collapse_to_one_everywhere' (833256) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 6 but the index is 6
 
 ---- block_comment_internals_are_untouched stdout ----
 
-thread 'block_comment_internals_are_untouched' (484829) panicked at src/reflow.rs:187:33:
+thread 'block_comment_internals_are_untouched' (833257) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 4 but the index is 4
 
 ---- brace_attaches_for_functions_and_control stdout ----
 
-thread 'brace_attaches_for_functions_and_control' (484833) panicked at src/reflow.rs:187:33:
+thread 'brace_attaches_for_functions_and_control' (833258) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 7 but the index is 7
 
 ---- call_with_line_comment_passes_through stdout ----
 
-thread 'call_with_line_comment_passes_through' (484837) panicked at src/reflow.rs:187:33:
+thread 'call_with_line_comment_passes_through' (833259) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 9 but the index is 9
-
----- ambiguous_star_is_left_alone stdout ----
-
-thread 'ambiguous_star_is_left_alone' (484824) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 6 but the index is 6
-
----- collapses_a_call_that_now_fits stdout ----
-
-thread 'collapses_a_call_that_now_fits' (484842) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 7 but the index is 7
 
 ---- casts_get_a_trailing_space stdout ----
 
-thread 'casts_get_a_trailing_space' (484840) panicked at src/reflow.rs:187:33:
+thread 'casts_get_a_trailing_space' (833260) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 7 but the index is 7
+
+---- collapses_a_call_that_now_fits stdout ----
+
+thread 'collapses_a_call_that_now_fits' (833261) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 7 but the index is 7
 
 ---- collapses_initializer_without_trailing_comma stdout ----
 
-thread 'collapses_initializer_without_trailing_comma' (484845) panicked at src/reflow.rs:187:33:
+thread 'collapses_initializer_without_trailing_comma' (833262) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 13 but the index is 13
 
 ---- compound_literal_arg_explodes_its_initializer_when_long stdout ----
 
-thread 'compound_literal_arg_explodes_its_initializer_when_long' (484847) panicked at src/reflow.rs:187:33:
+thread 'compound_literal_arg_explodes_its_initializer_when_long' (833263) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 30 but the index is 30
+
+---- compound_literal_initializer_explodes stdout ----
+
+thread 'compound_literal_initializer_explodes' (833265) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 30 but the index is 30
 
 ---- compound_literal_brace_stays_tight stdout ----
 
-thread 'compound_literal_brace_stays_tight' (484851) panicked at src/reflow.rs:187:33:
+thread 'compound_literal_brace_stays_tight' (833264) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 14 but the index is 14
-
----- compound_literal_initializer_explodes stdout ----
-
-thread 'compound_literal_initializer_explodes' (484852) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 30 but the index is 30
 
 ---- compound_literals_in_function_args stdout ----
 
-thread 'compound_literals_in_function_args' (484854) panicked at src/reflow.rs:187:33:
+thread 'compound_literals_in_function_args' (833266) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 22 but the index is 22
+
+---- control_headers_are_not_calls stdout ----
+
+thread 'control_headers_are_not_calls' (833268) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 14 but the index is 14
+
+---- condition_splits_on_the_outer_logical_operator stdout ----
+
+thread 'condition_splits_on_the_outer_logical_operator' (833267) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 24 but the index is 24
 
 ---- control_keyword_gets_one_space_before_paren stdout ----
 
-thread 'control_keyword_gets_one_space_before_paren' (484858) panicked at src/reflow.rs:187:33:
+thread 'control_keyword_gets_one_space_before_paren' (833271) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 6 but the index is 6
 
 ---- crlf_is_normalized_to_lf stdout ----
 
-thread 'crlf_is_normalized_to_lf' (484860) panicked at src/reflow.rs:187:33:
+thread 'crlf_is_normalized_to_lf' (833272) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 6 but the index is 6
 
----- control_headers_are_not_calls stdout ----
+---- declaration_with_brace_explodes_and_keeps_brace_attached stdout ----
 
-thread 'control_headers_are_not_calls' (484856) panicked at src/reflow.rs:187:33:
+thread 'declaration_with_brace_explodes_and_keeps_brace_attached' (833273) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 14 but the index is 14
 
 ---- do_while_macro_passes_through stdout ----
 
-thread 'do_while_macro_passes_through' (484865) panicked at src/reflow.rs:187:33:
+thread 'do_while_macro_passes_through' (833275) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 23 but the index is 23
-
----- enum_magic_comma_explodes stdout ----
-
-thread 'enum_magic_comma_explodes' (484868) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 11 but the index is 11
-
----- declaration_with_brace_explodes_and_keeps_brace_attached stdout ----
-
-thread 'declaration_with_brace_explodes_and_keeps_brace_attached' (484863) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 14 but the index is 14
-
----- exactly_one_trailing_newline stdout ----
-
-thread 'exactly_one_trailing_newline' (484870) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 3 but the index is 3
-
----- function_like_macro_body_opens_on_define_line stdout ----
-
-thread 'function_like_macro_body_opens_on_define_line' (484876) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 26 but the index is 26
-
----- for_header_is_not_treated_as_a_call stdout ----
-
-thread 'for_header_is_not_treated_as_a_call' (484872) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 25 but the index is 25
-
----- function_pointer_star_is_not_spaced stdout ----
-
-thread 'function_pointer_star_is_not_spaced' (484878) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 9 but the index is 9
 
 ---- enum_body_is_padded_when_flat stdout ----
 
-thread 'enum_body_is_padded_when_flat' (484867) panicked at src/reflow.rs:187:33:
+thread 'enum_body_is_padded_when_flat' (833277) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 7 but the index is 7
+
+---- enum_magic_comma_explodes stdout ----
+
+thread 'enum_magic_comma_explodes' (833278) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 11 but the index is 11
+
+---- exactly_one_trailing_newline stdout ----
+
+thread 'exactly_one_trailing_newline' (833279) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 3 but the index is 3
+
+---- for_header_is_not_treated_as_a_call stdout ----
+
+thread 'for_header_is_not_treated_as_a_call' (833280) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 25 but the index is 25
+
+---- function_like_macro_body_opens_on_define_line stdout ----
+
+thread 'function_like_macro_body_opens_on_define_line' (833281) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 26 but the index is 26
+
+---- function_pointer_star_is_not_spaced stdout ----
+
+thread 'function_pointer_star_is_not_spaced' (833282) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 9 but the index is 9
 
 ---- generic_macro_explodes_one_association_per_line stdout ----
 
-thread 'generic_macro_explodes_one_association_per_line' (484880) panicked at src/reflow.rs:187:33:
+thread 'generic_macro_explodes_one_association_per_line' (833283) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 32 but the index is 32
 
 ---- indentation_is_normalized_to_tabs stdout ----
 
-thread 'indentation_is_normalized_to_tabs' (484894) panicked at src/reflow.rs:187:33:
+thread 'indentation_is_normalized_to_tabs' (833288) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 17 but the index is 17
 
 ---- initializer_with_comment_keeps_structure_but_retabs stdout ----
 
-thread 'initializer_with_comment_keeps_structure_but_retabs' (484898) panicked at src/reflow.rs:187:33:
+thread 'initializer_with_comment_keeps_structure_but_retabs' (833289) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 13 but the index is 13
+
+---- long_call_explodes_one_per_line stdout ----
+
+thread 'long_call_explodes_one_per_line' (833290) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 11 but the index is 11
 
 ---- long_for_header_explodes_one_clause_per_line stdout ----
 
-thread 'long_for_header_explodes_one_clause_per_line' (484901) panicked at src/reflow.rs:187:33:
+thread 'long_for_header_explodes_one_clause_per_line' (833291) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 16 but the index is 16
+
+---- long_if_condition_explodes_with_trailing_operators stdout ----
+
+thread 'long_if_condition_explodes_with_trailing_operators' (833292) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 16 but the index is 16
 
 ---- long_ternary_chain_explodes_flat_with_trailing_colons stdout ----
 
-thread 'long_ternary_chain_explodes_flat_with_trailing_colons' (484904) panicked at src/reflow.rs:187:33:
+thread 'long_ternary_chain_explodes_flat_with_trailing_colons' (833293) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 29 but the index is 29
 
 ---- magic_trailing_comma_forces_explosion_with_trailing_comma stdout ----
 
-thread 'magic_trailing_comma_forces_explosion_with_trailing_comma' (484905) panicked at src/reflow.rs:187:33:
+thread 'magic_trailing_comma_forces_explosion_with_trailing_comma' (833294) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 14 but the index is 14
 
 ---- nested_initializer_collapses_independently stdout ----
 
-thread 'nested_initializer_collapses_independently' (484909) panicked at src/reflow.rs:187:33:
+thread 'nested_initializer_collapses_independently' (833296) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 28 but the index is 28
-
----- passthrough_for_call_free_input stdout ----
-
-thread 'passthrough_for_call_free_input' (484911) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 5 but the index is 5
-
----- nested_paren_comma_is_not_a_split_point stdout ----
-
-thread 'nested_paren_comma_is_not_a_split_point' (484910) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 20 but the index is 20
 
 ---- messy_real_world_input_is_idempotent_and_safe stdout ----
 
-thread 'messy_real_world_input_is_idempotent_and_safe' (484908) panicked at src/reflow.rs:187:33:
+thread 'messy_real_world_input_is_idempotent_and_safe' (833295) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 260 but the index is 260
 
----- pointers_are_middle_spaced_after_type_keywords stdout ----
+---- passthrough_for_call_free_input stdout ----
 
-thread 'pointers_are_middle_spaced_after_type_keywords' (484912) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 4 but the index is 4
-
----- short_initializer_stays_flat_and_tight stdout ----
-
-thread 'short_initializer_stays_flat_and_tight' (484915) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 13 but the index is 13
-
----- short_object_macro_unchanged stdout ----
-
-thread 'short_object_macro_unchanged' (484916) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 4 but the index is 4
-
----- short_parenthesized_ternary_stays_flat stdout ----
-
-thread 'short_parenthesized_ternary_stays_flat' (484917) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 12 but the index is 12
+thread 'passthrough_for_call_free_input' (833298) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 5 but the index is 5
 
 ---- golden_is_a_fixpoint stdout ----
 
-thread 'golden_is_a_fixpoint' (484887) panicked at src/reflow.rs:187:33:
+thread 'golden_is_a_fixpoint' (833286) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 2469 but the index is 2469
-
----- long_if_condition_explodes_with_trailing_operators stdout ----
-
-thread 'long_if_condition_explodes_with_trailing_operators' (484902) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 16 but the index is 16
-
----- statement_expression_in_code_block_indents stdout ----
-
-thread 'statement_expression_in_code_block_indents' (484919) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 17 but the index is 17
-
----- golden_acceptance_unguarded_showcase stdout ----
-
-thread 'golden_acceptance_unguarded_showcase' (484882) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 2469 but the index is 2469
-
----- idempotent_on_showcase stdout ----
-
-thread 'idempotent_on_showcase' (484889) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 2479 but the index is 2479
-
----- long_call_explodes_one_per_line stdout ----
-
-thread 'long_call_explodes_one_per_line' (484900) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 11 but the index is 11
-
----- statement_expression_macro_blocks_with_continuations stdout ----
-
-thread 'statement_expression_macro_blocks_with_continuations' (484920) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 40 but the index is 40
-
----- unparenthesized_ternary_is_left_alone stdout ----
-
-thread 'unparenthesized_ternary_is_left_alone' (484922) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 16 but the index is 16
 
 ---- short_call_stays_flat stdout ----
 
-thread 'short_call_stays_flat' (484913) panicked at src/reflow.rs:187:33:
+thread 'short_call_stays_flat' (833300) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 9 but the index is 9
 
----- struct_tag_pointer_is_middle_spaced stdout ----
+---- golden_acceptance_unguarded_showcase stdout ----
 
-thread 'struct_tag_pointer_is_middle_spaced' (484921) panicked at src/reflow.rs:187:33:
-index out of bounds: the len is 5 but the index is 5
+thread 'golden_acceptance_unguarded_showcase' (833284) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 2469 but the index is 2469
 
----- showcase_content_is_preserved stdout ----
+---- short_object_macro_unchanged stdout ----
 
-thread 'showcase_content_is_preserved' (484918) panicked at src/reflow.rs:187:33:
+thread 'short_object_macro_unchanged' (833303) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 4 but the index is 4
+
+---- idempotent_on_showcase stdout ----
+
+thread 'idempotent_on_showcase' (833287) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 2479 but the index is 2479
+
+---- short_parenthesized_ternary_stays_flat stdout ----
+
+thread 'short_parenthesized_ternary_stays_flat' (833304) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 12 but the index is 12
 
 ---- short_control_headers_unchanged stdout ----
 
-thread 'short_control_headers_unchanged' (484914) panicked at src/reflow.rs:187:33:
+thread 'short_control_headers_unchanged' (833301) panicked at src/reflow.rs:187:33:
 index out of bounds: the len is 8 but the index is 8
+
+---- unbalanced_brackets_pass_through_verbatim stdout ----
+
+thread 'unbalanced_brackets_pass_through_verbatim' (833309) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 12 but the index is 12
+
+---- short_initializer_stays_flat_and_tight stdout ----
+
+thread 'short_initializer_stays_flat_and_tight' (833302) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 13 but the index is 13
+
+---- unparenthesized_ternary_is_left_alone stdout ----
+
+thread 'unparenthesized_ternary_is_left_alone' (833310) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 16 but the index is 16
+
+---- nested_paren_comma_is_not_a_split_point stdout ----
+
+thread 'nested_paren_comma_is_not_a_split_point' (833297) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 20 but the index is 20
+
+---- pointers_are_middle_spaced_after_type_keywords stdout ----
+
+thread 'pointers_are_middle_spaced_after_type_keywords' (833299) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 4 but the index is 4
+
+---- struct_tag_pointer_is_middle_spaced stdout ----
+
+thread 'struct_tag_pointer_is_middle_spaced' (833308) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 5 but the index is 5
+
+---- statement_expression_macro_blocks_with_continuations stdout ----
+
+thread 'statement_expression_macro_blocks_with_continuations' (833307) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 40 but the index is 40
+
+---- showcase_content_is_preserved stdout ----
+
+thread 'showcase_content_is_preserved' (833305) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 2479 but the index is 2479
+
+---- statement_expression_in_code_block_indents stdout ----
+
+thread 'statement_expression_in_code_block_indents' (833306) panicked at src/reflow.rs:187:33:
+index out of bounds: the len is 17 but the index is 17
 
 
 failures:
@@ -465,6 +470,7 @@ failures:
     compound_literal_brace_stays_tight
     compound_literal_initializer_explodes
     compound_literals_in_function_args
+    condition_splits_on_the_outer_logical_operator
     control_headers_are_not_calls
     control_keyword_gets_one_space_before_paren
     crlf_is_normalized_to_lf
@@ -501,9 +507,10 @@ failures:
     statement_expression_in_code_block_indents
     statement_expression_macro_blocks_with_continuations
     struct_tag_pointer_is_middle_spaced
+    unbalanced_brackets_pass_through_verbatim
     unparenthesized_ternary_is_left_alone
 
-test result: FAILED. 1 passed; 50 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: FAILED. 1 passed; 52 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
 error: test failed, to rerun pass `-p cfmt --test conformance`
 

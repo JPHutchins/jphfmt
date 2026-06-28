@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete match arm "?" in ternary_open_before
+@@ -286,17 +286,17 @@
+         }
+     }
+ }
+ 
+ /// Whether an unmatched `?` precedes index `j` within the current statement (back to `;`/`{`/`}`).
+ fn ternary_open_before(pieces: &[Piece], j: usize) -> bool {
+     for p in pieces[..j].iter().rev() {
+         match p.1.text {
+-            "?" => return true,
++             /* ~ changed by cargo-mutants ~ */
+             ";" | "{" | "}" => return false,
+             _ => {}
+         }
+     }
+     false
+ }
+ 
+ /// Normalize every line ending to LF and guarantee exactly one trailing newline (§2.1). An

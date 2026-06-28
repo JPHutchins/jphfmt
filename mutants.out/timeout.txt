@@ -2,11 +2,7 @@ src/reflow.rs:194:19: replace += with *= in space_pointers
 src/reflow.rs:209:19: replace + with - in space_pointers
 src/reflow.rs:209:19: replace + with * in space_pointers
 src/reflow.rs:212:11: replace += with *= in space_pointers
-src/reflow.rs:486:5: replace emit_define -> usize with 0
 src/reflow.rs:471:11: replace += with -= in structure
 src/reflow.rs:471:11: replace += with *= in structure
 src/reflow.rs:486:5: replace emit_define -> usize with 1
-src/reflow.rs:562:5: replace format_stmt_expr -> Option<(String, usize)> with Some((String::new(), 0))
-src/reflow.rs:562:5: replace format_stmt_expr -> Option<(String, usize)> with Some((String::new(), 1))
-src/reflow.rs:562:5: replace format_stmt_expr -> Option<(String, usize)> with Some(("xyzzy".into(), 0))
-src/reflow.rs:562:5: replace format_stmt_expr -> Option<(String, usize)> with Some(("xyzzy".into(), 1))
+src/reflow.rs:486:5: replace emit_define -> usize with 0

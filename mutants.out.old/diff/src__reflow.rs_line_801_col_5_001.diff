@@ -1,0 +1,36 @@
+--- src/reflow.rs
++++ replace split_top_level -> Vec<&'a[Token<'src>]> with vec![Vec::leak(Vec::new())]
+@@ -793,32 +793,17 @@
+     None
+ }
+ 
+ /// Split `inner` into segments at the depth-zero tokens for which `is_sep` holds.
+ fn split_top_level<'a, 'src>(
+     inner: &'a [Token<'src>],
+     is_sep: impl Fn(&Token) -> bool,
+ ) -> Vec<&'a [Token<'src>]> {
+-    let mut segments = Vec::new();
+-    let mut depth = 0i32;
+-    let mut start = 0usize;
+-    for (j, t) in inner.iter().enumerate() {
+-        match t.text {
+-            "(" | "[" | "{" => depth += 1,
+-            ")" | "]" | "}" => depth -= 1,
+-            _ if depth == 0 && is_sep(t) => {
+-                segments.push(&inner[start..j]);
+-                start = j + 1;
+-            }
+-            _ => {}
+-        }
+-    }
+-    segments.push(&inner[start..]);
+-    segments
++    vec![Vec::leak(Vec::new())] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Split `inner` on commas at bracket depth zero.
+ fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
+     split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
+ }
+ 
+ /// The outermost logical operator present at bracket depth zero (`||` outranks `&&`), if any.

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with - in structure
+@@ -435,17 +435,17 @@
+             && t.text == "("
+             && let Some(close) = match_bracket(toks, i)
+             && has_top_level_question(&toks[i + 1..close])
+             && !contains_comment(&toks[i + 1..close])
+             && is_balanced(&toks[i + 1..close])
+         {
+             let doc = build_ternary_doc(&toks[i + 1..close]);
+             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+-            let reserved = trailing_reserved(toks, close + 1);
++            let reserved = trailing_reserved(toks, close - /* ~ changed by cargo-mutants ~ */ 1);
+             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+             emit_str(&mut out, &mut col, &rendered);
+             i = close + 1;
+             continue;
+         }
+ 
+         // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
+         if in_init

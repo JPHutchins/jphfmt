@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in build_for_doc
+@@ -1056,17 +1056,17 @@
+         Doc::nest(Doc::concat(items)),
+         Doc::SoftLine,
+         Doc::text(")"),
+     ]))
+ }
+ 
+ /// `for (init; cond; step)` — one clause per line when broken (§2.4).
+ fn build_for_doc(inner: &[Token]) -> Doc {
+-    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
++    let clauses = split_top_level(inner, |t| t.kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Punct && t.text == ";")
+         .iter()
+         .map(|c| render_segment(c))
+         .collect();
+     build_clause_group(clauses, ";")
+ }
+ 
+ /// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
+ /// trailing (§2.7); a condition with no such operator explodes as a single indented element.

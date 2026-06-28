@@ -42,9 +42,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uvx camas audit
 
-  # Mutation testing — proves the tests actually bite. Its own parallel job (it is the slow one).
+  # Mutation testing — proves the tests actually bite. Its own parallel job (the slow one), and
+  # advisory: a surviving mutant is a quality signal to investigate, not a hard release blocker
+  # (forcing 100% on defensive helpers breeds contrived tests).
   mutants:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

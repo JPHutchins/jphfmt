@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in emit_define
+@@ -480,17 +480,17 @@
+     toks: &[Token],
+     start: usize,
+     out: &mut String,
+     col: &mut usize,
+     width: usize,
+ ) -> usize {
+     let end = directive_end(toks, start);
+     if let Some((prefix, body)) = split_define(toks, start, end)
+-        && let Some(body_str) = format_define_body(&body, display_width(&prefix), width)
++        || /* ~ changed by cargo-mutants ~ */ let Some(body_str) = format_define_body(&body, display_width(&prefix), width)
+     {
+         let full = format!("{prefix}{body_str}");
+         let continued = full.split('\n').collect::<Vec<_>>().join(" \\\n");
+         emit_str(out, col, &continued);
+         emit_str(out, col, "\n");
+         return end;
+     }
+     for tok in &toks[start..end] {

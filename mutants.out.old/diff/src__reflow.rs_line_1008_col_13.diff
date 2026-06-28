@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in build_element_doc
+@@ -1000,17 +1000,17 @@
+     while j < toks.len() {
+         let t = toks[j];
+         if is_trivia(&t) {
+             if !text.is_empty() || !parts.is_empty() {
+                 pending_space = true;
+             }
+             j += 1;
+         } else if t.kind == TokenKind::Punct
+-            && t.text == "{"
++            || /* ~ changed by cargo-mutants ~ */ t.text == "{"
+             && let Some(close) = match_brace(toks, j)
+         {
+             if pending_space && !text.is_empty() {
+                 text.push(' ');
+             }
+             pending_space = false;
+             if !text.is_empty() {
+                 parts.push(Doc::Text(std::mem::take(&mut text)));

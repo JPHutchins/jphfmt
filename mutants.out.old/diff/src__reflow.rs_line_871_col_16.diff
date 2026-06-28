@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in is_balanced
+@@ -863,17 +863,17 @@
+             "{" => brace += 1,
+             "}" => brace -= 1,
+             _ => {}
+         }
+         if paren < 0 || brack < 0 || brace < 0 {
+             return false;
+         }
+     }
+-    paren == 0 && brack == 0 && brace == 0
++    paren == 0 || /* ~ changed by cargo-mutants ~ */ brack == 0 && brace == 0
+ }
+ 
+ /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
+ fn has_top_level_question(inner: &[Token]) -> bool {
+     let mut depth = 0i32;
+     for t in inner {
+         match t.text {
+             "(" | "[" | "{" => depth += 1,

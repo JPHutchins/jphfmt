@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace < with == in build_call_doc
+@@ -928,17 +928,17 @@
+         .collect();
+     if args.is_empty() {
+         return Doc::text("()");
+     }
+     let last = args.len() - 1;
+     let mut items = vec![Doc::SoftLine];
+     for (idx, arg) in args.into_iter().enumerate() {
+         items.push(build_element_doc(arg));
+-        if idx < last {
++        if idx == /* ~ changed by cargo-mutants ~ */ last {
+             items.push(Doc::text(","));
+             items.push(Doc::Line);
+         }
+     }
+     Doc::group(Doc::concat([
+         Doc::text("("),
+         Doc::nest(Doc::concat(items)),
+         Doc::SoftLine,

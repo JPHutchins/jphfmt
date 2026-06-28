@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in space_braces
+@@ -252,17 +252,17 @@
+     }
+ }
+ 
+ /// K&R brace attach: `) {` keeps one space (§2.5) for function and control bodies, but the tight
+ /// `({` statement-expression and `(type){...}` compound literal are left alone. The matching `(`
+ /// follows an identifier for the former and an operator/`&`/`=` for the latter, which decides it.
+ fn space_braces(pieces: &mut [Piece]) {
+     for j in 1..pieces.len() {
+-        if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
++        if pieces[j].1.text == "{" && pieces[j - 1].1.text != /* ~ changed by cargo-mutants ~ */ ")" && same_line(&pieces[j].0) {
+             let function_or_control = piece_open_paren(pieces, j - 1)
+                 .and_then(|open| open.checked_sub(1))
+                 .is_some_and(|before| pieces[before].1.kind == TokenKind::Ident);
+             if function_or_control {
+                 pieces[j].0 = " ".to_owned();
+             }
+         }
+     }

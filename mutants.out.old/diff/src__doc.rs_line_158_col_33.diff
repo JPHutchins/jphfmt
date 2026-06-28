@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace == with != in fits
+@@ -150,17 +150,17 @@
+                 Mode::Break => return true,
+             },
+             Doc::SoftLine => {
+                 if mode == Mode::Break {
+                     return true;
+                 }
+             }
+             Doc::IfBreak { broken, flat } => {
+-                let s = if mode == Mode::Break { broken } else { flat };
++                let s = if mode != /* ~ changed by cargo-mutants ~ */ Mode::Break { broken } else { flat };
+                 let w = display_width(s);
+                 if w > remaining {
+                     return false;
+                 }
+                 remaining -= w;
+             }
+             Doc::ForceBreak(_) => return false,
+         }

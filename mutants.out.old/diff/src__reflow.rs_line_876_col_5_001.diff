@@ -1,0 +1,30 @@
+--- src/reflow.rs
++++ replace has_top_level_question -> bool with false
+@@ -868,26 +868,17 @@
+             return false;
+         }
+     }
+     paren == 0 && brack == 0 && brace == 0
+ }
+ 
+ /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
+ fn has_top_level_question(inner: &[Token]) -> bool {
+-    let mut depth = 0i32;
+-    for t in inner {
+-        match t.text {
+-            "(" | "[" | "{" => depth += 1,
+-            ")" | "]" | "}" => depth -= 1,
+-            "?" if depth == 0 && t.kind == TokenKind::Punct => return true,
+-            _ => {}
+-        }
+-    }
+-    false
++    false /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
+ /// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
+ fn build_ternary_doc(inner: &[Token]) -> Doc {
+     let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":")
+         .iter()
+         .map(|s| render_segment(s))

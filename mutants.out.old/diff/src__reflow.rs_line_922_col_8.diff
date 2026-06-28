@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete ! in build_call_doc
+@@ -914,17 +914,17 @@
+     }
+     s
+ }
+ 
+ /// Build the §2.2 document for a call's argument list, including the surrounding parens. Each
+ /// argument is built recursively (via [`build_element_doc`]), so a compound-literal argument's
+ /// `{...}` is a nested group that can collapse or explode on its own.
+ fn build_call_doc(inner: &[Token]) -> Doc {
+-    if !is_balanced(inner) {
++    if  /* ~ changed by cargo-mutants ~ */is_balanced(inner) {
+         return Doc::Text(format!("({})", render_segment(inner)));
+     }
+     let args: Vec<&[Token]> = split_on_commas(inner)
+         .into_iter()
+         .filter(|a| a.iter().any(|t| !is_trivia(t)))
+         .collect();
+     if args.is_empty() {
+         return Doc::text("()");

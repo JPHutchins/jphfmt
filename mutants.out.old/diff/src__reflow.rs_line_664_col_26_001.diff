@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace += with *= in current_line_indent_cols
+@@ -656,17 +656,17 @@
+ }
+ 
+ /// Indentation, in columns, of the current output line.
+ fn current_line_indent_cols(out: &str) -> usize {
+     let line = out.rsplit('\n').next().unwrap_or(out);
+     let mut cols = 0;
+     for ch in line.chars() {
+         match ch {
+-            '\t' => cols += TAB_WIDTH,
++            '\t' => cols *= /* ~ changed by cargo-mutants ~ */ TAB_WIDTH,
+             ' ' => cols += 1,
+             _ => break,
+         }
+     }
+     cols
+ }
+ 
+ /// The last non-whitespace character emitted, used to tell a compound literal `){` from a

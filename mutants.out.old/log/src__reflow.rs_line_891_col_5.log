@@ -1,0 +1,109 @@
+
+*** src/reflow.rs:891:5: replace build_ternary_doc -> Doc with Default::default()
+
+*** mutation diff:
+--- src/reflow.rs
++++ replace build_ternary_doc -> Doc with Default::default()
+@@ -883,21 +883,17 @@
+         }
+     }
+     false
+ }
+ 
+ /// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
+ /// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
+ fn build_ternary_doc(inner: &[Token]) -> Doc {
+-    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":")
+-        .iter()
+-        .map(|s| render_segment(s))
+-        .collect();
+-    build_clause_group(segments, " :")
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
+ fn render_segment(toks: &[Token]) -> String {
+     let mut s = String::new();
+     let mut pending_space = false;
+     for t in toks {
+         if is_trivia(t) {
+
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=cfmt@0.1.0
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh memchr v2.8.2
+       Fresh fnv v1.0.7
+       Fresh regex-syntax v0.8.11
+       Fresh aho-corasick v1.1.4
+       Fresh quote v1.0.46
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.3.4
+       Fresh autocfg v1.5.1
+       Fresh bitflags v2.13.0
+       Fresh linux-raw-sys v0.12.1
+       Fresh fastrand v2.4.1
+       Fresh once_cell v1.21.4
+       Fresh wait-timeout v0.2.1
+       Fresh bit-vec v0.8.0
+       Fresh quick-error v1.2.3
+       Fresh syn v2.0.118
+       Fresh rand_core v0.9.5
+       Fresh bit-set v0.8.0
+       Fresh unarray v0.1.4
+       Fresh logos-codegen v0.16.1
+       Fresh zerocopy v0.8.52
+       Fresh rustix v1.1.4
+       Fresh getrandom v0.4.3
+       Fresh rand_xorshift v0.4.0
+       Fresh rand v0.9.4
+       Fresh logos-derive v0.16.1
+       Fresh tempfile v3.27.0
+       Fresh ppv-lite86 v0.2.21
+       Fresh num-traits v0.2.19
+       Fresh logos v0.16.1
+       Fresh rand_chacha v0.9.0
+       Fresh rusty-fork v0.3.1
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp): the file `src/reflow.rs` has changed (1782619514.640143011s, 1s after last build at 1782619513.922045294s)
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-f441Qi.tmp)
+       Fresh proptest v1.11.0
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+error[E0277]: the trait bound `Doc: Default` is not satisfied
+   --> src/reflow.rs:891:5
+    |
+891 |     Default::default() /* ~ changed by cargo-mutants ~ */
+    |     ^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `Default` is not implemented for `Doc`
+   --> src/doc.rs:17:1
+    |
+ 17 | pub enum Doc {
+    | ^^^^^^^^^^^^
+
+error[E0277]: the trait bound `doc::Doc: Default` is not satisfied
+   --> src/reflow.rs:891:5
+    |
+891 |     Default::default() /* ~ changed by cargo-mutants ~ */
+    |     ^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `Default` is not implemented for `doc::Doc`
+   --> src/doc.rs:17:1
+    |
+ 17 | pub enum Doc {
+    | ^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `cfmt` (lib) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `cfmt` (lib test) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-f441Qi.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib` (exit status: 1)
+
+*** result: Failure(101)

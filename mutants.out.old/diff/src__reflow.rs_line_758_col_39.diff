@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in directive_end
+@@ -750,17 +750,17 @@
+     (from..end).find(|&j| !is_trivia(&toks[j]))
+ }
+ 
+ /// One past the last token of the preprocessor directive starting at `start` (following `\` line
+ /// continuations).
+ fn directive_end(toks: &[Token], start: usize) -> usize {
+     let mut i = start;
+     while i < toks.len() {
+-        let is_newline = toks[i].kind == TokenKind::Newline;
++        let is_newline = toks[i].kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Newline;
+         let continued = is_newline && i > 0 && toks[i - 1].text == "\\";
+         i += 1;
+         if is_newline && !continued {
+             break;
+         }
+     }
+     i
+ }

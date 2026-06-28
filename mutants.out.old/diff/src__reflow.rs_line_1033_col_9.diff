@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete match arm 0 in build_element_doc
+@@ -1025,17 +1025,17 @@
+             text.push_str(t.text);
+             j += 1;
+         }
+     }
+     if !text.is_empty() {
+         parts.push(Doc::Text(text));
+     }
+     match parts.len() {
+-        0 => Doc::text(""),
++         /* ~ changed by cargo-mutants ~ */
+         1 => parts.pop().unwrap(),
+         _ => Doc::concat(parts),
+     }
+ }
+ 
+ /// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
+ /// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
+ fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {

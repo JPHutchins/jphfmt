@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace match guard depth == 0 && is_sep(t) with true in split_top_level
+@@ -800,17 +800,17 @@
+ ) -> Vec<&'a [Token<'src>]> {
+     let mut segments = Vec::new();
+     let mut depth = 0i32;
+     let mut start = 0usize;
+     for (j, t) in inner.iter().enumerate() {
+         match t.text {
+             "(" | "[" | "{" => depth += 1,
+             ")" | "]" | "}" => depth -= 1,
+-            _ if depth == 0 && is_sep(t) => {
++            _ if true /* ~ changed by cargo-mutants ~ */ => {
+                 segments.push(&inner[start..j]);
+                 start = j + 1;
+             }
+             _ => {}
+         }
+     }
+     segments.push(&inner[start..]);
+     segments

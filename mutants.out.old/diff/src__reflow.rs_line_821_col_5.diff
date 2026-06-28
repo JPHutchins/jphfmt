@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace split_on_commas -> Vec<&'a[Token<'src>]> with vec![]
+@@ -813,17 +813,17 @@
+         }
+     }
+     segments.push(&inner[start..]);
+     segments
+ }
+ 
+ /// Split `inner` on commas at bracket depth zero.
+ fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
+-    split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
++    vec![] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The outermost logical operator present at bracket depth zero (`||` outranks `&&`), if any.
+ fn top_level_logical_op(inner: &[Token]) -> Option<&'static str> {
+     let mut depth = 0i32;
+     let mut has_and = false;
+     for t in inner {
+         match t.text {

@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ delete ! in next_nontrivia
+@@ -737,17 +737,17 @@
+             _ => return None,
+         }
+     }
+     None
+ }
+ 
+ /// The next non-trivia token index at or after `from`.
+ fn next_nontrivia(toks: &[Token], from: usize) -> Option<usize> {
+-    (from..toks.len()).find(|&j| !is_trivia(&toks[j]))
++    (from..toks.len()).find(|&j|  /* ~ changed by cargo-mutants ~ */is_trivia(&toks[j]))
+ }
+ 
+ /// The next non-trivia token index in `[from, end)`.
+ fn next_nontrivia_in(toks: &[Token], from: usize, end: usize) -> Option<usize> {
+     (from..end).find(|&j| !is_trivia(&toks[j]))
+ }
+ 
+ /// One past the last token of the preprocessor directive starting at `start` (following `\` line

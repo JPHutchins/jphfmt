@@ -1,0 +1,30 @@
+--- src/reflow.rs
++++ replace directive_end -> usize with 1
+@@ -748,26 +748,17 @@
+ /// The next non-trivia token index in `[from, end)`.
+ fn next_nontrivia_in(toks: &[Token], from: usize, end: usize) -> Option<usize> {
+     (from..end).find(|&j| !is_trivia(&toks[j]))
+ }
+ 
+ /// One past the last token of the preprocessor directive starting at `start` (following `\` line
+ /// continuations).
+ fn directive_end(toks: &[Token], start: usize) -> usize {
+-    let mut i = start;
+-    while i < toks.len() {
+-        let is_newline = toks[i].kind == TokenKind::Newline;
+-        let continued = is_newline && i > 0 && toks[i - 1].text == "\\";
+-        i += 1;
+-        if is_newline && !continued {
+-            break;
+-        }
+-    }
+-    i
++    1 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Index of the `)`/`]` matching the bracket at `open`, or `None` if unbalanced.
+ fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+     matching(toks, open, "(", ")").or_else(|| matching(toks, open, "[", "]"))
+ }
+ 
+ /// Index of the `}` matching the `{` at `open`, or `None` if unbalanced.

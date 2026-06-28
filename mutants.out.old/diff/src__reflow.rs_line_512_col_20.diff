@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace match guard n.kind == TokenKind::Punct && n.text == "(" with true in split_define
+@@ -504,17 +504,17 @@
+ fn split_define<'src>(
+     toks: &[Token<'src>],
+     start: usize,
+     end: usize,
+ ) -> Option<(String, Vec<Token<'src>>)> {
+     let define = next_nontrivia_in(toks, start + 1, end)?;
+     let name = next_nontrivia_in(toks, define + 1, end)?;
+     let prefix_end = match toks.get(name + 1) {
+-        Some(n) if n.kind == TokenKind::Punct && n.text == "(" => {
++        Some(n) if true /* ~ changed by cargo-mutants ~ */ => {
+             match_bracket(toks, name + 1)? + 1
+         }
+         _ => name + 1,
+     };
+     let prefix: String = toks[start..prefix_end]
+         .iter()
+         .map(|t| t.text)
+         .collect::<String>()

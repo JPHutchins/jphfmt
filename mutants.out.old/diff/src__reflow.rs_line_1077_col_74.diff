@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in build_cond_doc
+@@ -1069,17 +1069,17 @@
+ }
+ 
+ /// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
+ /// trailing (§2.7); a condition with no such operator explodes as a single indented element.
+ fn build_cond_doc(inner: &[Token]) -> Doc {
+     match top_level_logical_op(inner) {
+         Some(op) => {
+             let operands =
+-                split_top_level(inner, |t| t.kind == TokenKind::Operator && t.text == op)
++                split_top_level(inner, |t| t.kind == TokenKind::Operator || /* ~ changed by cargo-mutants ~ */ t.text == op)
+                     .iter()
+                     .map(|o| render_segment(o))
+                     .collect();
+             build_clause_group(operands, &format!(" {op}"))
+         }
+         None => build_clause_group(vec![render_segment(inner)], ""),
+     }
+ }

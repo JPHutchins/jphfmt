@@ -1,0 +1,224 @@
+
+*** src/reflow.rs:770:5: replace match_bracket -> Option<usize> with Some(0)
+
+*** mutation diff:
+--- src/reflow.rs
++++ replace match_bracket -> Option<usize> with Some(0)
+@@ -762,17 +762,17 @@
+             break;
+         }
+     }
+     i
+ }
+ 
+ /// Index of the `)`/`]` matching the bracket at `open`, or `None` if unbalanced.
+ fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+-    matching(toks, open, "(", ")").or_else(|| matching(toks, open, "[", "]"))
++    Some(0) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Index of the `}` matching the `{` at `open`, or `None` if unbalanced.
+ fn match_brace(toks: &[Token], open: usize) -> Option<usize> {
+     matching(toks, open, "{", "}")
+ }
+ 
+ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> {
+
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=cfmt@0.1.0
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh regex-syntax v0.8.11
+       Fresh fnv v1.0.7
+       Fresh memchr v2.8.2
+       Fresh autocfg v1.5.1
+       Fresh bitflags v2.13.0
+       Fresh linux-raw-sys v0.12.1
+       Fresh once_cell v1.21.4
+       Fresh fastrand v2.4.1
+       Fresh wait-timeout v0.2.1
+       Fresh quick-error v1.2.3
+       Fresh bit-vec v0.8.0
+       Fresh unarray v0.1.4
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh proc-macro2 v1.0.106
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.3.4
+       Fresh zerocopy v0.8.52
+       Fresh getrandom v0.4.3
+       Fresh rustix v1.1.4
+       Fresh quote v1.0.46
+       Fresh rand_core v0.9.5
+       Fresh ppv-lite86 v0.2.21
+       Fresh tempfile v3.27.0
+       Fresh num-traits v0.2.19
+       Fresh syn v2.0.118
+       Fresh rand v0.9.4
+       Fresh rusty-fork v0.3.1
+       Fresh rand_xorshift v0.4.0
+       Fresh rand_chacha v0.9.0
+       Fresh logos-codegen v0.16.1
+       Fresh proptest v1.11.0
+       Fresh logos-derive v0.16.1
+       Fresh logos v0.16.1
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-9qvovd.tmp): the file `src/reflow.rs` has changed (1782619481.718108354s, 1s after last build at 1782619480.801917272s)
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-9qvovd.tmp)
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+warning: unused variable: `toks`
+   --> src/reflow.rs:769:18
+    |
+769 | fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+    |                  ^^^^ help: if this is intentional, prefix it with an underscore: `_toks`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `open`
+   --> src/reflow.rs:769:34
+    |
+769 | fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+    |                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_open`
+
+warning: `cfmt` (lib) generated 2 warnings (run `cargo fix --lib -p cfmt` to apply 2 suggestions)
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+warning: `cfmt` (lib test) generated 2 warnings (2 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s
+  Executable `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+  Executable `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+  Executable `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+  Executable `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/properties-cb1d676eedf1110f`
+
+*** result: Success
+
+*** /home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=cfmt@0.1.0
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.24
+       Fresh fnv v1.0.7
+       Fresh regex-syntax v0.8.11
+       Fresh memchr v2.8.2
+       Fresh autocfg v1.5.1
+       Fresh linux-raw-sys v0.12.1
+       Fresh bitflags v2.13.0
+       Fresh fastrand v2.4.1
+       Fresh once_cell v1.21.4
+       Fresh wait-timeout v0.2.1
+       Fresh bit-vec v0.8.0
+       Fresh quick-error v1.2.3
+       Fresh unarray v0.1.4
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh proc-macro2 v1.0.106
+       Fresh getrandom v0.3.4
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.4.3
+       Fresh zerocopy v0.8.52
+       Fresh rustix v1.1.4
+       Fresh quote v1.0.46
+       Fresh rand_core v0.9.5
+       Fresh ppv-lite86 v0.2.21
+       Fresh tempfile v3.27.0
+       Fresh num-traits v0.2.19
+       Fresh syn v2.0.118
+       Fresh rand_chacha v0.9.0
+       Fresh rand_xorshift v0.4.0
+       Fresh rand v0.9.4
+       Fresh rusty-fork v0.3.1
+       Fresh logos-codegen v0.16.1
+       Fresh proptest v1.11.0
+       Fresh logos-derive v0.16.1
+       Fresh logos v0.16.1
+warning: unused variable: `toks`
+   --> src/reflow.rs:769:18
+    |
+769 | fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+    |                  ^^^^ help: if this is intentional, prefix it with an underscore: `_toks`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `open`
+   --> src/reflow.rs:769:34
+    |
+769 | fn match_bracket(toks: &[Token], open: usize) -> Option<usize> {
+    |                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_open`
+
+warning: `cfmt` (lib) generated 2 warnings (run `cargo fix --lib -p cfmt` to apply 2 suggestions)
+warning: `cfmt` (lib test) generated 2 warnings (2 duplicates)
+       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-9qvovd.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+
+running 4 tests
+test doc::tests::flat_when_it_fits ... ok
+test doc::tests::breaks_indent_relative_to_base_level ... ok
+test doc::tests::fully_breaks_when_it_overflows ... ok
+test doc::tests::trailing_reserved_width_forces_a_break ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-c-format-9qvovd.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+
+running 51 tests
+test ambiguous_star_is_left_alone ... ok
+test bit_field_colon_spacing ... ok
+test blank_line_runs_collapse_to_one_everywhere ... FAILED
+test block_comment_internals_are_untouched ... ok
+test brace_attaches_for_functions_and_control ... FAILED
+test call_with_line_comment_passes_through ... FAILED
+test casts_get_a_trailing_space ... FAILED
+test collapses_a_call_that_now_fits ... FAILED
+test collapses_initializer_without_trailing_comma ... ok
+test compound_literal_arg_explodes_its_initializer_when_long ... FAILED
+test compound_literal_brace_stays_tight ... FAILED
+test compound_literal_initializer_explodes ... FAILED
+test compound_literals_in_function_args ... FAILED
+test control_headers_are_not_calls ... FAILED
+test control_keyword_gets_one_space_before_paren ... FAILED
+test crlf_is_normalized_to_lf ... FAILED
+test declaration_with_brace_explodes_and_keeps_brace_attached ... FAILED
+test do_while_macro_passes_through ... ok
+test enum_body_is_padded_when_flat ... ok
+test enum_magic_comma_explodes ... ok
+test exactly_one_trailing_newline ... ok
+test for_header_is_not_treated_as_a_call ... FAILED
+test function_pointer_star_is_not_spaced ... FAILED
+test generic_macro_explodes_one_association_per_line ... FAILED
+test golden_has_no_space_indented_code ... ok
+test function_like_macro_body_opens_on_define_line ... FAILED
+test indentation_is_normalized_to_tabs ... FAILED
+test initializer_with_comment_keeps_structure_but_retabs ... ok
+test long_call_explodes_one_per_line ... FAILED
+test long_for_header_explodes_one_clause_per_line ... FAILED
+test long_ternary_chain_explodes_flat_with_trailing_colons ... FAILED
+test magic_trailing_comma_forces_explosion_with_trailing_comma ... ok
+test long_if_condition_explodes_with_trailing_operators ... FAILED
+test messy_real_world_input_is_idempotent_and_safe ... FAILED
+test pointers_are_middle_spaced_after_type_keywords ... FAILED
+test nested_paren_comma_is_not_a_split_point ... FAILED
+test short_call_stays_flat ... FAILED
+test passthrough_for_call_free_input ... ok
+test short_initializer_stays_flat_and_tight ... ok
+test short_object_macro_unchanged ... ok
+test short_parenthesized_ternary_stays_flat ... FAILED
+test short_control_headers_unchanged ... FAILED
+test statement_expression_macro_blocks_with_continuations ... FAILED
+test nested_initializer_collapses_independently ... ok
+test struct_tag_pointer_is_middle_spaced ... ok
+test golden_is_a_fixpoint ... FAILED
+test unparenthesized_ternary_is_left_alone ... ok
+test idempotent_on_showcase ... FAILED
+test golden_acceptance_unguarded_showcase ... FAILED
+test showcase_content_is_preserved ... FAILED
+
+*** result: Timeout

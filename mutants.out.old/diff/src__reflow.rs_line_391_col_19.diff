@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace == with != in structure
+@@ -383,17 +383,17 @@
+             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+             let reserved = trailing_reserved(toks, close + 1);
+             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+             emit_str(&mut out, &mut col, &rendered);
+             i = close + 1;
+             continue;
+         }
+ 
+-        if t.kind == TokenKind::Ident
++        if t.kind != /* ~ changed by cargo-mutants ~ */ TokenKind::Ident
+             && t.text == "enum"
+             && let Some(brace) = enum_body_brace(toks, i)
+         {
+             for tok in &toks[i..brace] {
+                 emit_str(&mut out, &mut col, tok.text);
+             }
+             i = emit_brace(toks, brace, true, &mut out, &mut col, width);
+             continue;

@@ -1,0 +1,26 @@
+--- src/reflow.rs
++++ replace format_with_width -> String with String::new()
+@@ -33,22 +33,17 @@
+ /// ```
+ /// let narrow = cfmt::format_with_width("call(aaa, bbb, ccc);\n", 10);
+ /// assert_eq!(narrow, "call(\n\taaa,\n\tbbb,\n\tccc\n);\n");
+ /// ```
+ pub fn format_with_width(src: &str, width: usize) -> String {
+     // Token spacing runs first so the layout measures final widths — otherwise a space added
+     // afterward (`(int)x` -> `(int) x`) could widen a line and flip a fits/explode decision on
+     // the next pass, breaking idempotency.
+-    let spaced = space_tokens(src);
+-    normalize_endings(&collapse_blank_lines(&retab(&structure(
+-        &tokenize(&spaced),
+-        0,
+-        width,
+-    ))))
++    String::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Collapse runs of two or more blank lines to a single blank line everywhere (file scope and
+ /// function bodies). Never inserts a blank line, so grouped declarations and adjacent closers are
+ /// preserved. Comment interiors are untouched — their newlines live inside one comment token.
+ fn collapse_blank_lines(s: &str) -> String {
+     let mut out = String::with_capacity(s.len());
+     let mut line = String::new();

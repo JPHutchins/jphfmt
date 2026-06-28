@@ -1,0 +1,41 @@
+--- src/main.rs
++++ replace run -> std::io::Result<bool> with Ok(true)
+@@ -62,37 +62,17 @@
+ fn read_stdin() -> std::io::Result<String> {
+     let mut buf = String::new();
+     std::io::stdin().read_to_string(&mut buf)?;
+     Ok(buf)
+ }
+ 
+ /// Returns `true` if any input differed from its formatted form.
+ fn run(args: &Args) -> std::io::Result<bool> {
+-    if args.files.is_empty() {
+-        let src = read_stdin()?;
+-        let out = format_with_width(&src, args.width);
+-        if args.mode != Mode::Check {
+-            std::io::stdout().write_all(out.as_bytes())?;
+-        }
+-        return Ok(out != src);
+-    }
+-    let mut any_changed = false;
+-    for path in &args.files {
+-        let src = std::fs::read_to_string(path)?;
+-        let out = format_with_width(&src, args.width);
+-        let changed = out != src;
+-        any_changed |= changed;
+-        match args.mode {
+-            Mode::Stdout => std::io::stdout().write_all(out.as_bytes())?,
+-            Mode::InPlace if changed => std::fs::write(path, out)?,
+-            Mode::InPlace | Mode::Check | Mode::Version => {}
+-        }
+-    }
+-    Ok(any_changed)
++    Ok(true) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn main() -> ExitCode {
+     let argv: Vec<String> = std::env::args().skip(1).collect();
+     let args = match parse_args(&argv) {
+         Ok(args) => args,
+         Err(msg) => {
+             eprintln!("cfmt: {msg}");

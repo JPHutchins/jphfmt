@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace + with - in split_define
+@@ -503,17 +503,17 @@
+ /// continuation backslashes removed and surrounding trivia trimmed). `None` if it has no body.
+ fn split_define<'src>(
+     toks: &[Token<'src>],
+     start: usize,
+     end: usize,
+ ) -> Option<(String, Vec<Token<'src>>)> {
+     let define = next_nontrivia_in(toks, start + 1, end)?;
+     let name = next_nontrivia_in(toks, define + 1, end)?;
+-    let prefix_end = match toks.get(name + 1) {
++    let prefix_end = match toks.get(name - /* ~ changed by cargo-mutants ~ */ 1) {
+         Some(n) if n.kind == TokenKind::Punct && n.text == "(" => {
+             match_bracket(toks, name + 1)? + 1
+         }
+         _ => name + 1,
+     };
+     let prefix: String = toks[start..prefix_end]
+         .iter()
+         .map(|t| t.text)

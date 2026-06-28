@@ -1,0 +1,33 @@
+--- src/reflow.rs
++++ replace space_bit_fields with ()
+@@ -267,29 +267,17 @@
+         }
+     }
+ }
+ 
+ /// Bit-field colon spacing (§2.5: `x: 1` — no space before, one after). A `:` qualifies only when
+ /// it follows an identifier, precedes an integer literal, and no `?` opened a ternary earlier in
+ /// the statement (which would make it a ternary colon, not a bit-field).
+ fn space_bit_fields(pieces: &mut [Piece]) {
+-    for j in 1..pieces.len().saturating_sub(1) {
+-        let is_bit_field = pieces[j].1.text == ":"
+-            && pieces[j].1.kind == TokenKind::Punct
+-            && pieces[j - 1].1.kind == TokenKind::Ident
+-            && pieces[j + 1].1.kind == TokenKind::Number
+-            && same_line(&pieces[j].0)
+-            && same_line(&pieces[j + 1].0)
+-            && !ternary_open_before(pieces, j);
+-        if is_bit_field {
+-            pieces[j].0.clear();
+-            pieces[j + 1].0 = " ".to_owned();
+-        }
+-    }
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Whether an unmatched `?` precedes index `j` within the current statement (back to `;`/`{`/`}`).
+ fn ternary_open_before(pieces: &[Piece], j: usize) -> bool {
+     for p in pieces[..j].iter().rev() {
+         match p.1.text {
+             "?" => return true,
+             ";" | "{" | "}" => return false,

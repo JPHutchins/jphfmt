@@ -1,0 +1,21 @@
+--- src/lexer.rs
++++ replace + with - in lex_block_comment
+@@ -57,17 +57,17 @@
+ fn lex_line_comment(lex: &mut Lexer<TokenKind>) {
+     let rem = lex.remainder();
+     lex.bump(rem.find(['\n', '\r']).unwrap_or(rem.len()));
+ }
+ 
+ /// Extend a `/*` match to the closing `*/`, or to end-of-input if unterminated.
+ fn lex_block_comment(lex: &mut Lexer<TokenKind>) {
+     let rem = lex.remainder();
+-    lex.bump(rem.find("*/").map_or(rem.len(), |i| i + 2));
++    lex.bump(rem.find("*/").map_or(rem.len(), |i| i - /* ~ changed by cargo-mutants ~ */ 2));
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct Token<'src> {
+     pub kind: TokenKind,
+     pub text: &'src str,
+ }
+ 

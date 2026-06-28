@@ -1,0 +1,67 @@
+--- src/doc.rs
++++ replace render -> String with "xyzzy".into()
+@@ -55,63 +55,17 @@
+     Flat,
+     Break,
+ }
+ 
+ /// Render `doc`: groups that fit within `width` columns stay flat, the rest break fully.
+ /// `start_col` is the cursor column before the document; `base_level` is the indentation, in tab
+ /// levels, that broken lines and the closing delimiter return to.
+ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> String {
+-    let mut out = String::new();
+-    let mut col = start_col;
+-    let mut stack: Vec<(usize, Mode, &Doc)> = vec![(base_level, Mode::Break, doc)];
+-    while let Some((level, mode, d)) = stack.pop() {
+-        match d {
+-            Doc::Text(s) => {
+-                out.push_str(s);
+-                col += display_width(s);
+-            }
+-            Doc::Concat(items) => {
+-                for child in items.iter().rev() {
+-                    stack.push((level, mode, child));
+-                }
+-            }
+-            Doc::Nest(inner) => stack.push((level + 1, mode, inner)),
+-            Doc::Line | Doc::SoftLine => match mode {
+-                Mode::Flat => {
+-                    if matches!(d, Doc::Line) {
+-                        out.push(' ');
+-                        col += 1;
+-                    }
+-                }
+-                Mode::Break => {
+-                    out.push('\n');
+-                    for _ in 0..level {
+-                        out.push('\t');
+-                    }
+-                    col = level * TAB_WIDTH;
+-                }
+-            },
+-            Doc::Group(inner) => {
+-                let mode = if fits(width.saturating_sub(col), inner, &stack) {
+-                    Mode::Flat
+-                } else {
+-                    Mode::Break
+-                };
+-                stack.push((level, mode, inner));
+-            }
+-            Doc::IfBreak { broken, flat } => {
+-                let s = if mode == Mode::Break { broken } else { flat };
+-                out.push_str(s);
+-                col += display_width(s);
+-            }
+-            Doc::ForceBreak(inner) => stack.push((level, Mode::Break, inner)),
+-        }
+-    }
+-    out
++    "xyzzy".into() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Does `doc`, laid out flat, fit in `remaining` columns before the line would break — including
+ /// the work still queued in `rest` up to the first newline?
+ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
+     let mut work: Vec<(Mode, &Doc)> = vec![(Mode::Flat, doc)];
+     let mut rest_idx = rest.len();
+     loop {

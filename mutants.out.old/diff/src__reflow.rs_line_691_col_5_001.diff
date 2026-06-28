@@ -1,0 +1,44 @@
+--- src/reflow.rs
++++ replace is_excluded_callee -> bool with false
+@@ -683,40 +683,17 @@
+         && toks
+             .get(i + 1)
+             .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(")
+ }
+ 
+ /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
+ /// excluded: its associations are a comma list and explode exactly per §2.2.
+ fn is_excluded_callee(name: &str) -> bool {
+-    matches!(
+-        name,
+-        "if" | "for"
+-            | "while"
+-            | "switch"
+-            | "return"
+-            | "do"
+-            | "else"
+-            | "sizeof"
+-            | "alignof"
+-            | "_Alignof"
+-            | "alignas"
+-            | "_Alignas"
+-            | "typeof"
+-            | "typeof_unqual"
+-            | "defined"
+-            | "static_assert"
+-            | "_Static_assert"
+-            | "__attribute__"
+-            | "_Pragma"
+-            | "asm"
+-            | "__asm__"
+-            | "__asm"
+-    )
++    false /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The `{` opening an `enum [tag] [: type] { ... }` body that begins at the `enum` keyword `i`,
+ /// or `None` if this `enum` does not introduce a body (a forward declaration or a variable use).
+ fn enum_body_brace(toks: &[Token], i: usize) -> Option<usize> {
+     for (j, t) in toks.iter().enumerate().skip(i + 1) {
+         match t.kind {
+             TokenKind::Whitespace | TokenKind::Newline | TokenKind::Ident => {}

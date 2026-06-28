@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace < with <= in build_brace_doc
+@@ -962,17 +962,17 @@
+     if elements.is_empty() {
+         return Doc::text("{}");
+     }
+     let pad = || if padded { Doc::Line } else { Doc::SoftLine };
+     let last = elements.len() - 1;
+     let mut items = vec![pad()];
+     for (idx, element) in elements.into_iter().enumerate() {
+         items.push(build_element_doc(element));
+-        if idx < last {
++        if idx <= /* ~ changed by cargo-mutants ~ */ last {
+             items.push(Doc::text(","));
+             items.push(Doc::Line);
+         } else {
+             items.push(Doc::IfBreak {
+                 broken: ",".to_owned(),
+                 flat: String::new(),
+             });
+         }

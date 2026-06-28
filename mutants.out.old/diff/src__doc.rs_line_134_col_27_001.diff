@@ -1,0 +1,21 @@
+--- src/doc.rs
++++ replace -= with /= in fits
+@@ -126,17 +126,17 @@
+             (mode, d)
+         };
+         match d {
+             Doc::Text(s) => {
+                 let w = display_width(s);
+                 if w > remaining {
+                     return false;
+                 }
+-                remaining -= w;
++                remaining /= /* ~ changed by cargo-mutants ~ */ w;
+             }
+             Doc::Concat(items) => {
+                 for child in items.iter().rev() {
+                     work.push((mode, child));
+                 }
+             }
+             Doc::Nest(inner) => work.push((mode, inner)),
+             Doc::Group(inner) => work.push((Mode::Flat, inner)),

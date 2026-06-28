@@ -1,17 +1,36 @@
 src/main.rs:34:13: delete match arm "-i" | "--in-place" in parse_args
 src/main.rs:38:13: delete match arm "--width" in parse_args
+src/main.rs:44:21: replace match guard flag.starts_with("--width=") with true in parse_args
+src/main.rs:44:21: replace match guard flag.starts_with("--width=") with false in parse_args
+src/main.rs:50:21: replace match guard flag.starts_with('-') && flag != "-" with true in parse_args
+src/main.rs:50:21: replace match guard flag.starts_with('-') && flag != "-" with false in parse_args
+src/main.rs:50:43: replace && with || in parse_args
+src/main.rs:50:51: replace != with == in parse_args
+src/main.rs:35:13: delete match arm "--check" in parse_args
 src/main.rs:37:13: delete match arm "-h" | "--help" in parse_args
 src/main.rs:36:13: delete match arm "-V" | "--version" in parse_args
+src/main.rs:56:30: replace && with || in parse_args
+src/main.rs:56:13: replace == with != in parse_args
+src/main.rs:63:5: replace read_stdin -> std::io::Result<String> with Ok(String::new())
+src/main.rs:63:5: replace read_stdin -> std::io::Result<String> with Ok("xyzzy".into())
 src/main.rs:70:5: replace run -> std::io::Result<bool> with Ok(false)
+src/main.rs:70:5: replace run -> std::io::Result<bool> with Ok(true)
+src/main.rs:73:22: replace != with == in run
 src/main.rs:76:23: replace != with == in run
+src/main.rs:82:27: replace != with == in run
 src/main.rs:83:21: replace |= with &= in run
+src/main.rs:86:30: replace match guard changed with true in run
 src/main.rs:86:30: replace match guard changed with false in run
+src/main.rs:94:5: replace main -> ExitCode with Default::default()
 src/main.rs:102:18: replace == with != in main
+src/main.rs:107:24: replace match guard args.mode == Mode::Check && changed with true in main
 src/main.rs:107:24: replace match guard args.mode == Mode::Check && changed with false in main
-src/main.rs:35:13: delete match arm "--check" in parse_args
+src/main.rs:107:49: replace && with || in main
 src/main.rs:107:34: replace == with != in main
 src/doc.rs:82:29: replace += with -= in render
 src/doc.rs:82:29: replace += with *= in render
+src/doc.rs:90:33: replace * with + in render
+src/doc.rs:104:21: replace += with -= in render
 src/doc.rs:104:21: replace += with *= in render
 src/doc.rs:131:22: replace > with >= in fits
 src/doc.rs:158:33: replace == with != in fits
@@ -21,29 +40,37 @@ src/doc.rs:163:27: replace -= with += in fits
 src/lexer.rs:58:5: replace lex_line_comment with ()
 src/reflow.rs:73:13: delete match arm TokenKind::Whitespace in collapse_blank_lines
 src/reflow.rs:112:5: replace same_line -> bool with true
-src/reflow.rs:193:21: replace + with * in space_pointers
 src/reflow.rs:193:25: replace < with <= in space_pointers
 src/reflow.rs:193:21: replace + with - in space_pointers
+src/reflow.rs:193:21: replace + with * in space_pointers
 src/reflow.rs:193:92: replace + with * in space_pointers
 src/reflow.rs:193:92: replace + with - in space_pointers
+src/reflow.rs:224:22: replace == with != in space_casts
 src/reflow.rs:238:29: replace == with != in space_casts
-src/reflow.rs:243:34: replace > with >= in space_casts
+src/reflow.rs:243:34: replace > with < in space_casts
 src/reflow.rs:245:17: replace || with && in space_casts
 src/reflow.rs:244:29: replace - with / in space_casts
 src/reflow.rs:261:66: replace - with / in space_braces
 src/reflow.rs:281:36: replace + with - in space_bit_fields
+src/reflow.rs:281:36: replace + with * in space_bit_fields
+src/reflow.rs:295:13: delete match arm ";" | "{" | "}" in ternary_open_before
 src/reflow.rs:324:45: replace && with || in retab
 src/reflow.rs:324:86: replace == with != in retab
 src/reflow.rs:358:67: replace && with || in structure
 src/reflow.rs:371:45: replace + with - in structure
-src/reflow.rs:384:58: replace + with - in structure
+src/reflow.rs:371:45: replace + with * in structure
 src/reflow.rs:384:58: replace + with * in structure
+src/reflow.rs:384:58: replace + with - in structure
 src/reflow.rs:410:58: replace + with * in structure
 src/reflow.rs:420:13: replace && with || in structure
+src/reflow.rs:419:13: replace && with || in structure
+src/reflow.rs:422:61: replace && with || in structure
 src/reflow.rs:438:42: replace + with * in structure
 src/reflow.rs:443:58: replace + with - in structure
+src/reflow.rs:443:58: replace + with * in structure
 src/reflow.rs:463:17: delete match arm "(" | "[" in structure
 src/reflow.rs:465:24: replace match guard paren_depth == 0 with true in structure
+src/reflow.rs:463:42: replace += with *= in structure
 src/reflow.rs:466:24: replace match guard paren_depth == 0 with true in structure
 src/reflow.rs:463:42: replace += with -= in structure
 src/reflow.rs:512:20: replace match guard n.kind == TokenKind::Punct && n.text == "(" with true in split_define
@@ -51,9 +78,5 @@ src/reflow.rs:512:47: replace && with || in split_define
 src/reflow.rs:515:19: replace + with - in split_define
 src/reflow.rs:515:19: replace + with * in split_define
 src/reflow.rs:544:30: replace && with || in format_define_body
+src/reflow.rs:549:9: replace && with || in format_define_body
 src/reflow.rs:548:9: replace && with || in format_define_body
-src/reflow.rs:609:21: replace + with - in emit_brace
-src/reflow.rs:623:50: replace + with * in emit_brace
-src/reflow.rs:653:5: replace current_line_is_blank -> bool with true
-src/reflow.rs:655:58: replace || with && in current_line_is_blank
-src/reflow.rs:655:63: replace == with != in current_line_is_blank

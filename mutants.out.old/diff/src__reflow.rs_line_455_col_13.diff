@@ -1,0 +1,21 @@
+--- src/reflow.rs
++++ replace && with || in structure
+@@ -447,17 +447,17 @@
+             continue;
+         }
+ 
+         // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
+         if in_init
+             && t.kind == TokenKind::Punct
+             && t.text == "{"
+             && last_nonspace_char(&out) != Some('(')
+-            && match_brace(toks, i).is_some()
++            || /* ~ changed by cargo-mutants ~ */ match_brace(toks, i).is_some()
+         {
+             i = emit_brace(toks, i, false, &mut out, &mut col, width);
+             continue;
+         }
+ 
+         if t.kind == TokenKind::Punct {
+             match t.text {
+                 "(" | "[" => paren_depth += 1,

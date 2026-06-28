@@ -390,6 +390,21 @@ fn long_if_condition_explodes_with_trailing_operators() {
 }
 
 #[test]
+fn condition_splits_on_the_outer_logical_operator() {
+    let src = "if (alpha_value > 100 || bravo_value > 200 || charlie_value > 300 || delta_value > 400 || echo_v > 5) {\n}\n";
+    let expected = "if (\n\talpha_value > 100 ||\n\tbravo_value > 200 ||\n\tcharlie_value > 300 ||\n\tdelta_value > 400 ||\n\techo_v > 5\n) {\n}\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn unbalanced_brackets_pass_through_verbatim() {
+    // an inner `(` with no match makes the list unstructurable; it must pass through unchanged
+    // rather than be mis-split (which previously accumulated commas across passes)
+    assert_eq!(format("int v[] = {a, (b};\n"), "int v[] = {a, (b};\n");
+    assert_eq!(format("f(a, [b);\n"), "f(a, [b);\n");
+}
+
+#[test]
 fn for_header_is_not_treated_as_a_call() {
     // comma operator inside a for clause must not be split as call args
     let src = "for (int i = 0, j = N - 1; i < j; i++, j--) {\n}\n";

@@ -1,0 +1,61 @@
+--- src/reflow.rs
++++ replace build_element_doc -> Doc with Default::default()
+@@ -988,57 +988,17 @@
+     } else {
+         Doc::group(body)
+     }
+ }
+ 
+ /// Build one `{}` element: collapsed text, with any nested `{}` rendered as its own (tight) list so
+ /// it collapses or explodes on its own.
+ fn build_element_doc(toks: &[Token]) -> Doc {
+-    let mut parts: Vec<Doc> = Vec::new();
+-    let mut text = String::new();
+-    let mut pending_space = false;
+-    let mut j = 0usize;
+-    while j < toks.len() {
+-        let t = toks[j];
+-        if is_trivia(&t) {
+-            if !text.is_empty() || !parts.is_empty() {
+-                pending_space = true;
+-            }
+-            j += 1;
+-        } else if t.kind == TokenKind::Punct
+-            && t.text == "{"
+-            && let Some(close) = match_brace(toks, j)
+-        {
+-            if pending_space && !text.is_empty() {
+-                text.push(' ');
+-            }
+-            pending_space = false;
+-            if !text.is_empty() {
+-                parts.push(Doc::Text(std::mem::take(&mut text)));
+-            }
+-            parts.push(build_brace_doc(&toks[j + 1..close], false));
+-            j = close + 1;
+-        } else {
+-            if pending_space {
+-                text.push(' ');
+-                pending_space = false;
+-            }
+-            text.push_str(t.text);
+-            j += 1;
+-        }
+-    }
+-    if !text.is_empty() {
+-        parts.push(Doc::Text(text));
+-    }
+-    match parts.len() {
+-        0 => Doc::text(""),
+-        1 => parts.pop().unwrap(),
+-        _ => Doc::concat(parts),
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
+ /// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
+ fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
+     if segments.is_empty() {
+         return Doc::text("()");
+     }

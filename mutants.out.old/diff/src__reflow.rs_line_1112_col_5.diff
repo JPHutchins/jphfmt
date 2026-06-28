@@ -1,0 +1,23 @@
+--- src/reflow.rs
++++ replace col_width -> usize with 0
+@@ -1104,19 +1104,17 @@
+     }
+     w
+ }
+ 
+ /// Column width of raw token text, counting a tab as [`TAB_WIDTH`] (unlike [`display_width`], which
+ /// assumes tab-free text). Used where the measured slice may contain a mid-line whitespace tab, so
+ /// the reserve matches the cursor's own tab accounting and formatting stays idempotent.
+ fn col_width(s: &str) -> usize {
+-    s.chars()
+-        .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
+-        .sum()
++    0 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Emit a preprocessor directive verbatim, following `\` line continuations; returns the index
+ /// just past it.
+ fn emit_directive(toks: &[Token], start: usize, out: &mut String, col: &mut usize) -> usize {
+     let end = directive_end(toks, start);
+     for tok in &toks[start..end] {
+         emit_str(out, col, tok.text);

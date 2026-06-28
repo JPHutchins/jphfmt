@@ -29,57 +29,56 @@
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
        Fresh libc v0.2.186
        Fresh cfg-if v1.0.4
        Fresh unicode-ident v1.0.24
-       Fresh proc-macro2 v1.0.106
        Fresh memchr v2.8.2
        Fresh fnv v1.0.7
        Fresh regex-syntax v0.8.11
-       Fresh aho-corasick v1.1.4
-       Fresh quote v1.0.46
+       Fresh linux-raw-sys v0.12.1
        Fresh bitflags v2.13.0
        Fresh autocfg v1.5.1
-       Fresh linux-raw-sys v0.12.1
-       Fresh once_cell v1.21.4
        Fresh fastrand v2.4.1
+       Fresh once_cell v1.21.4
        Fresh wait-timeout v0.2.1
-       Fresh getrandom v0.3.4
-       Fresh syn v2.0.118
-       Fresh regex-automata v0.4.14
-       Fresh quick-error v1.2.3
        Fresh bit-vec v0.8.0
+       Fresh quick-error v1.2.3
        Fresh unarray v0.1.4
-       Fresh logos-codegen v0.16.1
-       Fresh rand_core v0.9.5
-       Fresh zerocopy v0.8.52
-       Fresh getrandom v0.4.3
-       Fresh rustix v1.1.4
+       Fresh aho-corasick v1.1.4
        Fresh bit-set v0.8.0
-       Fresh logos-derive v0.16.1
-       Fresh tempfile v3.27.0
+       Fresh proc-macro2 v1.0.106
+       Fresh regex-automata v0.4.14
+       Fresh getrandom v0.3.4
+       Fresh rustix v1.1.4
+       Fresh getrandom v0.4.3
+       Fresh zerocopy v0.8.52
+       Fresh quote v1.0.46
+       Fresh rand_core v0.9.5
        Fresh ppv-lite86 v0.2.21
-       Fresh rand_xorshift v0.4.0
-       Fresh rand v0.9.4
+       Fresh tempfile v3.27.0
        Fresh num-traits v0.2.19
-       Fresh logos v0.16.1
-       Fresh rusty-fork v0.3.1
+       Fresh syn v2.0.118
        Fresh rand_chacha v0.9.0
-       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-01Z7wo.tmp): the file `src/doc.rs` has changed (1782619285.495047815s, 1s after last build at 1782619284.813299090s)
-   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-01Z7wo.tmp)
+       Fresh rand v0.9.4
+       Fresh rusty-fork v0.3.1
+       Fresh rand_xorshift v0.4.0
+       Fresh logos-codegen v0.16.1
        Fresh proptest v1.11.0
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
-  Executable `/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/cfmt-a84e12700bb01142`
-  Executable `/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
-  Executable `/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/conformance-9397798b72f1cc71`
-  Executable `/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/properties-cb1d676eedf1110f`
+       Fresh logos-derive v0.16.1
+       Fresh logos v0.16.1
+       Dirty cfmt v0.1.0 (/tmp/cargo-mutants-c-format-npJ26v.tmp): the file `src/doc.rs` has changed (1782619756.963439270s, 801167961ns after last build at 1782619756.162271309s)
+   Compiling cfmt v0.1.0 (/tmp/cargo-mutants-c-format-npJ26v.tmp)
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=a4b1a2cc4d498b46 -C extra-filename=-a84e12700bb01142 --out-dir /tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3f53573a9b6bab2f -C extra-filename=-99f850ce46e24a52 --out-dir /tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps --extern logos=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/liblogos-4c6e00a209650053.rmeta`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=bf3b4507222dd948 -C extra-filename=-1a66513ab52c4887 --out-dir /tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name conformance --edition=2024 tests/conformance.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=e90b1d2cab9e3101 -C extra-filename=-9397798b72f1cc71 --out-dir /tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name properties --edition=2024 tests/properties.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3b9ed80ccd1432c5 -C extra-filename=-cb1d676eedf1110f --out-dir /tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib --extern proptest=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libproptest-f3a23dcc63ec6135.rlib`
+     Running `/home/jp/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name cfmt --edition=2024 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' --forbid=unsafe_code '--allow=clippy::too_many_lines' '--allow=clippy::similar_names' '--allow=clippy::must_use_candidate' '--allow=clippy::assigning_clones' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=73dbade8f2d00eeb -C extra-filename=-e461290380d8e258 --out-dir /tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps --extern cfmt=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/libcfmt-99f850ce46e24a52.rlib --extern logos=/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/liblogos-4c6e00a209650053.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+  Executable `/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+  Executable `/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/cfmt-1a66513ab52c4887`
+  Executable `/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/conformance-9397798b72f1cc71`
+  Executable `/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/properties-cb1d676eedf1110f`
 
 *** result: Success
 
@@ -87,47 +86,46 @@
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
        Fresh libc v0.2.186
        Fresh cfg-if v1.0.4
        Fresh unicode-ident v1.0.24
-       Fresh memchr v2.8.2
        Fresh regex-syntax v0.8.11
        Fresh fnv v1.0.7
-       Fresh aho-corasick v1.1.4
-       Fresh bitflags v2.13.0
-       Fresh autocfg v1.5.1
-       Fresh proc-macro2 v1.0.106
-       Fresh regex-automata v0.4.14
+       Fresh memchr v2.8.2
        Fresh linux-raw-sys v0.12.1
-       Fresh once_cell v1.21.4
+       Fresh autocfg v1.5.1
+       Fresh bitflags v2.13.0
        Fresh fastrand v2.4.1
-       Fresh quote v1.0.46
-       Fresh getrandom v0.3.4
-       Fresh getrandom v0.4.3
-       Fresh zerocopy v0.8.52
-       Fresh rustix v1.1.4
+       Fresh once_cell v1.21.4
        Fresh wait-timeout v0.2.1
        Fresh quick-error v1.2.3
        Fresh bit-vec v0.8.0
        Fresh unarray v0.1.4
-       Fresh syn v2.0.118
+       Fresh aho-corasick v1.1.4
+       Fresh bit-set v0.8.0
+       Fresh proc-macro2 v1.0.106
+       Fresh getrandom v0.3.4
+       Fresh regex-automata v0.4.14
+       Fresh rustix v1.1.4
+       Fresh zerocopy v0.8.52
+       Fresh getrandom v0.4.3
+       Fresh quote v1.0.46
        Fresh rand_core v0.9.5
        Fresh ppv-lite86 v0.2.21
        Fresh tempfile v3.27.0
-       Fresh bit-set v0.8.0
        Fresh num-traits v0.2.19
-       Fresh logos-codegen v0.16.1
-       Fresh rusty-fork v0.3.1
-       Fresh rand v0.9.4
-       Fresh rand_xorshift v0.4.0
+       Fresh syn v2.0.118
        Fresh rand_chacha v0.9.0
-       Fresh logos-derive v0.16.1
+       Fresh rusty-fork v0.3.1
+       Fresh rand_xorshift v0.4.0
+       Fresh rand v0.9.4
+       Fresh logos-codegen v0.16.1
        Fresh proptest v1.11.0
+       Fresh logos-derive v0.16.1
        Fresh logos v0.16.1
-       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-01Z7wo.tmp)
+       Fresh cfmt v0.1.0 (/tmp/cargo-mutants-c-format-npJ26v.tmp)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running `/tmp/cargo-mutants-c-format-01Z7wo.tmp/target/debug/deps/cfmt-a84e12700bb01142`
+     Running `/tmp/cargo-mutants-c-format-npJ26v.tmp/target/debug/deps/cfmt-a84e12700bb01142`
 
 running 4 tests
 test doc::tests::breaks_indent_relative_to_base_level ... ok
@@ -139,7 +137,7 @@ failures:
 
 ---- doc::tests::fully_breaks_when_it_overflows stdout ----
 
-thread 'doc::tests::fully_breaks_when_it_overflows' (451030) panicked at src/doc.rs:199:9:
+thread 'doc::tests::fully_breaks_when_it_overflows' (799287) panicked at src/doc.rs:199:9:
 assertion `left == right` failed
   left: "(a, b)"
  right: "(\n\ta,\n\tb\n)"
@@ -147,7 +145,7 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ---- doc::tests::trailing_reserved_width_forces_a_break stdout ----
 
-thread 'doc::tests::trailing_reserved_width_forces_a_break' (451032) panicked at src/doc.rs:213:9:
+thread 'doc::tests::trailing_reserved_width_forces_a_break' (799289) panicked at src/doc.rs:213:9:
 assertion `left == right` failed
   left: "(a)"
  right: "(\n\ta\n)"

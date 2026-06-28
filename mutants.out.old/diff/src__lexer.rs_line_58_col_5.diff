@@ -1,0 +1,22 @@
+--- src/lexer.rs
++++ replace lex_line_comment with ()
+@@ -50,18 +50,17 @@
+     Punct,
+     /// Never matched by the lexer; assigned to any byte logos fails to classify so the
+     /// stream stays lossless (see [`tokenize`]).
+     Unknown,
+ }
+ 
+ /// Extend a `//` match to just before the line's end (the newline stays its own token).
+ fn lex_line_comment(lex: &mut Lexer<TokenKind>) {
+-    let rem = lex.remainder();
+-    lex.bump(rem.find(['\n', '\r']).unwrap_or(rem.len()));
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Extend a `/*` match to the closing `*/`, or to end-of-input if unterminated.
+ fn lex_block_comment(lex: &mut Lexer<TokenKind>) {
+     let rem = lex.remainder();
+     lex.bump(rem.find("*/").map_or(rem.len(), |i| i + 2));
+ }
+ 
