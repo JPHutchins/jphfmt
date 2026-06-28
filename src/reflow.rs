@@ -18,7 +18,36 @@ use crate::lexer::{Token, TokenKind, tokenize};
 const WIDTH: usize = 100;
 
 pub fn format(src: &str) -> String {
-    structure(&tokenize(src), 0)
+    retab(&structure(&tokenize(src), 0))
+}
+
+/// Normalize every line's leading indentation to hard tabs (§2.1): re-lex the output and rewrite
+/// each line-leading whitespace run as `cols / TAB_WIDTH` tabs plus the remainder in spaces.
+/// Comment- and string-safe — their bodies are single tokens, never line-leading whitespace.
+fn retab(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut at_line_start = true;
+    for t in tokenize(s) {
+        let pure_indent =
+            t.kind == TokenKind::Whitespace && t.text.bytes().all(|b| b == b' ' || b == b'\t');
+        if at_line_start && pure_indent {
+            let cols: usize = t
+                .text
+                .chars()
+                .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
+                .sum();
+            for _ in 0..cols / TAB_WIDTH {
+                out.push('\t');
+            }
+            for _ in 0..cols % TAB_WIDTH {
+                out.push(' ');
+            }
+        } else {
+            out.push_str(t.text);
+        }
+        at_line_start = t.kind == TokenKind::Newline;
+    }
+    out
 }
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
@@ -47,6 +76,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
             && matches!(t.text, "if" | "while" | "switch" | "for")
             && let Some(open) = next_paren(toks, i)
             && let Some(close) = match_bracket(toks, open)
+            && !contains_comment(&toks[open + 1..close])
         {
             for tok in &toks[i..open] {
                 emit_str(&mut out, &mut col, tok.text);
@@ -78,6 +108,7 @@ fn structure(toks: &[Token], start_col: usize) -> String {
 
         if is_call_head(toks, i)
             && let Some(close) = match_bracket(toks, i + 1)
+            && !contains_comment(&toks[i + 2..close])
         {
             emit_str(&mut out, &mut col, t.text);
             let doc = build_call_doc(&toks[i + 2..close]);
@@ -206,6 +237,9 @@ fn split_define<'src>(
 
 /// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
 fn format_define_body(body: &[Token], prefix_col: usize) -> Option<String> {
+    if contains_comment(body) {
+        return None;
+    }
     if is_call_head(body, 0) && match_bracket(body, 1) == Some(body.len() - 1) {
         return Some(structure(body, prefix_col));
     }
@@ -716,13 +750,20 @@ fn build_cond_doc(inner: &[Token]) -> Doc {
 }
 
 /// Columns consumed by structural tokens trailing the construct on its line (e.g. `;` or ` {`), so
-/// the group leaves room for them. Comments are ignored so a trailing comment never forces a break.
+/// the group leaves room for them. Counting stops after the first bracket-opener, because anything
+/// past it can itself break onto later lines — making the measure stable across passes (a chained
+/// `f(x)->g(...)` reserves only `->g(`, not `g`'s arguments), which keeps formatting idempotent.
+/// Comments are ignored so a trailing comment never forces a break.
 fn trailing_reserved(toks: &[Token], from: usize) -> usize {
     let mut w = 0;
     for t in toks.iter().skip(from) {
         match t.kind {
             TokenKind::Newline => break,
             TokenKind::LineComment | TokenKind::BlockComment => {}
+            TokenKind::Punct if matches!(t.text, "(" | "[" | "{") => {
+                w += display_width(t.text);
+                break;
+            }
             _ => w += display_width(t.text),
         }
     }

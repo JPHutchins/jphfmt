@@ -7,10 +7,74 @@ use cfmt::format;
 
 const SHOWCASE: &str = include_str!("../showcase.c");
 
+const GOLDEN: &str = include_str!("golden.c");
+
+/// `showcase.c` with the ten `// clang-format off|on` guard lines removed — the §4 acceptance
+/// input. cfmt must natively produce the hand-laid forms those guards protected.
+fn unguarded_showcase() -> String {
+    SHOWCASE
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            t != "// clang-format off" && t != "// clang-format on"
+        })
+        .fold(String::new(), |mut acc, l| {
+            acc.push_str(l);
+            acc.push('\n');
+            acc
+        })
+}
+
 #[test]
 fn idempotent_on_showcase() {
     let once = format(SHOWCASE);
     assert_eq!(format(&once), once, "format must be idempotent");
+}
+
+#[test]
+fn golden_acceptance_unguarded_showcase() {
+    assert_eq!(
+        format(&unguarded_showcase()),
+        GOLDEN,
+        "cfmt must reproduce the golden from the guard-removed showcase"
+    );
+}
+
+#[test]
+fn golden_is_a_fixpoint() {
+    assert_eq!(format(GOLDEN), GOLDEN, "golden must be idempotent");
+}
+
+/// Significant content: everything but whitespace, commas (cfmt may add a magic trailing comma),
+/// and backslashes (continuations). Formatting must never alter anything else.
+fn significant(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace() && *c != ',' && *c != '\\')
+        .collect()
+}
+
+#[test]
+fn showcase_content_is_preserved() {
+    assert_eq!(
+        significant(&format(SHOWCASE)),
+        significant(SHOWCASE),
+        "formatting must be whitespace/comma/continuation-only — no token may change"
+    );
+}
+
+#[test]
+fn golden_has_no_space_indented_code() {
+    // §7 cardinal rule: zero column alignment. Only sacred comment bodies (` * …`) may lead
+    // with a space.
+    for (n, line) in GOLDEN.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix(' ') {
+            assert!(
+                rest.trim_start().starts_with('*'),
+                "line {} is space-indented code: {line:?}",
+                n + 1
+            );
+        }
+    }
 }
 
 #[test]
@@ -110,9 +174,35 @@ fn enum_magic_comma_explodes() {
 }
 
 #[test]
-fn initializer_with_comment_passes_through() {
+fn initializer_with_comment_keeps_structure_but_retabs() {
+    // comments defer to M7 (no comma reflow), but leading indentation is normalized to tabs
     let src = "int v[] = {\n    1, /* one */\n    2,\n};\n";
-    assert_eq!(format(src), src, "comments in a list defer to M7");
+    let expected = "int v[] = {\n\t1, /* one */\n\t2,\n};\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn indentation_is_normalized_to_tabs() {
+    let src = "void f(void) {\n    int x = 1;\n        int y = 2;\n}\n";
+    let expected = "void f(void) {\n\tint x = 1;\n\t\tint y = 2;\n}\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn call_with_line_comment_passes_through() {
+    // a // comment in a call must not be collapsed onto one line (it would swallow later args)
+    let src = "f(\n\t// keep me\n\tNULL,\n\t&x\n);\n";
+    assert_eq!(
+        format(src),
+        src,
+        "comment-bearing calls must not be reflowed"
+    );
+}
+
+#[test]
+fn block_comment_internals_are_untouched() {
+    let src = "/*\n * aligned\n *   deeper\n */\nint x;\n";
+    assert_eq!(format(src), src, "comment bodies are sacred (§2.1)");
 }
 
 #[test]
