@@ -18,12 +18,22 @@ use crate::lexer::{Token, TokenKind, tokenize};
 /// Default column limit (§8.5).
 pub const DEFAULT_WIDTH: usize = 100;
 
+/// Format C source with the default column limit ([`DEFAULT_WIDTH`]). Idempotent.
+///
+/// ```
+/// assert_eq!(cfmt::format("int*p = f(a,b);\n"), "int * p = f(a, b);\n");
+/// ```
 pub fn format(src: &str) -> String {
     format_with_width(src, DEFAULT_WIDTH)
 }
 
 /// Format with an explicit column limit. Tab width for the overflow measurement is fixed at
 /// [`TAB_WIDTH`] (§8.5 default).
+///
+/// ```
+/// let narrow = cfmt::format_with_width("call(aaa, bbb, ccc);\n", 10);
+/// assert_eq!(narrow, "call(\n\taaa,\n\tbbb,\n\tccc\n);\n");
+/// ```
 pub fn format_with_width(src: &str, width: usize) -> String {
     normalize_endings(&space_tokens(&retab(&structure(&tokenize(src), 0, width))))
 }

@@ -10,6 +10,16 @@ repository = "https://github.com/JPHutchins/cfmt"
 readme = "README.md"
 keywords = ["formatter", "c", "cli", "gofmt", "opinionated"]
 categories = ["development-tools", "command-line-utilities"]
+exclude = [
+    "editors",
+    ".github",
+    ".claude",
+    ".camas",
+    ".mcp.json",
+    "tasks.py",
+    "FORMATTER_HANDOFF.md",
+    ".clang-format",
+]
 
 [lib]
 name = "cfmt"
