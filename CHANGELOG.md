@@ -27,8 +27,9 @@ All notable changes to cfmt are documented here. The format follows
 
 ### Known limitations
 
-- Comment attachment/reflow is deferred: a list containing a comment passes
-  through (re-tabbed) rather than being re-laid-out.
+- Comments are never reflowed, moved, or re-aligned (§2.1, sacred). As a
+  consequence, a `{}`/call list that contains a comment is passed through as-is
+  (re-tabbed) rather than re-exploded or collapsed.
 - A `*` after a bare user typedef (`mytype*p`) is not middle-spaced — it is
   token-level ambiguous with multiply, so it passes through (§6); spacing after
   type keywords and `struct`/`union`/`enum` tags is handled.
