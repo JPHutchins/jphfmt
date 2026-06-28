@@ -59,7 +59,7 @@ typos = Task("uvx typos", paths=".")
 # These need their cargo tool installed, so they live outside `check` and get their own CI jobs:
 # cargo-audit (RUSTSEC advisories) and cargo-mutants (mutation testing — proves the tests bite).
 audit = Task("cargo audit", paths=rust_paths)
-mutants = Task("cargo mutants", paths=rust_paths)
+mutants = Task("cargo mutants --jobs 8", paths=rust_paths)
 
 # Every read-only validation that runs without a per-tool install, maximally parallel across both
 # ecosystems. Compile-validation is `cargo test`/`doc` for Rust and `tsc --noEmit` for TypeScript.

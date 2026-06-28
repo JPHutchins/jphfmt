@@ -1,0 +1,39 @@
+on:
+  schedule:
+    - cron: '3 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: mutants-report.txt
+          key: mutants-${{ github.sha }}
+
+      - if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "Commit ${{ github.sha }} already analyzed — skipping."
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - uses: taiki-e/install-action@v2
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          tool: cargo-mutants
+
+      - id: mutants
+        if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: cargo mutants --jobs 8 2>&1 | tee mutants-report.txt
+
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.mutants.outcome == 'failure'
+        uses: peter-evans/create-issue-from-file@v6
+        with:
+          title: 'Mutation testing: surviving mutants'
+          content-filepath: mutants-report.txt
+          labels: 'mutation-testing'
