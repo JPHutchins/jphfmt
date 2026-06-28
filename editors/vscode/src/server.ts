@@ -12,7 +12,10 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { formatSource, type FormatResult } from "./cfmt";
 
-type Settings = { readonly path: string; readonly width: number };
+interface Settings {
+  readonly path: string;
+  readonly width: number;
+}
 
 const DEFAULT_SETTINGS: Settings = { path: "cfmt", width: 100 };
 
@@ -21,9 +24,7 @@ const readSettings = (options: unknown): Settings => {
   const given = (options ?? {}) as Partial<Record<keyof Settings, unknown>>;
   return {
     path:
-      typeof given.path === "string" && given.path.length > 0
-        ? given.path
-        : DEFAULT_SETTINGS.path,
+      typeof given.path === "string" && given.path.length > 0 ? given.path : DEFAULT_SETTINGS.path,
     width:
       typeof given.width === "number" && Number.isFinite(given.width)
         ? given.width
@@ -62,14 +63,12 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   };
 });
 
-connection.onDocumentFormatting(
-  async (params: DocumentFormattingParams): Promise<TextEdit[]> => {
-    const doc = documents.get(params.textDocument.uri);
-    return doc === undefined
-      ? []
-      : [...toEdits(doc, await formatSource(settings.path, settings.width, doc.getText()))];
-  },
-);
+connection.onDocumentFormatting(async (params: DocumentFormattingParams): Promise<TextEdit[]> => {
+  const doc = documents.get(params.textDocument.uri);
+  return doc === undefined
+    ? []
+    : [...toEdits(doc, await formatSource(settings.path, settings.width, doc.getText()))];
+});
 
 documents.listen(connection);
 connection.listen();

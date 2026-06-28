@@ -16,10 +16,16 @@ export const formatSource = (
     const child = spawn(binary, ["--width", String(width)]);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => void stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => void stderr.push(chunk));
-    child.on("error", (error) => resolve({ kind: "failed", message: error.message }));
-    child.on("close", (code) =>
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      resolve({ kind: "failed", message: error.message });
+    });
+    child.on("close", (code) => {
       resolve(
         code === 0
           ? { kind: "formatted", text: Buffer.concat(stdout).toString("utf8") }
@@ -27,9 +33,9 @@ export const formatSource = (
               kind: "failed",
               message:
                 Buffer.concat(stderr).toString("utf8").trim() ||
-                `cfmt exited with code ${code ?? "unknown"}`,
+                `cfmt exited with code ${String(code ?? "unknown")}`,
             },
-      ),
-    );
+      );
+    });
     child.stdin.end(source);
   });
