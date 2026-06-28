@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
       - run: uvx camas ci
 
   msrv:
@@ -36,7 +36,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
       - run: uvx camas audit
 
   # Build release binaries on every push/PR to catch breakage early.
@@ -64,14 +64,14 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "name=cfmt.exe" >> "$GITHUB_OUTPUT"
+            echo "name=jphfmt.exe" >> "$GITHUB_OUTPUT"
           else
-            echo "name=cfmt" >> "$GITHUB_OUTPUT"
+            echo "name=jphfmt" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cfmt-${{ matrix.target }}
+          name: jphfmt-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ steps.bin.outputs.name }}
 
       - if: startsWith(github.ref, 'refs/tags/v')
@@ -79,12 +79,76 @@ jobs:
         run: |
           ext=""
           [ "${{ matrix.os }}" = "windows-latest" ] && ext=".exe"
-          cp "target/${{ matrix.target }}/release/${{ steps.bin.outputs.name }}" "cfmt-${{ matrix.target }}$ext"
+          cp "target/${{ matrix.target }}/release/${{ steps.bin.outputs.name }}" "jphfmt-${{ matrix.target }}$ext"
 
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: cfmt-${{ matrix.target }}*
+          files: jphfmt-${{ matrix.target }}*
+
+  # DeepSeek code review — runs after validation on PRs only, feeding test output as context.
+  deepseek-review:
+    needs: validate
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+
+      - id: test-output
+        run: cargo test --all-features 2>&1 | tail -150 | tee test-summary.txt
+
+      - id: review
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # 1. Full codebase snapshot (source files with path markers)
+          codebase="$(
+            for f in $(find src tests -name '*.rs' -o -name '*.toml' | sort); do
+              echo "=== $f ==="
+              cat "$f"
+              echo ""
+            done
+          )"
+
+          # 2. PR diff
+          diff="$(gh pr diff "$PR_NUMBER" --repo "$REPO")"
+
+          # 3. Test results
+          test_output="$(cat test-summary.txt)"
+
+          system_prompt='You are providing a comprehensive code review for this pull request.You are given the full codebase, the PR diff, and CI test results. Categorize your findings by priority level.'
+
+          user_prompt="## Full Codebase (pre-PR)\n\n$codebase\n\n## PR Diff\n\n$diff\n\n## CI Test Results\n\n\`\`\`\n$test_output\n\`\`\`\n\nReport findings as a bullet list. Reference file paths and line numbers."
+
+          body="$(jq -n \
+            --arg model deepseek-v4-pro \
+            --arg temperature 0.2 \
+            --arg system "$system_prompt" \
+            --arg user "$user_prompt" \
+            '{model: $model, temperature: ($temperature | tonumber), messages: [{role: "system", content: $system}, {role: "user", content: $user}]}')"
+
+          response="$(curl -sS --max-time 300 \
+            -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            https://api.deepseek.com/chat/completions)"
+
+          comment="$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')"
+          if [ -n "$comment" ] && [ "$comment" != "null" ]; then
+            printf '%s' "$comment" | gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file -
+          fi
 
   crate:
     needs: binaries
