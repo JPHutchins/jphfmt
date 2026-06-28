@@ -85,3 +85,37 @@ pub fn tokenize(src: &str) -> Vec<Token<'_>> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lex_line_comment_captures_comment_text() {
+        // Comment with newline: captures "// simple" (stops before newline)
+        let mut lex = TokenKind::lexer("// simple\n");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)));
+        assert_eq!(lex.slice(), "// simple");
+
+        // Comment at end of input (no newline): captures to end
+        let mut lex = TokenKind::lexer("// no newline");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)));
+        assert_eq!(lex.slice(), "// no newline");
+
+        // Empty comment: captures just "//"
+        let mut lex = TokenKind::lexer("//\n");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)));
+        assert_eq!(lex.slice(), "//");
+    }
+
+    #[test]
+    fn lex_line_comment_then_newline_and_more() {
+        let mut lex = TokenKind::lexer("// comment\nnext");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)));
+        assert_eq!(lex.slice(), "// comment");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::Newline)));
+        assert_eq!(lex.slice(), "\n");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::Ident)));
+        assert_eq!(lex.slice(), "next");
+    }
+}

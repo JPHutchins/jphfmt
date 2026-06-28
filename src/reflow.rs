@@ -1123,3 +1123,192 @@ fn emit_directive(toks: &[Token], start: usize, out: &mut String, col: &mut usiz
     }
     end
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_punct(text: &'static str) -> Token<'static> {
+        Token {
+            kind: TokenKind::Punct,
+            text,
+        }
+    }
+
+    #[test]
+    fn same_line_newline() {
+        assert!(!same_line("\n"));
+    }
+
+    #[test]
+    fn same_line_space() {
+        assert!(same_line(" "));
+    }
+
+    #[test]
+    fn same_line_empty() {
+        assert!(same_line(""));
+    }
+
+    #[test]
+    fn same_line_multiple_chars() {
+        assert!(same_line("a b"));
+    }
+
+    #[test]
+    fn current_line_is_blank_empty_string() {
+        assert!(current_line_is_blank(""));
+    }
+
+    #[test]
+    fn current_line_is_blank_whitespace_only() {
+        assert!(current_line_is_blank("  	"));
+    }
+
+    #[test]
+    fn current_line_is_blank_content() {
+        assert!(!current_line_is_blank("x"));
+    }
+
+    #[test]
+    fn current_line_is_blank_after_newline_content() {
+        assert!(!current_line_is_blank("a\nb"));
+    }
+
+    #[test]
+    fn current_line_is_blank_after_newline_whitespace() {
+        assert!(current_line_is_blank("a\n  "));
+    }
+
+    #[test]
+    fn last_nonspace_char_empty() {
+        assert_eq!(last_nonspace_char(""), None);
+    }
+
+    #[test]
+    fn last_nonspace_char_single() {
+        assert_eq!(last_nonspace_char("x"), Some('x'));
+    }
+
+    #[test]
+    fn last_nonspace_char_trailing_space() {
+        assert_eq!(last_nonspace_char("x "), Some('x'));
+    }
+
+    #[test]
+    fn last_nonspace_char_multi_word() {
+        assert_eq!(last_nonspace_char("a b "), Some('b'));
+    }
+
+    #[test]
+    fn last_nonspace_char_with_newline() {
+        assert_eq!(last_nonspace_char("x\ny"), Some('y'));
+    }
+
+    #[test]
+    fn is_balanced_parens() {
+        assert!(is_balanced(&[mk_punct("("), mk_punct(")")]));
+    }
+
+    #[test]
+    fn is_balanced_brackets() {
+        assert!(is_balanced(&[mk_punct("["), mk_punct("]")]));
+    }
+
+    #[test]
+    fn is_balanced_braces() {
+        assert!(is_balanced(&[mk_punct("{"), mk_punct("}")]));
+    }
+
+    #[test]
+    fn is_balanced_combined() {
+        assert!(is_balanced(&[
+            mk_punct("("),
+            mk_punct("["),
+            mk_punct("]"),
+            mk_punct("{"),
+            mk_punct("}"),
+            mk_punct(")"),
+        ]));
+    }
+
+    #[test]
+    fn is_balanced_unmatched_open() {
+        assert!(!is_balanced(&[mk_punct("(")]));
+    }
+
+    #[test]
+    fn is_balanced_mismatched() {
+        assert!(!is_balanced(&[mk_punct("("), mk_punct("]")]));
+    }
+
+    #[test]
+    fn is_balanced_negative_depth() {
+        assert!(!is_balanced(&[mk_punct(")"), mk_punct("(")]));
+    }
+
+    #[test]
+    fn is_balanced_empty() {
+        assert!(is_balanced(&[]));
+    }
+
+    #[test]
+    fn has_top_level_question_at_depth_zero() {
+        assert!(has_top_level_question(&[mk_punct("?")]));
+    }
+
+    #[test]
+    fn has_top_level_question_inside_parens() {
+        assert!(!has_top_level_question(&[
+            mk_punct("("),
+            mk_punct("?"),
+            mk_punct(")"),
+        ]));
+    }
+
+    #[test]
+    fn has_top_level_question_none() {
+        assert!(!has_top_level_question(&[mk_punct("+"), mk_punct("-")]));
+    }
+
+    #[test]
+    fn has_top_level_question_multiple_at_depth_zero() {
+        assert!(has_top_level_question(&[
+            mk_punct("?"),
+            mk_punct("("),
+            mk_punct("?"),
+            mk_punct(")"),
+            mk_punct("?"),
+        ]));
+    }
+
+    #[test]
+    fn is_excluded_callee_if() {
+        assert!(is_excluded_callee("if"));
+    }
+
+    #[test]
+    fn is_excluded_callee_for() {
+        assert!(is_excluded_callee("for"));
+    }
+
+    #[test]
+    fn is_excluded_callee_sizeof() {
+        assert!(is_excluded_callee("sizeof"));
+    }
+
+    #[test]
+    fn is_excluded_callee_printf() {
+        assert!(!is_excluded_callee("printf"));
+    }
+
+    #[test]
+    fn is_excluded_callee_myfunc() {
+        assert!(!is_excluded_callee("myfunc"));
+    }
+
+    #[test]
+    fn is_excluded_callee_empty() {
+        assert!(!is_excluded_callee(""));
+    }
+}

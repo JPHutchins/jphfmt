@@ -212,4 +212,70 @@ mod tests {
         // `(a)` is 3 wide and would fit in 4 columns, but only 2 are available.
         assert_eq!(render(&bracket_group(&["a"]), 2, 0, 0), "(\n\ta\n)");
     }
+
+    #[test]
+    fn fits_zero_remaining_no_panic() {
+        // remaining=0 with empty doc -- does not panic
+        assert!(fits(0, &Doc::Concat(vec![]), &[]));
+        // remaining=0 with single-char text -- correctly returns false
+        assert!(!fits(0, &Doc::text("x"), &[]));
+        // remaining=0 with empty text -- does not underflow
+        assert!(fits(0, &Doc::text(""), &[]));
+    }
+
+    #[test]
+    fn fits_force_break_in_rest_returns_false() {
+        let fb_doc = Doc::text(",");
+        let rest = [(0, Mode::Break, &Doc::ForceBreak(Box::new(fb_doc)))];
+        // The doc itself would fit, but a ForceBreak in the rest queue forces false.
+        assert!(!fits(5, &Doc::text("hi"), &rest));
+    }
+
+    #[test]
+    fn nest_inside_group_inside_forcebreak() {
+        let doc = Doc::ForceBreak(Box::new(Doc::group(Doc::nest(Doc::concat([
+            Doc::text("a"),
+            Doc::Line,
+            Doc::text("b"),
+        ])))));
+        // With width 80 the group fits flat -- no indentation from Nest.
+        assert_eq!(render(&doc, 80, 0, 0), "a b");
+        // With width 1 the group overflows, Line breaks, and Nest adds one tab.
+        assert_eq!(render(&doc, 1, 0, 0), "a\n\tb");
+    }
+
+    #[test]
+    fn ifbreak_broken_alternative_in_break_mode() {
+        let doc = Doc::group(Doc::concat([
+            Doc::text("call"),
+            Doc::IfBreak {
+                broken: "(".to_string(),
+                flat: ".".to_string(),
+            },
+            Doc::text("x"),
+        ]));
+        // Flat group uses the flat alternative.
+        assert_eq!(render(&doc, 80, 0, 0), "call.x");
+        // Broken group uses the broken alternative.
+        assert_eq!(render(&doc, 0, 0, 0), "call(x");
+    }
+
+    #[test]
+    fn concat_nested_group_line_cascade() {
+        let doc = Doc::group(Doc::concat([
+            Doc::text("def"),
+            Doc::Line,
+            Doc::group(Doc::nest(Doc::concat([
+                Doc::text("x"),
+                Doc::Line,
+                Doc::text("y"),
+            ]))),
+        ]));
+        // Width 80: both outer and inner groups fit flat.
+        assert_eq!(render(&doc, 80, 0, 0), "def x y");
+        // Width 4: outer group overflows (def + space + x.. = 5 > 4), inner fits flat.
+        assert_eq!(render(&doc, 4, 0, 0), "def\nx y");
+        // Width 2: both groups overflow; inner Line uses Nest indentation (level 1).
+        assert_eq!(render(&doc, 2, 0, 0), "def\nx\n\ty");
+    }
 }
