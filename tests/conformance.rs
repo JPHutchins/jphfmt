@@ -251,6 +251,75 @@ fn function_pointer_star_is_not_spaced() {
 }
 
 #[test]
+fn struct_tag_pointer_is_middle_spaced() {
+    assert_eq!(format("struct shape*s;\n"), "struct shape * s;\n");
+    assert_eq!(format("union u*p;\n"), "union u * p;\n");
+}
+
+#[test]
+fn casts_get_a_trailing_space() {
+    assert_eq!(format("x = (int)y;\n"), "x = (int) y;\n");
+    assert_eq!(format("p = (void *)q;\n"), "p = (void *) q;\n");
+    assert_eq!(
+        format("n = (unsigned char)b;\n"),
+        "n = (unsigned char) b;\n"
+    );
+    // a grouped expression is not a cast
+    assert_eq!(format("z = (a + b) * c;\n"), "z = (a + b) * c;\n");
+    // a call is not a cast
+    assert_eq!(format("v = sizeof(int);\n"), "v = sizeof(int);\n");
+}
+
+#[test]
+fn brace_attaches_for_functions_and_control() {
+    assert_eq!(format("void f(void){}\n"), "void f(void) {}\n");
+    assert_eq!(format("if(x){}\n"), "if (x) {}\n");
+}
+
+#[test]
+fn compound_literal_brace_stays_tight() {
+    // §8.4: `&(struct shape){…}` has no space before `{` (it is not a function/control body)
+    assert_eq!(
+        format("p = &(struct shape){.x = 1};\n"),
+        "p = &(struct shape){.x = 1};\n"
+    );
+}
+
+#[test]
+fn compound_literals_in_function_args() {
+    // the inner `){` of a compound literal stays tight even inside a call's argument list
+    assert_eq!(
+        format("configure(&(struct opts){.mode = 1, .flags = 0}, count);\n"),
+        "configure(&(struct opts){.mode = 1, .flags = 0}, count);\n"
+    );
+    assert_eq!(
+        format("register_handler(handler, (struct event){.type = T, .data = d}, priority);\n"),
+        "register_handler(handler, (struct event){.type = T, .data = d}, priority);\n"
+    );
+    // a long call carrying a compound-literal argument still explodes one-per-line, arg intact
+    let long = "dispatch(&(struct request){.id = 1234567, .kind = KIND_READ}, &response_buffer_out, default_timeout_ms);\n";
+    let expected = "dispatch(\n\t&(struct request){.id = 1234567, .kind = KIND_READ},\n\t&response_buffer_out,\n\tdefault_timeout_ms\n);\n";
+    assert_eq!(format(long), expected);
+}
+
+#[test]
+fn compound_literal_arg_explodes_its_initializer_when_long() {
+    let src = "init(&(struct config){.alpha = 1111111111, .beta = 2222222222, .gamma = 3333333333, .delta = 4444444444});\n";
+    let expected = "init(\n\t&(struct config){\n\t\t.alpha = 1111111111,\n\t\t.beta = 2222222222,\n\t\t.gamma = 3333333333,\n\t\t.delta = 4444444444,\n\t}\n);\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn bit_field_colon_spacing() {
+    assert_eq!(
+        format("struct s {\n\tint x:2;\n};\n"),
+        "struct s {\n\tint x: 2;\n};\n"
+    );
+    // a ternary colon must not be touched
+    assert_eq!(format("z = a ? b : 3;\n"), "z = a ? b : 3;\n");
+}
+
+#[test]
 fn crlf_is_normalized_to_lf() {
     assert_eq!(format("int x;\r\nint y;\r\n"), "int x;\nint y;\n");
     // a construct cfmt generates must not leave mixed endings

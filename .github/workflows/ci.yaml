@@ -1,14 +1,41 @@
-name: Release
+name: CI
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
-
-permissions:
-  contents: write
+  pull_request:
 
 jobs:
+  # Validation on every push/PR. camas is the single source of truth: `ci` = npm ci + the full
+  # parallel validation (rustfmt, clippy -D warnings, test, doc; prettier, eslint, tsc).
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx camas ci
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Build + test on the declared rust-version
+        run: cargo test --all-features
+
+  # Release jobs run only for v* tags, after validation passes.
   binaries:
+    needs: [validate, msrv]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +62,7 @@ jobs:
 
   crate:
     needs: binaries
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +75,10 @@ jobs:
 
   extension:
     needs: binaries
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: editors/vscode

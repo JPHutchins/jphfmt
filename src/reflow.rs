@@ -25,11 +25,7 @@ pub fn format(src: &str) -> String {
 /// Format with an explicit column limit. Tab width for the overflow measurement is fixed at
 /// [`TAB_WIDTH`] (§8.5 default).
 pub fn format_with_width(src: &str, width: usize) -> String {
-    normalize_endings(&space_pointers(&retab(&structure(
-        &tokenize(src),
-        0,
-        width,
-    ))))
+    normalize_endings(&space_tokens(&retab(&structure(&tokenize(src), 0, width))))
 }
 
 /// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
@@ -56,11 +52,53 @@ fn is_type_context(text: &str) -> bool {
     )
 }
 
-/// Middle-align pointer `*` in declarations (§2.5: `T * p`, `T ** p`, `T * const`). Only a `*`
-/// cluster whose preceding token is a [`is_type_context`] keyword is touched; everything else
-/// (multiply, deref, function-pointer `(*f)`, user-typedef pointers) is left exactly as is.
-fn space_pointers(s: &str) -> String {
-    let mut pieces: Vec<(String, Token)> = Vec::new();
+/// A significant token paired with the whitespace that preceded it.
+type Piece<'src> = (String, Token<'src>);
+
+fn same_line(gap: &str) -> bool {
+    !gap.contains('\n')
+}
+
+/// Index of the `(` matching the `)` at `close`, scanning the piece list backward.
+fn piece_open_paren(pieces: &[Piece], close: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for j in (0..=close).rev() {
+        match pieces[j].1.text {
+            ")" => depth += 1,
+            "(" => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Index of the `)` matching the `(` at `open`, scanning forward.
+fn piece_close_paren(pieces: &[Piece], open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (j, p) in pieces.iter().enumerate().skip(open) {
+        match p.1.text {
+            "(" => depth += 1,
+            ")" => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Apply the §2.5 token-spacing rules. Whitespace is semantically inert, so this never changes
+/// meaning; only the listed pairs are touched and everything else keeps its exact spacing.
+fn space_tokens(s: &str) -> String {
+    let mut pieces: Vec<Piece> = Vec::new();
     let mut gap = String::new();
     for t in tokenize(s) {
         if is_trivia(&t) {
@@ -70,15 +108,34 @@ fn space_pointers(s: &str) -> String {
         }
     }
     let trailing = gap;
+
+    space_pointers(&mut pieces);
+    space_casts(&mut pieces);
+    space_braces(&mut pieces);
+    space_bit_fields(&mut pieces);
+
+    let mut out = String::with_capacity(s.len());
+    for (g, t) in &pieces {
+        out.push_str(g);
+        out.push_str(t.text);
+    }
+    out.push_str(&trailing);
+    out
+}
+
+/// Middle-align pointer `*` (§2.5: `T * p`, `T ** p`). A `*` cluster is a pointer only when
+/// preceded by a type keyword/qualifier or a `struct`/`union`/`enum` tag; multiply, deref,
+/// function pointers `(*f)`, and bare-typedef pointers are left as is (§6).
+fn space_pointers(pieces: &mut [Piece]) {
     let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
-    let same_line = |g: &str| !g.contains('\n');
     let mut j = 0;
     while j < pieces.len() {
-        let star_run = is_star(&pieces[j].1)
-            && j > 0
-            && is_type_context(pieces[j - 1].1.text)
-            && same_line(&pieces[j].0);
-        if star_run {
+        let prev_is_type = j > 0
+            && (is_type_context(pieces[j - 1].1.text)
+                || (pieces[j - 1].1.kind == TokenKind::Ident
+                    && j >= 2
+                    && matches!(pieces[j - 2].1.text, "struct" | "union" | "enum")));
+        if is_star(&pieces[j].1) && prev_is_type && same_line(&pieces[j].0) {
             let mut k = j;
             while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
                 k += 1;
@@ -101,13 +158,92 @@ fn space_pointers(s: &str) -> String {
         }
         j += 1;
     }
-    let mut out = String::with_capacity(s.len());
-    for (g, t) in &pieces {
-        out.push_str(g);
-        out.push_str(t.text);
+}
+
+/// A C-style cast `(type) x` gets a space after the `)` (§2.5). Conservative: the parenthesized
+/// group must be type-only and contain a type keyword (so a grouped expression is never mistaken
+/// for one), be in a non-value position, and be followed by an operand.
+fn space_casts(pieces: &mut [Piece]) {
+    let value_start = |t: &Token| {
+        matches!(
+            t.kind,
+            TokenKind::Ident | TokenKind::Number | TokenKind::String | TokenKind::Char
+        ) || (t.kind == TokenKind::Punct
+            && matches!(t.text, "(" | "*" | "&" | "!" | "~" | "-" | "+"))
+    };
+    for open in 0..pieces.len() {
+        if pieces[open].1.text != "(" {
+            continue;
+        }
+        let Some(close) = piece_close_paren(pieces, open) else {
+            continue;
+        };
+        let inner = &pieces[open + 1..close];
+        let type_only = inner.iter().all(|p| {
+            p.1.kind == TokenKind::Ident
+                || matches!(p.1.text, "*" | "[" | "]")
+                || p.1.kind == TokenKind::Number
+        });
+        let has_type = inner
+            .iter()
+            .any(|p| is_type_context(p.1.text) || matches!(p.1.text, "struct" | "union" | "enum"));
+        let prev_is_value = open > 0
+            && (pieces[open - 1].1.kind == TokenKind::Ident
+                || matches!(pieces[open - 1].1.text, ")" | "]"));
+        let followed_by_operand = pieces
+            .get(close + 1)
+            .is_some_and(|after| same_line(&after.0) && value_start(&after.1));
+        if type_only && has_type && !prev_is_value && followed_by_operand {
+            pieces[close + 1].0 = " ".to_owned();
+        }
     }
-    out.push_str(&trailing);
-    out
+}
+
+/// K&R brace attach: `) {` keeps one space (§2.5) for function and control bodies, but the tight
+/// `({` statement-expression and `(type){...}` compound literal are left alone. The matching `(`
+/// follows an identifier for the former and an operator/`&`/`=` for the latter, which decides it.
+fn space_braces(pieces: &mut [Piece]) {
+    for j in 1..pieces.len() {
+        if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
+            let function_or_control = piece_open_paren(pieces, j - 1)
+                .and_then(|open| open.checked_sub(1))
+                .is_some_and(|before| pieces[before].1.kind == TokenKind::Ident);
+            if function_or_control {
+                pieces[j].0 = " ".to_owned();
+            }
+        }
+    }
+}
+
+/// Bit-field colon spacing (§2.5: `x: 1` — no space before, one after). A `:` qualifies only when
+/// it follows an identifier, precedes an integer literal, and no `?` opened a ternary earlier in
+/// the statement (which would make it a ternary colon, not a bit-field).
+fn space_bit_fields(pieces: &mut [Piece]) {
+    for j in 1..pieces.len().saturating_sub(1) {
+        let is_bit_field = pieces[j].1.text == ":"
+            && pieces[j].1.kind == TokenKind::Punct
+            && pieces[j - 1].1.kind == TokenKind::Ident
+            && pieces[j + 1].1.kind == TokenKind::Number
+            && same_line(&pieces[j].0)
+            && same_line(&pieces[j + 1].0)
+            && !ternary_open_before(pieces, j);
+        if is_bit_field {
+            pieces[j].0.clear();
+            pieces[j + 1].0 = " ".to_owned();
+        }
+    }
+}
+
+/// Whether an unmatched `?` precedes index `j` within the current statement (back to `;`/`{`/`}`).
+fn ternary_open_before(pieces: &[Piece], j: usize) -> bool {
+    for p in pieces[..j].iter().rev() {
+        match p.1.text {
+            "?" => return true,
+            ";" | "{" | "}" => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Normalize every line ending to LF and guarantee exactly one trailing newline (§2.1). An
@@ -698,23 +834,25 @@ fn render_segment(toks: &[Token]) -> String {
     s
 }
 
-/// Build the §2.2 document for a call's argument list, including the surrounding parens.
+/// Build the §2.2 document for a call's argument list, including the surrounding parens. Each
+/// argument is built recursively (via [`build_element_doc`]), so a compound-literal argument's
+/// `{...}` is a nested group that can collapse or explode on its own.
 fn build_call_doc(inner: &[Token]) -> Doc {
-    let segments: Vec<String> = split_on_commas(inner)
-        .iter()
-        .map(|a| render_segment(a))
-        .filter(|s| !s.is_empty())
+    let args: Vec<&[Token]> = split_on_commas(inner)
+        .into_iter()
+        .filter(|a| a.iter().any(|t| !is_trivia(t)))
         .collect();
-    if segments.is_empty() {
+    if args.is_empty() {
         return Doc::text("()");
     }
+    let last = args.len() - 1;
     let mut items = vec![Doc::SoftLine];
-    for (idx, seg) in segments.into_iter().enumerate() {
-        if idx > 0 {
+    for (idx, arg) in args.into_iter().enumerate() {
+        items.push(build_element_doc(arg));
+        if idx < last {
             items.push(Doc::text(","));
             items.push(Doc::Line);
         }
-        items.push(Doc::Text(seg));
     }
     Doc::group(Doc::concat([
         Doc::text("("),

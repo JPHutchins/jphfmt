@@ -14,8 +14,12 @@ All notable changes to cfmt are documented here. The format follows
   initializers, `enum` bodies (with the §2.3 magic trailing comma),
   `for`/`if`/`while`/`switch` headers, function-like and statement-expression
   macros, and parenthesized ternaries.
-- §2.5 spacing: a space before `(` for control keywords (`if (`), and pointer
-  middle-spacing after a type keyword/qualifier (`int*p` → `int * p`).
+- §2.5 spacing: control-keyword space before `(`; pointer middle-spacing
+  (`int*p` → `int * p`, including `struct`/`union`/`enum` tags); C-style cast
+  spacing (`(int)x` → `(int) x`); bit-field colons (`x:1` → `x: 1`); and K&R
+  brace-attach (`){` → `) {` for functions/control, while compound literals
+  `(T){…}` and statement-expressions `({` stay tight).
+- Compound-literal arguments break their `{…}` initializer when a call explodes.
 - Hard-tab indentation and LF line-ending normalization with a single trailing
   newline (§2.1).
 - CLI: stdin→stdout, `-i`/`--in-place`, `--check`, `--width N`, `--version`.
@@ -25,10 +29,8 @@ All notable changes to cfmt are documented here. The format follows
 
 - Comment attachment/reflow is deferred: a list containing a comment passes
   through (re-tabbed) rather than being re-laid-out.
-- Some §2.5 spacing is token-level ambiguous and therefore preserved rather than
-  normalized (§6 "prefer passthrough when ambiguous"): cast spacing, bit-field
-  colons, brace-attach (`) {` vs the tight `({`/compound-literal `){`), and
-  pointers after a user typedef (`mytype*p`). Already-correct input is preserved;
-  these messy forms are simply left as-is.
+- A `*` after a bare user typedef (`mytype*p`) is not middle-spaced — it is
+  token-level ambiguous with multiply, so it passes through (§6); spacing after
+  type keywords and `struct`/`union`/`enum` tags is handled.
 - Input must be valid UTF-8.
 - Tab width for the overflow measurement is fixed at 4.
