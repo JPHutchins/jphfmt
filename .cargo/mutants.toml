@@ -1,0 +1,4 @@
+# Mutation scoring runs the deterministic suite only. The proptest target
+# (tests/properties.rs) is randomized, so including it makes the mutation score
+# vary run to run; it still runs in the normal `test` gate as a fuzz harness.
+additional_cargo_test_args = ["--lib", "--test", "conformance"]
