@@ -7,33 +7,50 @@
 Covers both ecosystems: the Rust formatter crate and the TypeScript LSP/VS Code
 client under ``editors/vscode``. ``check`` runs every read-only validation in
 parallel; ``fix`` runs every deterministic fixer; ``all`` does fix-then-check.
+
+Each leaf declares its ``paths`` scope (no ``{paths}`` token — cargo and npm are
+whole-project tools), so a scoped run (the FileChanged hook's ``camas mcp fix
+--paths <file>``, or the gate) drops the ecosystem the change didn't touch:
+editing Rust never runs the TS toolchain and vice-versa. Full runs are unaffected.
 """
 
 from pathlib import Path
 
 from camas import Claude, Config, Parallel, Sequential, Task, run_cli
 
-VSCODE = Path("editors/vscode")
+VSCODE_DIR = "editors/vscode"
+VSCODE = Path(VSCODE_DIR)
 
-# ---- Rust: the cfmt crate ----
-rust_fmt = Task("cargo fmt --all", mutates=True)
-rust_fmt_check = Task("cargo fmt --all -- --check")
-clippy = Task("cargo clippy --all-targets --all-features -- -D warnings")
+
+def rust_paths(changed: tuple[str, ...]) -> tuple[str, ...]:
+	"""The Rust crate's scope: every changed file outside the TypeScript project."""
+	return tuple(c for c in changed if c != VSCODE_DIR and not c.startswith(VSCODE_DIR + "/"))
+
+
+# ---- Rust: the cfmt crate (scoped to everything outside editors/vscode) ----
+rust_fmt = Task("cargo fmt --all", mutates=True, paths=rust_paths)
+rust_fmt_check = Task("cargo fmt --all -- --check", paths=rust_paths)
+clippy = Task("cargo clippy --all-targets --all-features -- -D warnings", paths=rust_paths)
 clippy_fix = Task(
 	"cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features",
 	mutates=True,
+	paths=rust_paths,
 )
-test = Task("cargo test --all-features")
-doc = Task("cargo doc --no-deps --all-features", env={"RUSTDOCFLAGS": "-D warnings"})
+test = Task("cargo test --all-features", paths=rust_paths)
+doc = Task(
+	"cargo doc --no-deps --all-features",
+	env={"RUSTDOCFLAGS": "-D warnings"},
+	paths=rust_paths,
+)
 
-# ---- TypeScript: the editors/vscode LSP + client (run from its own directory) ----
-ts_install = Task("npm ci", cwd=VSCODE)
-ts_fmt = Task("npm run format", cwd=VSCODE, mutates=True)
-ts_fmt_check = Task("npm run format:check", cwd=VSCODE)
-eslint = Task("npm run lint", cwd=VSCODE)
-eslint_fix = Task("npm run lint:fix", cwd=VSCODE, mutates=True)
-ts_typecheck = Task("npm run typecheck", cwd=VSCODE)
-ts_build = Task("npm run build", cwd=VSCODE)
+# ---- TypeScript: the editors/vscode LSP + client (scoped to that directory) ----
+ts_install = Task("npm ci", cwd=VSCODE, paths=VSCODE_DIR)
+ts_fmt = Task("npm run format", cwd=VSCODE, mutates=True, paths=VSCODE_DIR)
+ts_fmt_check = Task("npm run format:check", cwd=VSCODE, paths=VSCODE_DIR)
+eslint = Task("npm run lint", cwd=VSCODE, paths=VSCODE_DIR)
+eslint_fix = Task("npm run lint:fix", cwd=VSCODE, mutates=True, paths=VSCODE_DIR)
+ts_typecheck = Task("npm run typecheck", cwd=VSCODE, paths=VSCODE_DIR)
+ts_build = Task("npm run build", cwd=VSCODE, paths=VSCODE_DIR)
 
 # Every read-only validation, maximally parallel across both ecosystems. Compile-validation is
 # `cargo test`/`doc` for Rust and `tsc --noEmit` (typecheck) for TypeScript.
@@ -49,6 +66,7 @@ check = Parallel(
 
 # Every deterministic fixer. The two ecosystems run in parallel; each is ordered internally
 # (Rust formats then clippy-fixes; TypeScript lint-fixes then formats so prettier has the last word).
+# Under a scoped run, the untouched ecosystem's branch prunes to nothing and is dropped.
 fix = Parallel(
 	Sequential(rust_fmt, clippy_fix, name="rust_fix"),
 	Sequential(eslint_fix, ts_fmt, name="ts_fix"),
