@@ -3,4 +3,8 @@ tsconfig.json
 **/*.ts
 **/*.map
 .gitignore
-node_modules/.cache
+node_modules
+eslint.config.mjs
+knip.json
+.prettierrc.json
+bundle.mjs
