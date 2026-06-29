@@ -6,6 +6,8 @@ on:
 jobs:
   mutants:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - uses: actions/checkout@v7
 
@@ -34,6 +36,6 @@ jobs:
       - if: steps.cache.outputs.cache-hit != 'true' && steps.mutants.outcome == 'failure'
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: 'Mutation testing: surviving mutants'
+          title: 'Mutation testing: surviving mutants ${{ github.sha[0:7] }}'
           content-filepath: mutants-report.txt
           labels: 'mutation-testing'
