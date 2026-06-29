@@ -19,7 +19,7 @@ export const activate = (context: ExtensionContext): void => {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       { scheme: "file", language: "c" },
-      { scheme: "file", language: "cpp", pattern: "**/*.h" },
+      { scheme: "untitled", language: "c" },
     ],
     initializationOptions: {
       path: config.get<string>("path", "jphfmt"),

@@ -11,22 +11,11 @@ await esbuild.build({
   allowOverwrite: true,
 });
 
-// LSP server — standalone process, bundle everything.
+// LSP server — standalone process, bundle everything (jphfmt IS imported).
 await esbuild.build({
   entryPoints: ["out/server.js"],
   bundle: true,
   outfile: "out/server.js",
-  platform: "node",
-  format: "cjs",
-  allowOverwrite: true,
-});
-
-// Subprocess wrapper — keep as a standalone file (only used by server via
-// child_process.spawn on the jphfmt binary, not imported).
-await esbuild.build({
-  entryPoints: ["out/jphfmt.js"],
-  bundle: true,
-  outfile: "out/jphfmt.js",
   platform: "node",
   format: "cjs",
   allowOverwrite: true,

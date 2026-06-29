@@ -14,9 +14,11 @@ enum Mode {
     Check,
     /// Print the version and exit.
     Version,
+    /// Print usage and exit.
+    Help,
 }
 
-const USAGE: &str = "usage: jphfmt [-i | --check] [--width N] [FILE...]";
+const USAGE: &str = "usage: jphfmt [-i | --in-place | --check] [--width N] [FILE...]";
 
 struct Args {
     mode: Mode,
@@ -34,7 +36,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "-i" | "--in-place" => mode = Mode::InPlace,
             "--check" => mode = Mode::Check,
             "-V" | "--version" => mode = Mode::Version,
-            "-h" | "--help" => return Err(USAGE.to_owned()),
+            "-h" | "--help" => mode = Mode::Help,
             "--width" => {
                 let value = rest.next().ok_or("--width requires a value")?;
                 width = value
@@ -59,16 +61,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     Ok(Args { mode, width, files })
 }
 
-fn read_stdin() -> std::io::Result<String> {
-    let mut buf = String::new();
-    std::io::stdin().read_to_string(&mut buf)?;
-    Ok(buf)
-}
-
 /// Returns `true` if any input differed from its formatted form.
 fn run(args: &Args) -> std::io::Result<bool> {
     if args.files.is_empty() {
-        let src = read_stdin()?;
+        let src = {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            buf
+        };
         let out = format_with_width(&src, args.width);
         if args.mode != Mode::Check {
             std::io::stdout().write_all(out.as_bytes())?;
@@ -84,7 +84,7 @@ fn run(args: &Args) -> std::io::Result<bool> {
         match args.mode {
             Mode::Stdout => std::io::stdout().write_all(out.as_bytes())?,
             Mode::InPlace if changed => std::fs::write(path, out)?,
-            Mode::InPlace | Mode::Check | Mode::Version => {}
+            Mode::InPlace | Mode::Check | Mode::Version | Mode::Help => {}
         }
     }
     Ok(any_changed)
@@ -101,6 +101,10 @@ fn main() -> ExitCode {
     };
     if args.mode == Mode::Version {
         println!("jphfmt {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    if args.mode == Mode::Help {
+        println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
     match run(&args) {

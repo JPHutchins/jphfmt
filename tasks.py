@@ -83,6 +83,7 @@ check = Parallel(
 	ts_fmt_check,
 	eslint,
 	ts_typecheck,
+	ts_build,
 	knip,
 	typos,
 )

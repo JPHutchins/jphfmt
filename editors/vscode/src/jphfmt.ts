@@ -13,7 +13,13 @@ export const formatSource = (
   source: string,
 ): Promise<FormatResult> =>
   new Promise((resolve) => {
-    const child = spawn(binary, ["--width", String(width)]);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 30_000);
+    const child = spawn(binary, ["--width", String(width)], {
+      signal: controller.signal,
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => {
@@ -22,10 +28,16 @@ export const formatSource = (
     child.stderr.on("data", (chunk: Buffer) => {
       stderr.push(chunk);
     });
+    child.stdin.on("error", () => {
+      void 0;
+    });
     child.on("error", (error) => {
+      clearTimeout(timeout);
+      if (!child.killed) child.kill();
       resolve({ kind: "failed", message: error.message });
     });
     child.on("close", (code) => {
+      clearTimeout(timeout);
       resolve(
         code === 0
           ? { kind: "formatted", text: Buffer.concat(stdout).toString("utf8") }

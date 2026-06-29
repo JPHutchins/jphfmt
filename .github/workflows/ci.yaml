@@ -124,7 +124,7 @@ jobs:
           # 3. Test results
           test_output="$(cat test-summary.txt)"
 
-          system_prompt='You are providing a comprehensive code review for this pull request.You are given the full codebase, the PR diff, and CI test results. Categorize your findings by priority level.'
+          system_prompt='You are providing a comprehensive code review for this pull request. You are given the full codebase, the PR diff, and CI test results. Categorize your findings by priority level.'
 
           user_prompt="## Full Codebase (pre-PR)\n\n$codebase\n\n## PR Diff\n\n$diff\n\n## CI Test Results\n\n\`\`\`\n$test_output\n\`\`\`\n\nReport findings as a bullet list. Reference file paths and line numbers."
 

@@ -16,8 +16,7 @@
     "Formatters"
   ],
   "activationEvents": [
-    "onLanguage:c",
-    "onLanguage:cpp"
+    "onLanguage:c"
   ],
   "main": "./out/extension.js",
   "contributes": {
