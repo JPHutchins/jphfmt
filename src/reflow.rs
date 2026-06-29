@@ -350,6 +350,7 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
     let mut i = 0usize;
     let mut paren_depth = 0i32;
     let mut in_init = false;
+    let mut pending_func_def = false;
     while i < toks.len() {
         let t = toks[i];
 
@@ -403,6 +404,7 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
             && let Some(close) = match_bracket(toks, i + 1)
             && !contains_comment(&toks[i + 2..close])
             && is_balanced(&toks[i + 2..close])
+            && !has_middle_newline(&toks[i + 2..close])
         {
             emit_str(&mut out, &mut col, t.text);
             let doc = build_call_doc(&toks[i + 2..close]);
@@ -410,6 +412,7 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
             let reserved = trailing_reserved(toks, close + 1);
             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
+            pending_func_def = next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
             i = close + 1;
             continue;
         }
@@ -431,12 +434,19 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
 
         // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its
         // own line with the colon trailing (§2.4). Parens are author-written (§8.2), not inserted.
+        // Skip `(` that are part of a function call (`ident(`): the call handler (§2.2) already
+        // tried and fell through (typically due to `has_middle_newline`), so the ternary handler
+        // would accidentally reformat the call's argument list, collapsing whitespace and losing
+        // empty leading arguments. Let it passthrough instead.
         if t.kind == TokenKind::Punct
             && t.text == "("
             && let Some(close) = match_bracket(toks, i)
             && has_top_level_question(&toks[i + 1..close])
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
+            && !(i > 0
+                && toks[i - 1].kind == TokenKind::Ident
+                && !is_excluded_callee(toks[i - 1].text))
         {
             let doc = build_ternary_doc(&toks[i + 1..close]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
@@ -444,6 +454,14 @@ fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
             emit_str(&mut out, &mut col, &rendered);
             i = close + 1;
+            continue;
+        }
+
+        // Function definition body: `{` after `)` from a function/macro definition. Always break
+        // with one statement per line, body indented, `}` at the definition's own indent level.
+        if t.kind == TokenKind::Punct && t.text == "{" && pending_func_def {
+            pending_func_def = false;
+            i = emit_func_body(toks, i, &mut out, &mut col, width);
             continue;
         }
 
@@ -488,7 +506,7 @@ fn emit_define(
         && let Some(body_str) = format_define_body(&body, display_width(&prefix), width)
     {
         let full = format!("{prefix}{body_str}");
-        let continued = full.split('\n').collect::<Vec<_>>().join(" \\\n");
+        let continued = full.replace('\n', " \\\n");
         emit_str(out, col, &continued);
         emit_str(out, col, "\n");
         return end;
@@ -627,6 +645,69 @@ fn emit_brace(
     close + 1
 }
 
+/// Format a function definition body: always break with `{\n\tstatements\n}`. Preserves blank
+/// lines within the body (they survive `retab` normalization). Falls back to verbatim for bodies
+/// with comments, directives, or nested braces (same M7/M8 policy as [`emit_brace`]).
+fn emit_func_body(
+    toks: &[Token],
+    open: usize,
+    out: &mut String,
+    col: &mut usize,
+    _width: usize,
+) -> usize {
+    let Some(close) = match_brace(toks, open) else {
+        emit_str(out, col, toks[open].text);
+        return open + 1;
+    };
+    let inner = &toks[open + 1..close];
+    let unformattable = inner.iter().any(|t| {
+        matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+            || (t.kind == TokenKind::Punct && matches!(t.text, "#" | "{"))
+    });
+    if unformattable || !is_balanced(inner) {
+        emit_str(out, col, toks[open].text);
+        for tok in &toks[open + 1..=close] {
+            emit_str(out, col, tok.text);
+        }
+        return close + 1;
+    }
+
+    let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+    let inner_indent = "\t".repeat(base_level + 1);
+    let close_indent = "\t".repeat(base_level);
+
+    // The space from `space_braces` is already in the token stream before `{`.
+    emit_str(out, col, "{");
+
+    // Strip leading and trailing trivia from body tokens, then emit verbatim.
+    // `retab` at the end normalizes indentation; blank lines are naturally preserved.
+    let start = inner
+        .iter()
+        .position(|t| !is_trivia(t))
+        .unwrap_or(inner.len());
+    let end = inner
+        .iter()
+        .rposition(|t| !is_trivia(t))
+        .map_or(0, |p| p + 1);
+
+    if start < end {
+        let body_core = &inner[start..end];
+        emit_str(out, col, "\n");
+        emit_str(out, col, &inner_indent);
+        for tok in body_core {
+            emit_str(out, col, tok.text);
+        }
+        emit_str(out, col, "\n");
+        emit_str(out, col, &close_indent);
+        emit_str(out, col, "}");
+    } else {
+        // Empty body — keep `{}` inline
+        emit_str(out, col, "}");
+    }
+
+    close + 1
+}
+
 /// Append `s` to `out`, tracking the display column (tabs count as [`TAB_WIDTH`]).
 fn emit_str(out: &mut String, col: &mut usize, s: &str) {
     for ch in s.chars() {
@@ -678,8 +759,8 @@ fn last_nonspace_char(out: &str) -> Option<char> {
 /// An identifier immediately followed by `(` (no intervening whitespace) — a call or the
 /// structurally identical declaration parameter list, excluding control/operator keywords.
 fn is_call_head(toks: &[Token], i: usize) -> bool {
-    toks.get(i).is_some_and(|t| t.kind == TokenKind::Ident)
-        && !is_excluded_callee(toks[i].text)
+    toks.get(i)
+        .is_some_and(|t| t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
         && toks
             .get(i + 1)
             .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(")
@@ -742,7 +823,7 @@ fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
 
 /// The next non-trivia token index at or after `from`.
 fn next_nontrivia(toks: &[Token], from: usize) -> Option<usize> {
-    (from..toks.len()).find(|&j| !is_trivia(&toks[j]))
+    next_nontrivia_in(toks, from, toks.len())
 }
 
 /// The next non-trivia token index in `[from, end)`.
@@ -880,6 +961,25 @@ fn has_top_level_question(inner: &[Token]) -> bool {
             ")" | "]" | "}" => depth -= 1,
             "?" if depth == 0 && t.kind == TokenKind::Punct => return true,
             _ => {}
+        }
+    }
+    false
+}
+
+/// Whether a comma-separated call argument has a newline in its body (after stripping leading
+/// and trailing trivia). Such arguments would render differently on subsequent passes because
+/// `build_element_doc` collapses the newline into a space, which can then be reinterpreted by
+/// `space_bit_fields`, breaking idempotency. When this is true the whole call is passed through
+/// verbatim instead of being laid out via [`build_call_doc`].
+fn has_middle_newline(inner: &[Token]) -> bool {
+    let args = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",");
+    for arg in args {
+        let first = arg.iter().position(|t| !is_trivia(t));
+        let last = arg.iter().rposition(|t| !is_trivia(t));
+        if let (Some(f), Some(l)) = (first, last)
+            && arg[f..=l].iter().any(|t| t.kind == TokenKind::Newline)
+        {
+            return true;
         }
     }
     false
@@ -1099,7 +1199,15 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
                 w += col_width(t.text);
                 break;
             }
-            _ => w += col_width(t.text),
+            _ => {
+                // Stop at the first newline embedded in any token (not just Newline tokens),
+                // so Unknown tokens containing multiple lines don't inflate the reserve.
+                if let Some(nl) = t.text.find('\n') {
+                    w += col_width(&t.text[..nl]);
+                    break;
+                }
+                w += col_width(t.text);
+            }
         }
     }
     w

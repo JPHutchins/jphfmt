@@ -449,3 +449,13 @@ fn declaration_with_brace_explodes_and_keeps_brace_attached() {
     let expected = "static int do_something_with_a_long_name(\n\tint first_parameter,\n\tint second_parameter,\n\tint third_parameter\n) {\n";
     assert_eq!(format(src), expected);
 }
+
+#[test]
+fn function_params_break_before_inner_call_in_body() {
+    // §2.7 eager break: function bodies always break — newline after `{`, indented body,
+    // newline before `}`. This ensures the inner call stays flat because the body is on its
+    // own lines, so the inner call has plenty of room.
+    let src = "int study_point_debug(Point const *const s, char *const b, size_t const n) { return Point_debug(s, b, n); }\n";
+    let expected = "int study_point_debug(Point const * const s, char * const b, size_t const n) {\n\treturn Point_debug(s, b, n);\n}\n";
+    assert_eq!(format(src), expected);
+}
