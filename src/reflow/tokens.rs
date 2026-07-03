@@ -475,6 +475,17 @@ mod tests {
     }
 
     #[test]
+    fn has_middle_newline_nested_call_with_internal_newline() {
+        // Regression guard: an arg that is itself a call with a newline inside its parens must
+        // count as a middle newline so the whole call is passed through verbatim.
+        use crate::lexer::tokenize;
+        let src =
+            "(handler), (event), read_monotonic_timestamp_ms(\n\t), current_execution_context_id()";
+        let toks = tokenize(src);
+        assert!(has_middle_newline(&toks));
+    }
+
+    #[test]
     fn is_call_head_ident_then_paren() {
         let toks = [tok(TokenKind::Ident, "foo"), mk_punct("(")];
         assert!(is_call_head(&toks, 0));
