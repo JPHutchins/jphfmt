@@ -77,19 +77,33 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
 
         if is_call_head(toks, i)
             && let Some(close) = match_bracket(toks, i + 1)
-            && !contains_comment(&toks[i + 2..close])
-            && is_balanced(&toks[i + 2..close])
-            && !has_middle_newline(&toks[i + 2..close])
         {
-            emit_str(&mut out, &mut col, t.text);
-            let doc = build_call_doc(&toks[i + 2..close]);
-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
-            let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
-            emit_str(&mut out, &mut col, &rendered);
-            pending_func_def = next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-            i = close + 1;
-            continue;
+            let inner = &toks[i + 2..close];
+            if !contains_comment(inner) && is_balanced(inner) && !has_middle_newline(inner) {
+                emit_str(&mut out, &mut col, t.text);
+                let doc = build_call_doc(inner);
+                let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+                let reserved = trailing_reserved(toks, close + 1);
+                let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+                emit_str(&mut out, &mut col, &rendered);
+                pending_func_def =
+                    next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
+                i = close + 1;
+                continue;
+            }
+            if !contains_comment(inner) && is_balanced(inner) && has_middle_newline(inner) {
+                // The whole call is passed through verbatim: skip past `close` so nested calls
+                // inside the args are not re-entered and reflowed. Reflowing them would strip
+                // their intra-arg newlines, flipping this call's fits/explode decision on the
+                // next pass and breaking idempotency.
+                for tok in &toks[i..=close] {
+                    emit_str(&mut out, &mut col, tok.text);
+                }
+                pending_func_def =
+                    next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
+                i = close + 1;
+                continue;
+            }
         }
 
         // GNU statement-expression `({ ... })` — block-indent its statements.
@@ -109,10 +123,10 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
 
         // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its
         // own line with the colon trailing (§2.4). Parens are author-written (§8.2), not inserted.
-        // Skip `(` that are part of a function call (`ident(`): the call handler (§2.2) already
-        // tried and fell through (typically due to `has_middle_newline`), so the ternary handler
-        // would accidentally reformat the call's argument list, collapsing whitespace and losing
-        // empty leading arguments. Let it passthrough instead.
+        // Skip `(` that are part of a function call (`ident(`): a call whose args contain a comment
+        // or are unbalanced falls through to per-token verbatim, so without this guard the ternary
+        // handler would accidentally reformat the call's argument list, collapsing whitespace and
+        // losing empty leading arguments. Let it passthrough instead.
         if t.kind == TokenKind::Punct
             && t.text == "("
             && let Some(close) = match_bracket(toks, i)
@@ -202,8 +216,15 @@ fn split_define<'src>(
     let define = next_nontrivia_in(toks, start + 1, end)?;
     let name = next_nontrivia_in(toks, define + 1, end)?;
     let prefix_end = match toks.get(name + 1) {
+        // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is
+        // not closed within it (e.g. a newline ended the directive mid-params), so it is not a
+        // function-like macro we can split — pass through verbatim.
         Some(n) if n.kind == TokenKind::Punct && n.text == "(" => {
-            match_bracket(toks, name + 1)? + 1
+            let close = match_bracket(toks, name + 1)?;
+            if close >= end {
+                return None;
+            }
+            close + 1
         }
         _ => name + 1,
     };
