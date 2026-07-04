@@ -2,11 +2,11 @@
   "mcpServers": {
     "camas": {
       "type": "stdio",
-      "command": "uvx",
+      "command": "uv",
       "args": [
-        "camas[all]",
-        "mcp",
-        "--rich"
+        "run",
+        "tasks.py",
+        "mcp"
       ]
     }
   }

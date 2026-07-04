@@ -1,5 +1,17 @@
 {
   "enabledPlugins": {
     "camas@camas": true
+  },
+  "hooks": {
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run tasks.py mcp fix"
+          }
+        ]
+      }
+    ]
   }
 }
