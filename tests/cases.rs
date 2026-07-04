@@ -9,6 +9,9 @@
 //!   Arbitrary whitespace mutation does *not* always preserve exact `format(x)` — a newline in a
 //!   call arg hits `has_middle_newline` passthrough, a trailing comma flips magic-comma explosion
 //!   — so Tier 2 asserts the universal properties, not exact equality.
+//! * **Tier 3** — opt-in per shape via a `.fuzz-equality` sentinel in the folder: mutants must
+//!   also format *exactly* to `out.c`. Few shapes qualify (passthrough/explosion decisions must
+//!   be stable under whitespace mutation), so the sentinel is added only to shapes verified stable.
 
 use jphfmt::format;
 use jphfmt::lexer::{TokenKind, tokenize};
@@ -23,6 +26,8 @@ struct Case {
     shape: String,
     expected: String,
     inputs: Vec<(String, String)>,
+    /// A `.fuzz-equality` sentinel lives in this shape's folder → Tier 3 exact-equality applies.
+    fuzz_equality: bool,
 }
 
 /// Discover every `tests/cases/<shape>/` folder, sorted for deterministic iteration. Each folder
@@ -56,6 +61,7 @@ fn discover_cases() -> Vec<Case> {
                 shape,
                 expected,
                 inputs,
+                fuzz_equality: dir.join(".fuzz-equality").exists(),
             }
         })
         .collect()
@@ -106,30 +112,51 @@ impl Rng {
     }
 }
 
-/// Whitespace runs a mutant may substitute for existing trivia or insert between tokens. The empty
-/// string models deletion. Newlines exercise `has_middle_newline` and blank-line collapse.
-const TRIVIA_RUNS: &[&str] = &["", " ", "  ", "\t", "\n", "\n\n", " \t ", "\n\t"];
+/// Whitespace runs a mutant may substitute for existing trivia or insert between tokens. Newlines
+/// exercise `has_middle_newline` and blank-line collapse. No empty string — deletion can merge tokens
+/// into a different valid identifier (e.g. `voidf`), which the formatter must not split back apart.
+const TRIVIA_RUNS: &[&str] = &[" ", "  ", "\t", "\n", "\n\n", " \t ", "\n\t"];
 
-/// Mutate only the whitespace/newline trivia of `src`: replace each existing trivia token's text
-/// with a random run, and occasionally insert a run between adjacent non-trivia tokens. No commas
-/// or backslashes are ever added, and comment/string interiors are single tokens so they are
-/// untouched — therefore `significant(mutant) == significant(src)` by construction, and the Tier 2
-/// assertions test the formatter rather than the mutator.
-fn mutate_whitespace(src: &str, rng: &mut Rng) -> String {
+/// Spacing-only runs for Tier 3: spaces and tabs, never a newline. A mutant built from these keeps
+/// each statement on one line, so the formatter's spacing normalization (not its line-break
+/// passthrough) is what's under test — and `format(mutant) == out.c` becomes reachable for shapes
+/// whose fits/explode decision isn't spacing-driven. No empty string — deletion can merge tokens
+/// (`voidf`), which the formatter must not split back apart.
+const SPACING_RUNS: &[&str] = &[" ", "  ", "\t", " \t "];
+
+/// Mutate only the trivia of `src`, drawing replacement/inserted runs from `runs`: replace each
+/// existing trivia token (`Whitespace` or `Newline`) with a random run, and occasionally insert a
+/// run between adjacent non-trivia tokens. No commas or backslashes are ever added, and
+/// comment/string interiors are single tokens so they are untouched — therefore
+/// `significant(mutant) == significant(src)` by construction, and the assertions test the formatter
+/// rather than the mutator. `runs` decides whether newlines are in play (Tier 2 yes, Tier 3 no).
+fn mutate_trivia(src: &str, rng: &mut Rng, runs: &[&'static str]) -> String {
     let toks = tokenize(src);
     let mut out = String::with_capacity(src.len() + 16);
     for (i, t) in toks.iter().enumerate() {
         match t.kind {
-            TokenKind::Whitespace | TokenKind::Newline => out.push_str(rng.pick_str(TRIVIA_RUNS)),
+            TokenKind::Whitespace | TokenKind::Newline => out.push_str(rng.pick_str(runs)),
             _ => {
                 out.push_str(t.text);
                 if i + 1 < toks.len() && rng.next_u64().is_multiple_of(4) {
-                    out.push_str(rng.pick_str(TRIVIA_RUNS));
+                    out.push_str(rng.pick_str(runs));
                 }
             }
         }
     }
     out
+}
+
+/// Tier 2 mutant: trivia (incl. newlines) mutated freely — exercises `has_middle_newline`
+/// passthrough and blank-line collapse.
+fn mutate_whitespace(src: &str, rng: &mut Rng) -> String {
+    mutate_trivia(src, rng, TRIVIA_RUNS)
+}
+
+/// Tier 3 mutant: spacing only (spaces/tabs, never newlines) — keeps each statement on one line
+/// so spacing normalization is what's under test, making `format(mutant) == out.c` reachable.
+fn mutate_spacing(src: &str, rng: &mut Rng) -> String {
+    mutate_trivia(src, rng, SPACING_RUNS)
 }
 
 /// Derive a per-input seed so a failing mutant is reproducible from shape + input name alone,
@@ -195,6 +222,34 @@ fn whitespace_mutants_are_idempotent_and_significant() {
                     significant(&once),
                     significant(&mutant),
                     "significance broke: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
+                    shape = &case.shape,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn spacing_mutants_match_expected() {
+    for case in discover_cases() {
+        if !case.fuzz_equality {
+            continue;
+        }
+        for (name, src) in &case.inputs {
+            let mut rng = Rng::new(seed_for(&case.shape, name));
+            for k in 0..MUTANTS_PER_INPUT {
+                let mutant = mutate_spacing(src, &mut rng);
+                let once = std::panic::catch_unwind(|| format(&mutant))
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "formatter panicked: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
+                            shape = &case.shape,
+                        )
+                    });
+                assert_eq!(
+                    once,
+                    case.expected,
+                    "tier 3 exact-equality broke: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
                     shape = &case.shape,
                 );
             }
