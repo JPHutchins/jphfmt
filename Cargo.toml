@@ -1,6 +1,6 @@
 [package]
 name = "jphfmt"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.88"
 authors = ["J.P. Hutchins <jphutchins@gmail.com>"]
@@ -10,15 +10,7 @@ repository = "https://github.com/JPHutchins/jphfmt"
 readme = "README.md"
 keywords = ["formatter", "c", "cli", "gofmt", "opinionated"]
 categories = ["development-tools", "command-line-utilities"]
-exclude = [
-    "editors",
-    ".github",
-    ".claude",
-    ".camas",
-    ".mcp.json",
-    "tasks.py",
-
-]
+exclude = ["editors", ".github", ".claude", ".camas", ".mcp.json", "tasks.py"]
 
 [lib]
 name = "jphfmt"
