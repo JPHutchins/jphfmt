@@ -459,3 +459,30 @@ fn function_params_break_before_inner_call_in_body() {
     let expected = "int study_point_debug(Point const * const s, char * const b, size_t const n) {\n\treturn Point_debug(s, b, n);\n}\n";
     assert_eq!(format(src), expected);
 }
+
+#[test]
+fn preprocessor_scope_indents_between_hash_and_keyword() {
+    let src = "#if a\n#define thing\n#else\n#if b\n#define thing\n#if c\n#define thing\n#endif\n#endif\n#endif\n";
+    let expected = "#if a\n#\tdefine thing\n#else\n#\tif b\n#\t\tdefine thing\n#\t\tif c\n#\t\t\tdefine thing\n#\t\tendif\n#\tendif\n#endif\n";
+    assert_eq!(format(src), expected);
+
+    // Depth-2 nesting: body of an inner #if is one tab deeper than the inner #if's own line.
+    let nested = "#if A\n#if B\n#define x\n#endif\n#endif\n";
+    let expected_nested = "#if A\n#\tif B\n#\t\tdefine x\n#\tendif\n#endif\n";
+    assert_eq!(format(nested), expected_nested);
+}
+
+#[test]
+fn preprocessor_scope_is_idempotent() {
+    let src = "#if a\n#define thing\n#else\n#if b\n#define thing\n#if c\n#define thing\n#endif\n#endif\n#endif\n";
+    let once = format(src);
+    assert_eq!(format(&once), once, "scope pass must be idempotent");
+}
+
+#[test]
+fn preprocessor_scope_preserves_define_continuation() {
+    // A #define with a \-continuation body: the #define line is at depth 0 (unchanged), and
+    // the continuation line (previous line ends in \) is skipped by the scope pass.
+    let src = "#define M(a) ((a) + 1) \\\n\t+ 2\n";
+    assert_eq!(format(src), src);
+}
