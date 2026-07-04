@@ -33,10 +33,10 @@
  * Defined here, guarded, so this standalone file still compiles.
  */
 #ifndef __packed
-#define __packed __attribute__((packed))
+#	define __packed __attribute__((packed))
 #endif
 #ifndef __aligned
-#define __aligned(n) __attribute__((aligned(n)))
+#	define __aligned(n) __attribute__((aligned(n)))
 #endif
 
 #define PI 3.14159265358979323846
@@ -55,22 +55,22 @@
 #define PACKED_END _Pragma("pack(pop)")
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202000L
-#define C23_OR_NEWER 1
+#	define C23_OR_NEWER 1
 #elif defined(__STDC_VERSION__)
-#define C23_OR_NEWER 0
+#	define C23_OR_NEWER 0
 #else
-#error "a standard C compiler is required" /* never taken */
+#	error "a standard C compiler is required" /* never taken */
 #endif
 
 #if 0
-#warning "this conditional group is never compiled"
-#error "neither is this line"
+#	warning "this conditional group is never compiled"
+#	error "neither is this line"
 #endif
 
 #ifdef __has_include
-#if __has_include(<stdint.h>)
-#define HAVE_STDINT 1
-#endif
+#	if __has_include(<stdint.h>)
+#		define HAVE_STDINT 1
+#	endif
 #endif
 
 /* ======================== Compile-time assertions ======================= */
@@ -190,11 +190,11 @@ struct sensor_sample const g_sample = {
 struct shape const g_unit_circle = {.tag = SHAPE_CIRCLE, .circle = {.radius = 1.0}};
 
 #if defined(__has_embed)
-#if __has_embed(__FILE__) == 1
+#	if __has_embed(__FILE__) == 1
 static unsigned char const g_self_prefix[] = {
-#embed __FILE__ limit(8)
+#		embed __FILE__ limit(8)
 };
-#endif
+#	endif
 #endif
 
 /* ============================== Functions =============================== */

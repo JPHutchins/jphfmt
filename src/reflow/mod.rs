@@ -13,6 +13,7 @@
 //! corrupts code; lists containing comments are deferred to M7 and pass through.
 
 mod builders;
+mod scope;
 mod spacing;
 mod structure;
 mod tokens;
@@ -44,11 +45,9 @@ pub fn format_with_width(src: &str, width: usize) -> String {
     // afterward (`(int)x` -> `(int) x`) could widen a line and flip a fits/explode decision on
     // the next pass, breaking idempotency.
     let spaced = spacing::space_tokens(src);
-    normalize_endings(&collapse_blank_lines(&retab(&structure::structure(
-        &tokenize(&spaced),
-        0,
-        width,
-    ))))
+    let structured = structure::structure(&tokenize(&spaced), 0, width);
+    let scoped = scope::scope_directives(&structured);
+    normalize_endings(&collapse_blank_lines(&retab(&scoped)))
 }
 
 /// Collapse runs of two or more blank lines to a single blank line everywhere (file scope and
