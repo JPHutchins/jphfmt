@@ -1,5 +1,7 @@
 /target
 /.camas
+/result
+/result-*
 .claude/settings.local.json
 editors/vscode/node_modules
 editors/vscode/out
