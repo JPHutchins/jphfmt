@@ -5,35 +5,25 @@ on:
   pull_request:
 
 jobs:
-  # Validation on every push/PR. camas is the single source of truth: `ci` = npm ci + the full
-  # parallel validation (rustfmt, clippy -D warnings, test, doc; prettier, eslint, tsc).
+  # Validation on every push/PR. camas is the single source of truth: bare `camas` runs its
+  # `github_task` (defined in tasks.py's Config — the workflow never names tasks), from inside the
+  # Nix dev shell that provides node, uv, and nix. That task is npm ci + the full parallel
+  # validation: the Rust checks are crane-backed `nix run` apps (fmt, clippy -D warnings, test on
+  # stable + MSRV, doc, RUSTSEC audit); plus prettier, eslint, tsc, knip, typos, and nixfmt.
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: nixbuild/nix-quick-install-action@v35
         with:
-          components: clippy, rustfmt
-      - run: |
-          msrv=$(grep -oP 'rust-version\s*=\s*"\K[^"]+' Cargo.toml)
-          rustup toolchain install "$msrv" --profile minimal
-      - uses: actions/setup-node@v6
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - uses: nix-community/cache-nix-action@v7
         with:
-          node-version: "22"
-      - uses: astral-sh/setup-uv@v8.2.0
-      - run: uvx camas
-
-  # RUSTSEC advisory scan — its own parallel job (needs the cargo-audit binary).
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-      - uses: astral-sh/setup-uv@v8.2.0
-      - run: uvx camas audit
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - run: nix develop --command camas
 
   # Build release binaries on every push/PR to catch breakage early.
   # Uploaded as CI artifacts (raw binary); promoted to the release page only on v* tags.
@@ -147,7 +137,7 @@ jobs:
           fi
 
   crate:
-    needs: [binaries, audit]
+    needs: [binaries, validate]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -159,7 +149,7 @@ jobs:
         run: cargo publish
 
   extension:
-    needs: [binaries, audit]
+    needs: [binaries, validate]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
