@@ -80,6 +80,16 @@
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
+        nodejs = pkgs.nodejs_22;
+
+        # editors/vscode's node_modules, built hermetically from package-lock.json
+        # (no `npm ci`): importNpmLock reads the lockfile's integrity hashes and
+        # fetches each tarball as a fixed-output derivation.
+        vscodeNodeModules = pkgs.importNpmLock.buildNodeModules {
+          npmRoot = ./editors/vscode;
+          inherit nodejs;
+        };
+
         jphfmt = craneLib.buildPackage (
           commonArgs
           // {
@@ -180,13 +190,17 @@
         devShells.default = craneLib.devShell {
           packages = [
             camas.packages.${system}.default
-            pkgs.nodejs_22
+            nodejs
             pkgs.uv
             pkgs.cargo-audit
             pkgs.cargo-mutants
             pkgs.cargo-nextest
             pkgs.nixfmt
           ];
+          shellHook = ''
+            rm -rf editors/vscode/node_modules
+            ln -s ${vscodeNodeModules}/node_modules editors/vscode/node_modules
+          '';
         };
 
         formatter = pkgs.nixfmt;

@@ -7,9 +7,10 @@ on:
 jobs:
   # Validation on every push/PR. camas is the single source of truth: bare `camas` runs its
   # `github_task` (defined in tasks.py's Config — the workflow never names tasks), from inside the
-  # Nix dev shell that provides node, uv, and nix. That task is npm ci + the full parallel
-  # validation: the Rust checks are crane-backed `nix run` apps (fmt, clippy -D warnings, test on
-  # stable + MSRV, doc, RUSTSEC audit); plus prettier, eslint, tsc, knip, typos, and nixfmt.
+  # Nix dev shell that provides node, uv, nix, and the extension's node_modules (built hermetically
+  # from package-lock.json by importNpmLock — no npm ci). That task is the full parallel validation:
+  # the Rust checks are crane-backed `nix run` apps (fmt, clippy -D warnings, test on stable + MSRV,
+  # doc, RUSTSEC audit); plus prettier, eslint, tsc, knip, typos, and nixfmt.
   validate:
     runs-on: ubuntu-latest
     steps:
