@@ -4,32 +4,8 @@
 //! the layout measures final widths (otherwise a later space could widen a line and flip a
 //! fits/explode decision on the next pass, breaking idempotency).
 
-use super::tokens::{is_excluded_callee, is_trivia};
+use super::tokens::{is_excluded_callee, is_trivia, is_type_context};
 use crate::lexer::{Token, TokenKind, tokenize};
-
-/// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
-/// not a multiply. User typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p` pass through
-/// (§2.5 pointers, §6 "prefer passthrough when ambiguous").
-fn is_type_context(text: &str) -> bool {
-    matches!(
-        text,
-        "void"
-            | "char"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "signed"
-            | "unsigned"
-            | "_Bool"
-            | "bool"
-            | "const"
-            | "volatile"
-            | "_Atomic"
-            | "restrict"
-    )
-}
 
 /// A significant token paired with the whitespace that preceded it.
 type Piece<'src> = (String, Token<'src>);

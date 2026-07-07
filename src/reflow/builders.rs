@@ -4,14 +4,15 @@
 //! §2.2. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    is_balanced, is_trivia, match_brace, split_on_commas, split_top_level, top_level_logical_op,
+    is_balanced, is_excluded_callee, is_trivia, is_type_context, match_brace, match_bracket,
+    split_on_commas, split_top_level, top_level_logical_op,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
 
 /// Build the §2.2 document for a call's argument list, including the surrounding parens. Each
-/// argument is built recursively (via [`build_element_doc`]), so a compound-literal argument's
-/// `{...}` is a nested group that can collapse or explode on its own.
+/// argument is built recursively (via [`build_expr_doc`]), so a nested `{...}` or a nested call
+/// is its own group that can collapse or explode independently.
 pub(super) fn build_call_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
@@ -26,7 +27,7 @@ pub(super) fn build_call_doc(inner: &[Token]) -> Doc {
     let last = args.len() - 1;
     let mut items = vec![Doc::SoftLine];
     for (idx, arg) in args.into_iter().enumerate() {
-        items.push(build_element_doc(arg));
+        items.push(build_expr_doc(arg));
         if idx < last {
             items.push(Doc::text(","));
             items.push(Doc::Line);
@@ -60,7 +61,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     let last = elements.len() - 1;
     let mut items = vec![pad()];
     for (idx, element) in elements.into_iter().enumerate() {
-        items.push(build_element_doc(element));
+        items.push(build_expr_doc(element));
         if idx < last {
             items.push(Doc::text(","));
             items.push(Doc::Line);
@@ -84,9 +85,26 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     }
 }
 
-/// Build one `{}` element: collapsed text, with any nested `{}` rendered as its own (tight) list so
-/// it collapses or explodes on its own.
-fn build_element_doc(toks: &[Token]) -> Doc {
+/// Whether the nearest non-trivia token before `open` is a call-head ident. Unlike
+/// [`super::tokens::is_call_head`], trivia (including a newline) between the ident and `(` is
+/// tolerated: [`build_expr_doc`] must flatten such a gap to nothing (§2.5's tight `foo(`) rather
+/// than a collapsed space, since a collapsed space is itself same-line and would be tightened by
+/// `space_call_heads` on the next pass — collapsing to a space here instead would render this
+/// pass's output as a fixpoint of a *different* pass, breaking idempotency.
+fn call_head_before(toks: &[Token], open: usize) -> bool {
+    let mut k = open;
+    while k > 0 && is_trivia(&toks[k - 1]) {
+        k -= 1;
+    }
+    k > 0
+        && toks[k - 1].kind == TokenKind::Ident
+        && !is_excluded_callee(toks[k - 1].text)
+        && !is_type_context(toks[k - 1].text)
+}
+
+/// Build one element/argument: collapsed text, with any nested `{...}` or nested call `f(...)`
+/// rendered as its own group so it collapses or explodes independently of its parent.
+fn build_expr_doc(toks: &[Token]) -> Doc {
     let mut parts: Vec<Doc> = Vec::new();
     let mut text = String::new();
     let mut pending_space = false;
@@ -111,6 +129,20 @@ fn build_element_doc(toks: &[Token]) -> Doc {
             }
             parts.push(build_brace_doc(&toks[j + 1..close], false));
             j = close + 1;
+        } else if t.kind == TokenKind::Punct
+            && t.text == "("
+            && call_head_before(toks, j)
+            && let Some(close) = match_bracket(toks, j)
+        {
+            // The callee is already in `text`; any trivia between it and `(` is dropped rather
+            // than collapsed to a space, so this matches `space_call_heads`'s tight-call spacing
+            // and stays a fixpoint across passes (§2.5).
+            pending_space = false;
+            if !text.is_empty() {
+                parts.push(Doc::Text(std::mem::take(&mut text)));
+            }
+            parts.push(build_call_doc(&toks[j + 1..close]));
+            j = close + 1;
         } else {
             if pending_space {
                 text.push(' ');
@@ -132,14 +164,14 @@ fn build_element_doc(toks: &[Token]) -> Doc {
 
 /// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
 /// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
-fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
+fn build_clause_group(segments: Vec<Doc>, sep: &str) -> Doc {
     if segments.is_empty() {
         return Doc::text("()");
     }
     let last = segments.len() - 1;
     let mut items = vec![Doc::SoftLine];
     for (idx, seg) in segments.into_iter().enumerate() {
-        items.push(Doc::Text(seg));
+        items.push(seg);
         if idx < last {
             items.push(Doc::text(sep.to_owned()));
             items.push(Doc::Line);
@@ -158,7 +190,7 @@ fn build_clause_group(segments: Vec<String>, sep: &str) -> Doc {
 pub(super) fn build_ternary_doc(inner: &[Token]) -> Doc {
     let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":")
         .iter()
-        .map(|s| render_segment(s))
+        .map(|s| build_expr_doc(s))
         .collect();
     build_clause_group(segments, " :")
 }
@@ -187,7 +219,7 @@ pub(super) fn render_segment(toks: &[Token]) -> String {
 pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
         .iter()
-        .map(|c| render_segment(c))
+        .map(|c| build_expr_doc(c))
         .collect();
     build_clause_group(clauses, ";")
 }
@@ -200,11 +232,11 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
             let operands =
                 split_top_level(inner, |t| t.kind == TokenKind::Operator && t.text == op)
                     .iter()
-                    .map(|o| render_segment(o))
+                    .map(|o| build_expr_doc(o))
                     .collect();
             build_clause_group(operands, &format!(" {op}"))
         }
-        None => build_clause_group(vec![render_segment(inner)], ""),
+        None => build_clause_group(vec![build_expr_doc(inner)], ""),
     }
 }
 
@@ -243,5 +275,73 @@ mod tests {
     fn render_segment_single_token() {
         let toks = [tok(TokenKind::Number, "42")];
         assert_eq!(render_segment(&toks), "42");
+    }
+
+    #[test]
+    fn build_expr_doc_nested_call_is_a_breakable_group() {
+        // A call nested in an expression must render as its own group, not flat text: at a width
+        // too narrow for it flat, its args explode one per line.
+        use crate::lexer::tokenize;
+        let toks = tokenize("bllll(aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)");
+        let doc = build_expr_doc(&toks);
+        assert_eq!(
+            crate::doc::render(&doc, 10, 0, 0),
+            "bllll(\n\taaaaaaaaaaaaaaaaaaaaaa,\n\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n)"
+        );
+    }
+
+    #[test]
+    fn build_cond_doc_recursively_explodes_nested_call() {
+        // Regression guard for issue #10: an operand that is itself an over-width call must
+        // explode its own argument list, not stay flat.
+        use crate::lexer::tokenize;
+        let toks = tokenize(
+            "io_detect_pin() && bllllaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)",
+        );
+        let doc = build_cond_doc(&toks);
+        let rendered = crate::doc::render(&doc, 40, 0, 0);
+        assert_eq!(
+            rendered,
+            "(\n\tio_detect_pin() &&\n\tbllllaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n\t\taaaaaaaaaaaaaaaaaaaaaa,\n\t\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\t)\n)"
+        );
+    }
+
+    #[test]
+    fn build_expr_doc_tightens_call_across_a_newline_gap() {
+        // Regression guard: a whitespace mutant can put a newline between a callee and its `(`.
+        // `is_call_head` (strict adjacency) would miss this, collapsing the gap to a space instead
+        // of dropping it — same-line, that space is then tightened by `space_call_heads` on the
+        // *next* format pass, changing the output and breaking idempotency (issue found while
+        // adding the cond-nested-call-explode fixture).
+        use crate::lexer::tokenize;
+        let toks = tokenize("io_detect_pin\n( )");
+        let doc = build_expr_doc(&toks);
+        assert_eq!(crate::doc::render(&doc, 80, 0, 0), "io_detect_pin()");
+    }
+
+    #[test]
+    fn build_expr_doc_type_keyword_is_not_a_call_head() {
+        // `int (*cb)` is a function-pointer declarator, not a call: `int` is a type keyword, which
+        // `space_call_heads` always spaces (never tightens), so `call_head_before` must not treat
+        // it as one either.
+        use crate::lexer::tokenize;
+        let toks = tokenize("int (*cb)(void)");
+        let doc = build_expr_doc(&toks);
+        assert_eq!(crate::doc::render(&doc, 80, 0, 0), "int (*cb)(void)");
+    }
+
+    #[test]
+    fn build_call_doc_recursively_explodes_nested_call() {
+        // A call whose argument is itself an over-width call: both levels must explode.
+        use crate::lexer::tokenize;
+        let toks = tokenize(
+            "first_argument, inner_function_with_a_very_long_name(nested_argument_one, nested_argument_two, nested_argument_three)",
+        );
+        let doc = build_call_doc(&toks);
+        let rendered = crate::doc::render(&doc, 40, 0, 0);
+        assert_eq!(
+            rendered,
+            "(\n\tfirst_argument,\n\tinner_function_with_a_very_long_name(\n\t\tnested_argument_one,\n\t\tnested_argument_two,\n\t\tnested_argument_three\n\t)\n)"
+        );
     }
 }

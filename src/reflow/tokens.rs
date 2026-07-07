@@ -13,6 +13,30 @@ pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
             .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(")
 }
 
+/// A C type keyword or qualifier — a token after which a `*` is confidently a pointer declarator,
+/// not a multiply, and after which `(` opens a declarator group, not a call's argument list. User
+/// typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p`/`foo(x)` pass through (§6).
+pub(super) fn is_type_context(text: &str) -> bool {
+    matches!(
+        text,
+        "void"
+            | "char"
+            | "short"
+            | "int"
+            | "long"
+            | "float"
+            | "double"
+            | "signed"
+            | "unsigned"
+            | "_Bool"
+            | "bool"
+            | "const"
+            | "volatile"
+            | "_Atomic"
+            | "restrict"
+    )
+}
+
 /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
 /// excluded: its associations are a comma list and explode exactly per §2.2.
 pub(super) fn is_excluded_callee(name: &str) -> bool {
@@ -215,7 +239,7 @@ pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
 
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
 /// and trailing trivia). Such arguments would render differently on subsequent passes because
-/// `build_element_doc` collapses the newline into a space, which can then be reinterpreted by
+/// `build_expr_doc` collapses the newline into a space, which can then be reinterpreted by
 /// `space_bit_fields`, breaking idempotency. When this is true the whole call is passed through
 /// verbatim instead of being laid out via [`build_call_doc`].
 pub(super) fn has_middle_newline(inner: &[Token]) -> bool {
