@@ -1,7 +1,8 @@
 # Code review — thin consumer of the code-review reusable workflow.
 # The full pipeline lives in the pinned ref; this repo keeps only the trigger, the superset
-# permissions, the MODEL_API_KEY secret, and .github/prices.json. Bump the @ref to upgrade.
-# See: https://github.com/JPHutchins/code-review
+# permissions, the MODEL_API_KEY secret, .github/prices.json, and its OWN check-running setup
+# (.github/actions/code-review-setup — Nix toolchain + cache, invoked via use_setup_action).
+# Bump the @ref to upgrade. See: https://github.com/JPHutchins/code-review
 
 name: Code review
 
@@ -22,7 +23,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       (github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'failure')
-    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.16
+    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.17
     with:
       head_sha:      ${{ github.event.workflow_run.head_sha }}
       head_branch:   ${{ github.event.workflow_run.head_branch }}
@@ -31,13 +32,11 @@ jobs:
       conclusion:    ${{ github.event.workflow_run.conclusion }}
       trigger_event: ${{ github.event.workflow_run.event }}
       api_base_url:  ${{ vars.API_BASE_URL }}
-      # Check-running via Nix (the CI dev shell: node, uv, rust/crane, etc.). setup: nix installs the
-      # Nix binary; install_command warms the dev shell OUTSIDE the agent's wall so the agent's own
-      # `nix develop --command …` validations are fast. egress_policy: audit for now — it discovers the
-      # real host set (cache.nixos.org, crates.io, …) without blocking; harden to block + pinned
-      # extra_endpoints once discovered (JPHutchins/code-review#33).
-      setup: nix
-      install_command: nix develop --command true
+      # Check-running via our own Nix composite at .github/actions/code-review-setup.
+      # egress_policy: audit for now — it discovers the real host set (cache.nixos.org, crates.io,
+      # the Actions cache backend, …) without blocking; harden to block + pinned extra_endpoints once
+      # discovered (JPHutchins/code-review#33).
+      use_setup_action: true
       egress_policy: audit
       mechanic_wall: 3m
       mechanic_hard_kill: 4m

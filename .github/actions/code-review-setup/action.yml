@@ -1,0 +1,21 @@
+# jphfmt's OWN setup for code-review check-running, invoked by the reusable workflow
+# (use_setup_action: true) at this fixed path. The reusable workflow stays ecosystem-agnostic;
+# the Nix toolchain, store cache, and dev-shell warm-up live here, in jphfmt's repo. Mirrors CI.
+name: code-review-setup
+description: Nix toolchain + store cache + warmed dev shell so the review agent can run `nix develop --command …`
+runs:
+  using: composite
+  steps:
+    - uses: nixbuild/nix-quick-install-action@v35
+      with:
+        nix_conf: |
+          keep-env-derivations = true
+          keep-outputs = true
+    - uses: nix-community/cache-nix-action@v7
+      with:
+        primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
+        restore-prefixes-first-match: nix-${{ runner.os }}-
+    # Warm the dev shell OUTSIDE the agent's wall budget so its own `nix develop --command …`
+    # validations are fast.
+    - shell: bash
+      run: nix develop --command true
