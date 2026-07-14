@@ -23,7 +23,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       (github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'failure')
-    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.17
+    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.18
     with:
       head_sha:      ${{ github.event.workflow_run.head_sha }}
       head_branch:   ${{ github.event.workflow_run.head_branch }}
@@ -39,8 +39,8 @@ jobs:
       use_setup_action: true
       egress_policy: audit
       mechanic_wall: 3m
-      mechanic_hard_kill: 4m
+      mechanic_hard_kill: 4.5m
       full_wall: 10m
-      full_hard_kill: 13m
+      full_hard_kill: 15m
     secrets:
       MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
