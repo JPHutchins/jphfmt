@@ -7,7 +7,11 @@ permissions:
   contents: read
 
 jobs:
-  control-official:
+  official:
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     steps:
       - name: Arm egress (official harden-runner v2.20.0)
@@ -20,12 +24,16 @@ jobs:
       - name: Canary
         run: |
           if curl -sS --max-time 12 -o /dev/null https://example.com; then
-            echo "RESULT control-official: LEAK (fail-open — block did not engage)"
+            echo "RESULT official#${{ matrix.i }}: LEAK (fail-open — block did not engage)"
           else
-            echo "RESULT control-official: BLOCKED (block held)"
+            echo "RESULT official#${{ matrix.i }}: BLOCKED"
           fi
 
-  fixed-fork:
+  fork:
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     steps:
       - name: Arm egress (fixed fork)
@@ -38,7 +46,7 @@ jobs:
       - name: Canary
         run: |
           if curl -sS --max-time 12 -o /dev/null https://example.com; then
-            echo "RESULT fixed-fork: LEAK (fail-open — block did not engage)"
+            echo "RESULT fork#${{ matrix.i }}: LEAK (fail-open — block did not engage)"
           else
-            echo "RESULT fixed-fork: BLOCKED (block held — FIX WORKS)"
+            echo "RESULT fork#${{ matrix.i }}: BLOCKED"
           fi
