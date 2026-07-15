@@ -23,7 +23,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       (github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'failure')
-    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.22
+    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.23
     with:
       head_sha:      ${{ github.event.workflow_run.head_sha }}
       head_branch:   ${{ github.event.workflow_run.head_branch }}
@@ -32,6 +32,8 @@ jobs:
       conclusion:    ${{ github.event.workflow_run.conclusion }}
       trigger_event: ${{ github.event.workflow_run.event }}
       api_base_url:  ${{ vars.API_BASE_URL }}
+      model_full:    deepseek-v4-pro
+      model_mechanic: deepseek-v4-flash
       # Check-running via our own Nix composite at .github/actions/code-review-setup.
       # Egress locked to block. extra_endpoints are the hosts an audit pass observed beyond the
       # workflow's baked-in set: the Nix installer's release assets, git tarball downloads, the cargo
@@ -46,9 +48,9 @@ jobs:
         index.crates.io:443
         static.crates.io:443
         cache.nixos.org:443
-      mechanic_wall: 3m
-      mechanic_hard_kill: 4.5m
-      full_wall: 10m
-      full_hard_kill: 15m
+      mechanic_time_limit: 3m
+      mechanic_grace_period: 90s
+      full_review_time_limit: 10m
+      full_review_grace_period: 5m
     secrets:
       MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
