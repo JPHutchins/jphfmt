@@ -50,7 +50,9 @@ jobs:
         cache.nixos.org:443
       mechanic_time_limit: 3m
       mechanic_grace_period: 90s
-      full_review_time_limit: 10m
-      full_review_grace_period: 5m
+      mechanic_usd_limit: "0.10"
+      full_review_time_limit: 30m
+      full_review_grace_period: 45m
+      full_review_usd_limit: "0.50"
     secrets:
       MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
