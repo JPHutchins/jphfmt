@@ -4,8 +4,8 @@
 //! §2.2. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    is_balanced, is_excluded_callee, is_trivia, is_type_context, match_brace, match_bracket,
-    split_on_commas, split_top_level, top_level_logical_op,
+    is_balanced, is_callee_ident, is_trivia, match_brace, match_bracket, split_on_commas,
+    split_top_level, top_level_logical_op,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -85,26 +85,28 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     }
 }
 
-/// Whether the nearest non-trivia token before `open` is a call-head ident. Unlike
+/// Whether the nearest non-trivia token before `open` names a callee ([`is_callee_ident`]). Unlike
 /// [`super::tokens::is_call_head`], trivia (including a newline) between the ident and `(` is
 /// tolerated: [`build_expr_doc`] must flatten such a gap to nothing (§2.5's tight `foo(`) rather
 /// than a collapsed space, since a collapsed space is itself same-line and would be tightened by
 /// `space_call_heads` on the next pass — collapsing to a space here instead would render this
 /// pass's output as a fixpoint of a *different* pass, breaking idempotency.
+///
+/// Only an *identifier* callee is recognized: calls through a function pointer (`(*p)(args)`) or a
+/// parenthesized expression (`(expr)(args)`) are left as flat text, because a `)` before `(` is
+/// token-level indistinguishable from a C-style cast `(type)(expr)` — exploding the latter as a
+/// call would be wrong, so §6 "prefer passthrough when ambiguous" applies.
 fn call_head_before(toks: &[Token], open: usize) -> bool {
     let mut k = open;
     while k > 0 && is_trivia(&toks[k - 1]) {
         k -= 1;
     }
-    k > 0
-        && toks[k - 1].kind == TokenKind::Ident
-        && !is_excluded_callee(toks[k - 1].text)
-        && !is_type_context(toks[k - 1].text)
+    k > 0 && is_callee_ident(&toks[k - 1])
 }
 
 /// Build one element/argument: collapsed text, with any nested `{...}` or nested call `f(...)`
 /// rendered as its own group so it collapses or explodes independently of its parent.
-fn build_expr_doc(toks: &[Token]) -> Doc {
+pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     let mut parts: Vec<Doc> = Vec::new();
     let mut text = String::new();
     let mut pending_space = false;
@@ -185,14 +187,21 @@ fn build_clause_group(segments: Vec<Doc>, sep: &str) -> Doc {
     ]))
 }
 
-/// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
-/// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
-pub(super) fn build_ternary_doc(inner: &[Token]) -> Doc {
-    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":")
+/// Split `inner` on the depth-zero separators `is_sep` selects, build each segment as its own
+/// expression [`Doc`], and lay them out as a [`build_clause_group`] with `sep` trailing all but the
+/// last — the shared shape of a ternary chain, a `for` header, and a logical-operator condition.
+fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str) -> Doc {
+    let segments = split_top_level(inner, is_sep)
         .iter()
         .map(|s| build_expr_doc(s))
         .collect();
-    build_clause_group(segments, " :")
+    build_clause_group(segments, sep)
+}
+
+/// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
+/// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
+pub(super) fn build_ternary_doc(inner: &[Token]) -> Doc {
+    build_clause_doc(inner, |t| t.kind == TokenKind::Punct && t.text == ":", " :")
 }
 
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
@@ -217,26 +226,19 @@ pub(super) fn render_segment(toks: &[Token]) -> String {
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
 pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
-    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
-        .iter()
-        .map(|c| build_expr_doc(c))
-        .collect();
-    build_clause_group(clauses, ";")
+    build_clause_doc(inner, |t| t.kind == TokenKind::Punct && t.text == ";", ";")
 }
 
 /// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
 /// trailing (§2.7); a condition with no such operator explodes as a single indented element.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     match top_level_logical_op(inner) {
-        Some(op) => {
-            let operands =
-                split_top_level(inner, |t| t.kind == TokenKind::Operator && t.text == op)
-                    .iter()
-                    .map(|o| build_expr_doc(o))
-                    .collect();
-            build_clause_group(operands, &format!(" {op}"))
-        }
-        None => build_clause_group(vec![build_expr_doc(inner)], ""),
+        Some(op) => build_clause_doc(
+            inner,
+            |t| t.kind == TokenKind::Operator && t.text == op,
+            &format!(" {op}"),
+        ),
+        None => build_clause_doc(inner, |_| false, ""),
     }
 }
 

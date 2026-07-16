@@ -3,11 +3,18 @@
 
 use crate::lexer::{Token, TokenKind};
 
-/// An identifier immediately followed by `(` (no intervening whitespace) — a call or the
-/// structurally identical declaration parameter list, excluding control/operator keywords.
+/// An identifier that names a callee: an `Ident` that is neither a control/operator keyword
+/// ([`is_excluded_callee`]) nor a type keyword ([`is_type_context`], after which `(` opens a
+/// declarator group, not an argument list). The single predicate shared by [`is_call_head`] and
+/// the reflow builders' trivia-tolerant `call_head_before`, so the two never diverge.
+pub(super) fn is_callee_ident(t: &Token) -> bool {
+    t.kind == TokenKind::Ident && !is_excluded_callee(t.text) && !is_type_context(t.text)
+}
+
+/// A callee identifier ([`is_callee_ident`]) immediately followed by `(` (no intervening
+/// whitespace) — a call or the structurally identical declaration parameter list.
 pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
-    toks.get(i)
-        .is_some_and(|t| t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
+    toks.get(i).is_some_and(is_callee_ident)
         && toks
             .get(i + 1)
             .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(")
@@ -525,5 +532,29 @@ mod tests {
     fn is_call_head_no_paren() {
         let toks = [tok(TokenKind::Ident, "foo"), tok(TokenKind::Ident, "bar")];
         assert!(!is_call_head(&toks, 0));
+    }
+
+    #[test]
+    fn is_call_head_type_keyword() {
+        // `int (` is a declarator group, not a call — `is_call_head` and `call_head_before`
+        // agree via the shared `is_callee_ident` guard.
+        let toks = [tok(TokenKind::Ident, "int"), mk_punct("(")];
+        assert!(!is_call_head(&toks, 0));
+    }
+
+    #[test]
+    fn is_callee_ident_plain_ident() {
+        assert!(is_callee_ident(&tok(TokenKind::Ident, "foo")));
+    }
+
+    #[test]
+    fn is_callee_ident_excludes_keyword_and_type() {
+        assert!(!is_callee_ident(&tok(TokenKind::Ident, "sizeof")));
+        assert!(!is_callee_ident(&tok(TokenKind::Ident, "int")));
+    }
+
+    #[test]
+    fn is_callee_ident_non_ident() {
+        assert!(!is_callee_ident(&mk_punct("(")));
     }
 }
