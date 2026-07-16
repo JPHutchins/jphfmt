@@ -6,13 +6,13 @@
 //! reservation live alongside.
 
 use super::builders::{
-    build_brace_doc, build_call_doc, build_cond_doc, build_for_doc, build_ternary_doc,
-    render_segment,
+    build_brace_doc, build_call_doc, build_cond_doc, build_expr_doc, build_for_doc,
+    build_ternary_doc,
 };
 use super::tokens::{
-    contains_comment, directive_end, enum_body_brace, has_middle_newline, has_top_level_question,
-    is_balanced, is_call_head, is_excluded_callee, is_trivia, match_brace, match_bracket,
-    next_nontrivia, next_nontrivia_in, next_paren, split_top_level,
+    contains_comment, directive_end, enum_body_brace, has_middle_newline, has_non_trivia,
+    has_top_level_question, is_balanced, is_call_head, is_excluded_callee, is_trivia, match_brace,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, split_top_level,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -114,7 +114,7 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
                 .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
         {
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
-            if let Some((block, next)) = format_stmt_expr(toks, i, base_level) {
+            if let Some((block, next)) = format_stmt_expr(toks, i, base_level, width) {
                 emit_str(&mut out, &mut col, &block);
                 i = next;
                 continue;
@@ -264,15 +264,21 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
         && body[1].kind == TokenKind::Punct
         && body[1].text == "{"
     {
-        return format_stmt_expr(body, 0, 0).map(|(s, _)| s);
+        return format_stmt_expr(body, 0, 0, width).map(|(s, _)| s);
     }
     None
 }
 
 /// Format a `({ ... })` statement-expression: `({` opens the line, each statement on its own line
-/// at `base_level + 1`, `})` at `base_level`. Returns the block and the index past the `)`, or
-/// `None` if the braces are unbalanced or a statement nests a block or carries a comment.
-fn format_stmt_expr(toks: &[Token], open: usize, base_level: usize) -> Option<(String, usize)> {
+/// at `base_level + 1` laid out with the §2.2 rule (so a nested call explodes when it overflows),
+/// `})` at `base_level`. Returns the block and the index past the `)`, or `None` if the braces are
+/// unbalanced or a statement nests a block or carries a comment.
+fn format_stmt_expr(
+    toks: &[Token],
+    open: usize,
+    base_level: usize,
+    width: usize,
+) -> Option<(String, usize)> {
     let paren_close = match_bracket(toks, open)?;
     let brace_close = match_brace(toks, open + 1)?;
     let inner = &toks[open + 2..brace_close];
@@ -283,17 +289,25 @@ fn format_stmt_expr(toks: &[Token], open: usize, base_level: usize) -> Option<(S
     if unformattable || !is_balanced(inner) {
         return None;
     }
+    let inner_indent = "\t".repeat(base_level + 1);
+    let close_indent = "\t".repeat(base_level);
+    let stmt_col = (base_level + 1) * TAB_WIDTH;
     let statements: Vec<String> =
         split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
-            .iter()
-            .map(|s| render_segment(s))
-            .filter(|s| !s.is_empty())
+            .into_iter()
+            .filter(|s| has_non_trivia(s))
+            .map(|s| {
+                render(
+                    &build_expr_doc(s),
+                    width.saturating_sub(1),
+                    stmt_col,
+                    base_level + 1,
+                )
+            })
             .collect();
     if statements.is_empty() {
         return None;
     }
-    let inner_indent = "\t".repeat(base_level + 1);
-    let close_indent = "\t".repeat(base_level);
     let mut s = String::from("({");
     for statement in &statements {
         s.push('\n');
