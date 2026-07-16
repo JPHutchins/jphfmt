@@ -10,9 +10,9 @@ use super::builders::{
     build_ternary_doc,
 };
 use super::tokens::{
-    contains_comment, directive_end, enum_body_brace, has_middle_newline, has_top_level_question,
-    is_balanced, is_call_head, is_excluded_callee, is_trivia, match_brace, match_bracket,
-    next_nontrivia, next_nontrivia_in, next_paren, split_top_level,
+    contains_comment, directive_end, enum_body_brace, has_middle_newline, has_non_trivia,
+    has_top_level_question, is_balanced, is_call_head, is_excluded_callee, is_trivia, match_brace,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, split_top_level,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -295,7 +295,7 @@ fn format_stmt_expr(
     let statements: Vec<String> =
         split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
             .into_iter()
-            .filter(|s| s.iter().any(|t| !is_trivia(t)))
+            .filter(|s| has_non_trivia(s))
             .map(|s| {
                 render(
                     &build_expr_doc(s),

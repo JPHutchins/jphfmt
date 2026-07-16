@@ -4,7 +4,7 @@
 //! the layout measures final widths (otherwise a later space could widen a line and flip a
 //! fits/explode decision on the next pass, breaking idempotency).
 
-use super::tokens::{is_excluded_callee, is_trivia, is_type_context};
+use super::tokens::{is_callee_ident, is_trivia, is_type_context};
 use crate::lexer::{Token, TokenKind, tokenize};
 
 /// A significant token paired with the whitespace that preceded it.
@@ -273,16 +273,16 @@ fn space_semicolons(pieces: &mut [Piece]) {
 /// don't fight the house style (e.g. golden.c has `sizeof(int)` tight).
 fn space_call_heads(pieces: &mut [Piece]) {
     for j in 0..pieces.len().saturating_sub(1) {
-        let cur_is_ident = pieces[j].1.kind == TokenKind::Ident;
         let next_is_paren = pieces[j + 1].1.kind == TokenKind::Punct && pieces[j + 1].1.text == "(";
-        if !(cur_is_ident && next_is_paren && same_line(&pieces[j + 1].0)) {
+        if !(next_is_paren && same_line(&pieces[j + 1].0)) {
             continue;
         }
-        match pieces[j].1.text {
-            "if" | "for" | "while" | "switch" => pieces[j + 1].0 = " ".to_owned(),
-            _ if is_type_context(pieces[j].1.text) => pieces[j + 1].0 = " ".to_owned(),
-            _ if is_excluded_callee(pieces[j].1.text) => {}
-            _ => pieces[j + 1].0.clear(),
+        if is_callee_ident(&pieces[j].1) {
+            pieces[j + 1].0.clear();
+        } else if matches!(pieces[j].1.text, "if" | "for" | "while" | "switch")
+            || is_type_context(pieces[j].1.text)
+        {
+            pieces[j + 1].0 = " ".to_owned();
         }
     }
 }

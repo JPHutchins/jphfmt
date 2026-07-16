@@ -200,6 +200,12 @@ pub(super) fn is_trivia(t: &Token) -> bool {
     matches!(t.kind, TokenKind::Whitespace | TokenKind::Newline)
 }
 
+/// Whether `toks` holds any non-trivia token — a segment worth emitting as its own element rather
+/// than dropping as empty.
+pub(super) fn has_non_trivia(toks: &[Token]) -> bool {
+    toks.iter().any(|t| !is_trivia(t))
+}
+
 pub(super) fn contains_comment(toks: &[Token]) -> bool {
     toks.iter()
         .any(|t| matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment))

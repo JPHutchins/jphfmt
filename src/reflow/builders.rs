@@ -4,8 +4,8 @@
 //! §2.2. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    is_balanced, is_callee_ident, is_trivia, match_brace, match_bracket, split_on_commas,
-    split_top_level, top_level_logical_op,
+    has_non_trivia, is_balanced, is_callee_ident, is_trivia, match_brace, match_bracket,
+    split_on_commas, split_top_level, top_level_logical_op,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -19,7 +19,7 @@ pub(super) fn build_call_doc(inner: &[Token]) -> Doc {
     }
     let args: Vec<&[Token]> = split_on_commas(inner)
         .into_iter()
-        .filter(|a| a.iter().any(|t| !is_trivia(t)))
+        .filter(|a| has_non_trivia(a))
         .collect();
     if args.is_empty() {
         return Doc::text("()");
@@ -50,10 +50,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     }
     let segments = split_on_commas(inner);
     let magic = segments.len() > 1 && segments.last().is_some_and(|s| s.iter().all(is_trivia));
-    let elements: Vec<&[Token]> = segments
-        .into_iter()
-        .filter(|s| s.iter().any(|t| !is_trivia(t)))
-        .collect();
+    let elements: Vec<&[Token]> = segments.into_iter().filter(|s| has_non_trivia(s)).collect();
     if elements.is_empty() {
         return Doc::text("{}");
     }
@@ -96,6 +93,9 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
 /// parenthesized expression (`(expr)(args)`) are left as flat text, because a `)` before `(` is
 /// token-level indistinguishable from a C-style cast `(type)(expr)` — exploding the latter as a
 /// call would be wrong, so §6 "prefer passthrough when ambiguous" applies.
+///
+/// Only whitespace/newline trivia is skipped, never comments: a commented `foo /* c */ (a)` stops
+/// the walk, but the structure pass rejects comment-bearing constructs before they reach here.
 fn call_head_before(toks: &[Token], open: usize) -> bool {
     let mut k = open;
     while k > 0 && is_trivia(&toks[k - 1]) {
@@ -191,6 +191,9 @@ fn build_clause_group(segments: Vec<Doc>, sep: &str) -> Doc {
 /// expression [`Doc`], and lay them out as a [`build_clause_group`] with `sep` trailing all but the
 /// last — the shared shape of a ternary chain, a `for` header, and a logical-operator condition.
 fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str) -> Doc {
+    if !is_balanced(inner) {
+        return Doc::Text(format!("({})", render_segment(inner)));
+    }
     let segments = split_top_level(inner, is_sep)
         .iter()
         .map(|s| build_expr_doc(s))
@@ -205,7 +208,7 @@ pub(super) fn build_ternary_doc(inner: &[Token]) -> Doc {
 }
 
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
-pub(super) fn render_segment(toks: &[Token]) -> String {
+fn render_segment(toks: &[Token]) -> String {
     let mut s = String::new();
     let mut pending_space = false;
     for t in toks {
