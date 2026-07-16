@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["camas[mcp]==0.1.22"]
+# dependencies = ["camas[mcp]==0.1.25"]
 # ///
 """Project tasks — the single source of truth for validation, run with ``camas``.
 

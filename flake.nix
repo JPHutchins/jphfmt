@@ -19,7 +19,7 @@
     };
 
     camas = {
-      url = "github:JPHutchins/camas/0.1.22";
+      url = "github:JPHutchins/camas/0.1.25";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

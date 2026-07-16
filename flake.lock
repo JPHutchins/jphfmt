@@ -23,16 +23,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1783220993,
-        "narHash": "sha256-ylOc0atW3DbwseXLi/spHv0iwVWkNQ1ZeFQpADpFf0o=",
+        "lastModified": 1784166210,
+        "narHash": "sha256-MR/W/Ai4fZyYLecPrbVs+NHNki6pWMW2VxTdIjf8JiM=",
         "owner": "JPHutchins",
         "repo": "camas",
-        "rev": "12178886dddb4f59e522a184dcfda3a10c31c6fc",
+        "rev": "dbfe0723fb8877957aabe20e04df8897a1b184d0",
         "type": "github"
       },
       "original": {
         "owner": "JPHutchins",
-        "ref": "0.1.22",
+        "ref": "0.1.25",
         "repo": "camas",
         "type": "github"
       }
