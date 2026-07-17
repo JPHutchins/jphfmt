@@ -2,8 +2,8 @@
   "name": "jphfmt",
   "displayName": "jphfmt — opinionated C formatter",
   "description": "Format C with jphfmt: one uniform bracket rule, no column alignment.",
-  "version": "0.1.0",
-  "publisher": "JPHutchins",
+  "version": "0.1.5",
+  "publisher": "JPH",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
