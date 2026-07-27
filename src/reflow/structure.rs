@@ -224,6 +224,30 @@ fn emit_define(
     end
 }
 
+/// Join a continued run of tokens onto one line, dropping its `\`s. [`emit_define`] re-adds a
+/// continuation at every newline it is handed, so a newline surviving here would take the `\` beside
+/// it and grow another on each pass. Same-line whitespace is left as written: the `#`-to-keyword gap
+/// that [`super::scope::scope_directives`] rewrites must reach the width measurement unchanged.
+fn flatten_continuations(toks: &[Token]) -> String {
+    let mut out = String::new();
+    let mut broken = false;
+    for t in toks {
+        if (t.kind == TokenKind::Punct && t.text == "\\") || t.kind == TokenKind::Newline {
+            while out.ends_with([' ', '\t']) {
+                out.pop();
+            }
+            broken = true;
+        } else if !(broken && t.kind == TokenKind::Whitespace) {
+            if broken {
+                out.push(' ');
+                broken = false;
+            }
+            out.push_str(t.text);
+        }
+    }
+    out
+}
+
 /// Split a `#define` into its `#define NAME(params) ` prefix text and its body tokens (with
 /// continuation backslashes removed and surrounding trivia trimmed). `None` if it has no body.
 fn split_define<'src>(
@@ -246,11 +270,7 @@ fn split_define<'src>(
         }
         _ => name + 1,
     };
-    let prefix: String = toks[start..prefix_end]
-        .iter()
-        .map(|t| t.text)
-        .collect::<String>()
-        + " ";
+    let prefix = flatten_continuations(&toks[start..prefix_end]) + " ";
     let mut body: Vec<Token> = toks[prefix_end..end]
         .iter()
         .filter(|t| !(t.kind == TokenKind::Punct && t.text == "\\"))

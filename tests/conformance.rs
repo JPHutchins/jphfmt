@@ -526,6 +526,17 @@ fn preprocessor_scope_is_idempotent() {
 }
 
 #[test]
+fn continued_define_params_do_not_accumulate_backslashes() {
+    // A `\` left in the parameter list is not a continuation but an invalid token, and
+    // `significant()` filters backslashes out, so nothing else in the suite would notice.
+    let src = "#define M(a, \\\n\t\tb) f(a, b)\n";
+    let once = format(src);
+    assert_eq!(once, "#define M(a, b) f(a, b)\n");
+    assert_eq!(format(&once), once);
+    assert!(!once.contains("\\ \\"), "stray backslash: {once:?}");
+}
+
+#[test]
 fn preprocessor_scope_preserves_define_continuation() {
     // A #define with a \-continuation body: the #define line is at depth 0 (unchanged), and
     // the continuation line (previous line ends in \) is skipped by the scope pass.
