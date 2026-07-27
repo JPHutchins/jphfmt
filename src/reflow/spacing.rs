@@ -5,8 +5,8 @@
 //! breaking idempotency).
 
 use super::tokens::{
-    closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_qualifier, is_trivia,
-    is_type_context, is_type_group,
+    closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_decl_specifier,
+    is_excluded_callee, is_qualifier, is_trivia, is_type_context, is_type_group,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -123,10 +123,81 @@ fn collapse_runs(pieces: &mut [Piece]) {
     }
 }
 
+/// The innermost bracket still open at `j`.
+fn enclosing_open(pieces: &[Piece], j: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    (0..j).rev().find(|&k| match pieces[k].1.text {
+        ")" | "]" | "}" => {
+            depth += 1;
+            false
+        }
+        "(" | "[" | "{" => {
+            depth -= 1;
+            depth < 0
+        }
+        _ => false,
+    })
+}
+
+/// A token a declarator can be made of.
+fn declarator_shaped(t: &Token) -> bool {
+    (t.kind == TokenKind::Ident && !is_excluded_callee(t.text)) || matches!(t.text, "*" | "[" | "]")
+}
+
+/// The declarator run ending at `before`.
+fn declaration_head<'a, 'src>(pieces: &'a [Piece<'src>], before: usize) -> &'a [Piece<'src>] {
+    let start = (0..before)
+        .rev()
+        .take_while(|&k| declarator_shaped(&pieces[k].1))
+        .last()
+        .unwrap_or(before);
+    &pieces[start..before]
+}
+
+/// Whether the `(` at `open` heads a declaration's parameter list rather than a call's argument
+/// list: `Ident * Ident` splits on that distinction and nothing else in the token stream does. The
+/// two are structurally identical, so the verdict comes from what precedes the `(` — a declaration
+/// specifier, or the bare `T name(` shape that a call's single callee cannot produce.
+fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
+    let head = declaration_head(pieces, open);
+    head.iter().any(|p| is_decl_specifier(p.1.text))
+        || head.iter().filter(|p| p.1.kind == TokenKind::Ident).count() >= 2
+}
+
+/// Whether the `{` at `open` opens a block rather than an initializer list, whose elements are
+/// expressions: the structure pass collapses an element's newline to a space, which would otherwise
+/// let a multiply reach [`declares_pointer`] as a same-line run on the next pass.
+fn opens_block(pieces: &[Piece], open: usize) -> bool {
+    !(0..open)
+        .rev()
+        .take_while(|&k| pieces[k].1.text != ";")
+        .any(|k| pieces[k].1.text == "=")
+}
+
+/// Whether the type name at `name` opens a declaration, which makes a following `*` run a
+/// declarator rather than a multiply. A statement boundary or declaration specifier settles it
+/// outright; inside brackets, only a parameter list does.
+fn declares_pointer(pieces: &[Piece], name: usize) -> bool {
+    let enclosing = enclosing_open(pieces, name);
+    let statement_level =
+        enclosing.is_none_or(|open| pieces[open].1.text == "{" && opens_block(pieces, open));
+    match name.checked_sub(1).map(|k| pieces[k].1.text) {
+        None | Some(";" | "{" | "}") => statement_level,
+        Some("(" | ",") => enclosing.is_some_and(|open| {
+            pieces[open].1.text == "("
+                && open > 0
+                && is_callee_ident(&pieces[open - 1].1)
+                && declares_parameters(pieces, open)
+        }),
+        Some(text) => is_decl_specifier(text),
+    }
+}
+
 /// Middle-align pointer `*` (§2.5: `T * p`, `T * * p`) — only the dereference operator clusters with
-/// its operand. A `*` run is a declarator when a type keyword/qualifier or a `struct`/`union`/`enum`
-/// tag precedes it, or a qualifier follows it (`*const` is no expression, so it disambiguates a bare
-/// typedef); multiply, deref, and function pointers `(*f)` are left as is (§6).
+/// its operand. A `*` run is a declarator when a type keyword or `struct`/`union`/`enum` tag precedes
+/// it, when a qualifier follows it (`*const` is no expression), or when a typedef name in declaration
+/// position precedes it and a name follows; multiply, deref, and function pointers `(*f)` are left as
+/// is (§6).
 fn space_pointers(pieces: &mut [Piece]) {
     let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
     let mut j = 0;
@@ -146,7 +217,14 @@ fn space_pointers(pieces: &mut [Piece]) {
         let next_is_qualifier = pieces
             .get(k + 1)
             .is_some_and(|after| same_line(&after.0) && is_qualifier(after.1.text));
-        if prev_is_type || next_is_qualifier {
+        let next_names_declarator = pieces
+            .get(k + 1)
+            .is_some_and(|after| same_line(&after.0) && after.1.kind == TokenKind::Ident);
+        let typedef_declarator = pieces[j - 1].1.kind == TokenKind::Ident
+            && !is_excluded_callee(pieces[j - 1].1.text)
+            && next_names_declarator
+            && declares_pointer(pieces, j - 1);
+        if prev_is_type || next_is_qualifier || typedef_declarator {
             for piece in &mut pieces[j..=k] {
                 piece.0 = " ".to_owned();
             }

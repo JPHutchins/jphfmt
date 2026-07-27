@@ -197,24 +197,67 @@ fn pointer_declarator_stars_never_cluster() {
     // stands alone.
     assert_eq!(format("int **p;\n"), "int * * p;\n");
     assert_eq!(format("int***q;\n"), "int * * * q;\n");
-    // A trailing qualifier resolves the ambiguity after a bare typedef: `*const` is not an
-    // expression, so this run is a declarator.
     assert_eq!(
         format("void py_release(PyObject ** const r);\n"),
         "void py_release(PyObject * * const r);\n"
     );
     assert_eq!(format("PyObject *const s;\n"), "PyObject * const s;\n");
-    // Without that signal a bare-typedef run stays ambiguous with multiply-by-deref (§6).
-    assert_eq!(format("PyObject **t;\n"), "PyObject **t;\n");
+    assert_eq!(format("PyObject **t;\n"), "PyObject * * t;\n");
+    // A multiply keeps its own spacing: no declaration position, no declarator.
     assert_eq!(format("z = a ** b;\n"), "z = a ** b;\n");
 }
 
 #[test]
+fn typedef_pointer_declarators_are_middle_spaced() {
+    // A typedef name in declaration position is a type, so its `*` is a declarator (§6 only bars
+    // the runs an expression could also produce).
+    for src in [
+        "uint32_t *p;\n",
+        "size_t *p;\n",
+        "FILE *p;\n",
+        "PyObject *p;\n",
+    ] {
+        assert_eq!(format(src), src.replace('*', "* "));
+    }
+    assert_eq!(format("mytype*p;\n"), "mytype * p;\n");
+    assert_eq!(
+        format("static PyObject *probe(PyObject *self);\n"),
+        "static PyObject * probe(PyObject * self);\n"
+    );
+    assert_eq!(
+        format("void f(int a, PyObject *b);\n"),
+        "void f(int a, PyObject * b);\n"
+    );
+    assert_eq!(
+        format("typedef PyObject *ptr_t;\n"),
+        "typedef PyObject * ptr_t;\n"
+    );
+}
+
+#[test]
+fn multiply_is_not_a_declarator() {
+    // Every `Ident * Ident` an expression can produce must pass through (§6): the two are
+    // token-level identical, so only declaration position tells them apart.
+    for src in [
+        "z = a*b;\n",
+        "int n = f(a*b);\n",
+        "x = arr[n*m];\n",
+        "q = obj->fn(a*b);\n",
+        "v = n*3;\n",
+        "w = sizeof(int)*n;\n",
+        "y = a * *p;\n",
+        "foo(bar, baz*qux);\n",
+    ] {
+        assert_eq!(format(src), src, "expression must pass through: {src:?}");
+    }
+    assert_eq!(format("return f(a*b);\n"), "return f(a*b);\n");
+}
+
+#[test]
 fn ambiguous_star_is_left_alone() {
-    // multiply and user-typedef pointers can't be told apart at the token level (§6)
+    // a multiply in expression position keeps whatever spacing it was written with (§6)
     assert_eq!(format("z = a*b;\n"), "z = a*b;\n");
     assert_eq!(format("z = a * b;\n"), "z = a * b;\n");
-    assert_eq!(format("mytype*p;\n"), "mytype*p;\n");
 }
 
 #[test]

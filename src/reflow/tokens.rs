@@ -76,6 +76,26 @@ pub(super) fn is_qualifier(text: &str) -> bool {
     matches!(text, "const" | "volatile" | "restrict" | "_Atomic")
 }
 
+/// A keyword that can only introduce a declaration, so an `Ident *` after one is a declarator
+/// rather than a multiply — the disambiguation `is_type_context` cannot make for a typedef name.
+pub(super) fn is_decl_specifier(text: &str) -> bool {
+    is_type_context(text)
+        || matches!(
+            text,
+            "static"
+                | "extern"
+                | "register"
+                | "inline"
+                | "typedef"
+                | "thread_local"
+                | "_Thread_local"
+                | "constexpr"
+                | "struct"
+                | "union"
+                | "enum"
+        )
+}
+
 /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
 /// excluded: its associations are a comma list and explode exactly per §2.2.
 pub(super) fn is_excluded_callee(name: &str) -> bool {
