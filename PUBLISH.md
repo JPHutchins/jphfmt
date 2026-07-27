@@ -26,13 +26,14 @@ camas owns the three steps:
 ```sh
 camas version_sync -- 0.1.6   # rewrite the version across all four files
 git commit -am "release 0.1.6"
-camas release                 # re-check, then tag v0.1.6 and push it
+camas release                 # re-check, then push main and the tag v0.1.6
 ```
 
 `camas version_check` runs as part of `check`, `all` and CI, so a file left behind fails the build
 rather than surfacing as a wrong `--version` after someone installs from `main`. `camas release`
-refuses a dirty tree, an existing tag, or a branch other than `main` — the default branch must carry
-what was published, or `cargo install --git` reports a version that was never released.
+refuses a dirty tree, an existing tag, or a branch other than `main`, and pushes `main` before the
+tag — the default branch must carry what was published, or `cargo install --git` reports a version
+that was never released.
 
 Pushing the tag is what publishes. CI will:
 1. Build and test on push (the `v*` tag triggers release jobs)

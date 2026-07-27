@@ -92,7 +92,7 @@ RELEASE_FILES = (
 
 
 def release_files(changed: tuple[str, ...]) -> bool:
-	return any(c in RELEASE_FILES for c in changed)
+	return any(Path(c) == Path(f) for c in changed for f in RELEASE_FILES)
 
 
 version_check = Task("uv run release.py check", when=release_files)

@@ -4,8 +4,8 @@
 """Release metadata: one version, four files, and the tag that ships it.
 
 ``Cargo.toml`` holds the version; ``check`` fails when any other file disagrees,
-``sync X.Y.Z`` rewrites them all, and ``send`` tags that version and pushes it,
-which is what starts CI's publish jobs. Run through ``camas`` (``version_check``,
+``sync X.Y.Z`` rewrites them all, and ``send`` pushes ``main`` and the tag, which
+is what starts CI's publish jobs. Run through ``camas`` (``version_check``,
 ``version_sync``, ``release``), never by hand.
 """
 
@@ -25,6 +25,7 @@ PACKAGE_LOCK = ROOT / "editors/vscode/package-lock.json"
 
 CRATE = "jphfmt"
 PUBLISHER = "JPH"
+MISSING = "<missing>"
 
 
 class Found(NamedTuple):
@@ -35,44 +36,56 @@ class Found(NamedTuple):
 	value: str
 
 
+class Rewrite(NamedTuple):
+	"""One pattern to replace in one file, applied only once every pattern has matched."""
+
+	path: Path
+	pattern: str
+	replacement: str
+
+
 def cargo_version() -> str:
 	with CARGO_TOML.open("rb") as f:
-		version = tomllib.load(f)["package"]["version"]
-	assert isinstance(version, str)
+		version = tomllib.load(f).get("package", {}).get("version")
+	if not isinstance(version, str):
+		raise SystemExit(f"{CARGO_TOML.relative_to(ROOT)}: no [package] version")
 	return version
 
 
 def cargo_lock_version() -> str | None:
 	with CARGO_LOCK.open("rb") as f:
-		packages = tomllib.load(f)["package"]
-	assert isinstance(packages, list)
+		packages = tomllib.load(f).get("package", [])
+	if not isinstance(packages, list):
+		return None
 	for package in packages:
-		if package["name"] == CRATE:
-			version = package["version"]
-			assert isinstance(version, str)
-			return version
+		if package.get("name") == CRATE:
+			version = package.get("version")
+			return version if isinstance(version, str) else None
 	return None
 
 
 def npm_field(path: Path, field: str) -> str | None:
-	value = json.loads(path.read_text())[field]
+	value = json.loads(path.read_text()).get(field)
 	return value if isinstance(value, str) else None
 
 
-def npm_lock_versions() -> tuple[str | None, str | None]:
-	manifest = json.loads(PACKAGE_LOCK.read_text())
-	root = manifest["packages"][""]
-	return npm_field(PACKAGE_LOCK, "version"), root.get("version")
+def npm_lock_root_version() -> str | None:
+	root = json.loads(PACKAGE_LOCK.read_text()).get("packages", {}).get("", {})
+	version = root.get("version") if isinstance(root, dict) else None
+	return version if isinstance(version, str) else None
+
+
+def or_missing(value: str | None) -> str:
+	return MISSING if value is None else value
 
 
 def found() -> tuple[Found, ...]:
-	lock_top, lock_root = npm_lock_versions()
 	return (
-		Found(CARGO_LOCK, "package.jphfmt.version", str(cargo_lock_version())),
-		Found(PACKAGE_JSON, "version", str(npm_field(PACKAGE_JSON, "version"))),
-		Found(PACKAGE_JSON, "publisher", str(npm_field(PACKAGE_JSON, "publisher"))),
-		Found(PACKAGE_LOCK, "version", str(lock_top)),
-		Found(PACKAGE_LOCK, "packages..version", str(lock_root)),
+		Found(CARGO_LOCK, "package.jphfmt.version", or_missing(cargo_lock_version())),
+		Found(PACKAGE_JSON, "version", or_missing(npm_field(PACKAGE_JSON, "version"))),
+		Found(PACKAGE_JSON, "publisher", or_missing(npm_field(PACKAGE_JSON, "publisher"))),
+		Found(PACKAGE_LOCK, "version", or_missing(npm_field(PACKAGE_LOCK, "version"))),
+		Found(PACKAGE_LOCK, "packages..version", or_missing(npm_lock_root_version())),
 	)
 
 
@@ -94,38 +107,69 @@ def check() -> int:
 	return 0
 
 
-def replace_first(path: Path, pattern: str, replacement: str) -> None:
-	text = path.read_text()
-	patched, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
-	if count != 1:
-		raise SystemExit(f"{path.relative_to(ROOT)}: no match for {pattern!r}")
-	path.write_text(patched)
+def rewrites(version: str) -> tuple[Rewrite, ...]:
+	"""Every edit a sync makes. JSON's trailing comma is optional to match, so a field that becomes
+	the last in its object still does."""
+	return (
+		Rewrite(CARGO_TOML, r'^version = ".*"$', f'version = "{version}"'),
+		Rewrite(
+			CARGO_LOCK,
+			rf'^name = "{CRATE}"\nversion = ".*"$',
+			f'name = "{CRATE}"\nversion = "{version}"',
+		),
+		Rewrite(PACKAGE_JSON, r'^(\s*)"version": ".*"(,?)$', rf'\g<1>"version": "{version}"\g<2>'),
+		Rewrite(
+			PACKAGE_JSON,
+			r'^(\s*)"publisher": ".*"(,?)$',
+			rf'\g<1>"publisher": "{PUBLISHER}"\g<2>',
+		),
+		Rewrite(PACKAGE_LOCK, r'^(\s*)"version": ".*"(,?)$', rf'\g<1>"version": "{version}"\g<2>'),
+		Rewrite(
+			PACKAGE_LOCK,
+			rf'^(\s+)"": \{{\n(\s+)"name": "{CRATE}",\n(\s+)"version": ".*"(,?)$',
+			rf'\g<1>"": {{\n\g<2>"name": "{CRATE}",\n\g<3>"version": "{version}"\g<4>',
+		),
+	)
 
 
 def sync(version: str) -> int:
 	if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
 		raise SystemExit(f"not a semver version: {version!r}")
-	replace_first(CARGO_TOML, r'^version = ".*"$', f'version = "{version}"')
-	replace_first(
-		CARGO_LOCK,
-		rf'^name = "{CRATE}"\nversion = ".*"$',
-		f'name = "{CRATE}"\nversion = "{version}"',
-	)
-	for path in (PACKAGE_JSON, PACKAGE_LOCK):
-		replace_first(path, r'^(\s*)"version": ".*",$', rf'\g<1>"version": "{version}",')
-	replace_first(
-		PACKAGE_LOCK,
-		r'^(\s+)"": \{\n(\s+)"name": "jphfmt",\n(\s+)"version": ".*",$',
-		rf'\g<1>"": {{\n\g<2>"name": "jphfmt",\n\g<3>"version": "{version}",',
-	)
-	replace_first(PACKAGE_JSON, r'^(\s*)"publisher": ".*",$', rf'\g<1>"publisher": "{PUBLISHER}",')
+	# Every pattern is applied in memory first, so one that no longer matches leaves the tree as it
+	# was rather than half rewritten.
+	patched = {path: path.read_text() for path in {rewrite.path for rewrite in rewrites(version)}}
+	for rewrite in rewrites(version):
+		text, count = re.subn(
+			rewrite.pattern,
+			rewrite.replacement,
+			patched[rewrite.path],
+			count=1,
+			flags=re.MULTILINE,
+		)
+		if count != 1:
+			raise SystemExit(
+				f"{rewrite.path.relative_to(ROOT)}: no match for {rewrite.pattern!r}; "
+				"nothing was written"
+			)
+		patched[rewrite.path] = text
+	for path, text in patched.items():
+		path.write_text(text)
 	return check()
 
 
 def git(*args: str) -> str:
-	return subprocess.run(
-		("git", *args), cwd=ROOT, check=True, capture_output=True, text=True
-	).stdout.strip()
+	"""Run git, returning what it said on either stream — `push` reports on stderr."""
+	done = subprocess.run(
+		("git", *args),
+		cwd=ROOT,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.STDOUT,
+		text=True,
+		check=False,
+	)
+	if done.returncode != 0:
+		raise SystemExit(f"git {' '.join(args)} failed:\n{done.stdout.strip()}")
+	return done.stdout.strip()
 
 
 def send() -> int:
@@ -140,8 +184,11 @@ def send() -> int:
 	if git("rev-parse", "--abbrev-ref", "HEAD") != "main":
 		raise SystemExit("release from main, so the default branch carries what was published")
 	print(git("tag", "-a", tag, "-m", tag))
+	# main before the tag: a published version whose commit is not on the default branch is how this
+	# metadata drifted in the first place, and `cargo install --git` builds that branch.
+	print(git("push", "origin", "main"))
 	print(git("push", "origin", tag))
-	print(f"pushed {tag}: CI publishes the crate and the extension from the tag")
+	print(f"pushed main and {tag}: CI publishes the crate and the extension from the tag")
 	return 0
 
 
