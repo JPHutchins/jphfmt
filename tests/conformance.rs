@@ -11,10 +11,12 @@ fn golden_is_a_fixpoint() {
 }
 
 /// Significant content: everything but whitespace, commas (jphfmt may add a magic trailing comma),
-/// and backslashes (continuations). Formatting must never alter anything else.
+/// backslashes (continuations), and parentheses — a chain or ternary that breaks is bounded by
+/// parentheses jphfmt writes, which is legal exactly because the operands were already an implicit
+/// container. Formatting must never alter anything else.
 fn significant(s: &str) -> String {
     s.chars()
-        .filter(|c| !c.is_whitespace() && *c != ',' && *c != '\\')
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\' | '(' | ')'))
         .collect()
 }
 
@@ -471,17 +473,34 @@ fn statement_expression_in_code_block_indents() {
 #[test]
 fn long_binary_chain_explodes_with_trailing_operators() {
     // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line
-    // with the operator trailing rather than overrunning the width.
-    let bare = "int x = AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE;\n";
-    let hanging = "int x = AAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDDDD |\n\tEEEEEEEEEEEEEEEE;\n";
-    assert_eq!(format(bare), hanging);
-    assert_eq!(format(hanging), hanging);
-
-    // With the author's own parentheses it is a full container, `)` back at the parent's indent.
-    let parens = "int x = (AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE);\n";
+    // with the operator trailing — bounded by parentheses jphfmt adds, since the operands after an
+    // assignment are already an implicit container. Author-written parentheses reach the same form.
     let broken = "int x = (\n\tAAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDDDD |\n\tEEEEEEEEEEEEEEEE\n);\n";
-    assert_eq!(format(parens), broken);
+    for src in [
+        "int x = AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE;\n",
+        "int x = (AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE);\n",
+        broken,
+    ] {
+        assert_eq!(format(src), broken, "input {src:?}");
+    }
+}
+
+#[test]
+fn a_long_bare_ternary_is_bounded_too() {
+    // The same rule, applied to §2.4: a ternary the author left unparenthesized is still an implicit
+    // container, so it breaks with the `:` trailing rather than overrunning.
+    let bare = "acc = status_code == 0 ? \"ok\" : status_code == 1 ? \"busy\" : status_code == 2 ? \"error\" : status_code < 0 ? \"fault\" : \"unknown\";\n";
+    let broken = "acc = (\n\tstatus_code == 0 ? \"ok\" :\n\tstatus_code == 1 ? \"busy\" :\n\tstatus_code == 2 ? \"error\" :\n\tstatus_code < 0 ? \"fault\" :\n\t\"unknown\"\n);\n";
+    assert_eq!(format(bare), broken);
     assert_eq!(format(broken), broken);
+}
+
+#[test]
+fn a_list_is_never_bounded() {
+    // A depth-zero `,` means the span is a list, not one expression: `(a | b, c)` is not `a | b, c`,
+    // so a second declarator or a comma expression is left overrunning rather than changed.
+    let src = "int aaaaaaaaaaaaaaaaaaaaaaaaaaaa = XXXXXXXXXXXXXXXXXXXXXXXXXXXX | YYYYYYYYYYYYYYYYYYYYYYYYYYYY | ZZZZZZZZZZZZZZZZZZZZZZZZ, b;\n";
+    assert_eq!(format(src), src);
 }
 
 #[test]
@@ -499,7 +518,7 @@ fn a_chain_that_fits_stays_flat() {
 #[test]
 fn a_chain_splits_on_its_loosest_operator() {
     let src = "int x = aaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccccc * dddddddddddddddddddddddd;\n";
-    let expected = "int x = aaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb +\n\tcccccccccccccccccccccccc * dddddddddddddddddddddddd;\n";
+    let expected = "int x = (\n\taaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb +\n\tcccccccccccccccccccccccc * dddddddddddddddddddddddd\n);\n";
     assert_eq!(format(src), expected);
 }
 

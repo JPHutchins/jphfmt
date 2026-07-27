@@ -7,7 +7,8 @@
 pub const TAB_WIDTH: usize = 4;
 
 /// Display width of `s` in columns. Text never contains tabs or newlines (indentation is emitted
-/// separately), so one column per `char` is exact for the measurement.
+/// separately), so one column per `char` is exact for the measurement — a literal holding either is
+/// refused a layout rather than measured wrongly (`is_boundable`).
 pub fn display_width(s: &str) -> usize {
     s.chars().count()
 }

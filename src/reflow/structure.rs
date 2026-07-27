@@ -6,8 +6,8 @@
 //! reservation live alongside.
 
 use super::builders::{
-    build_brace_doc, build_call_doc, build_cond_doc, build_expr_doc, build_for_doc,
-    build_paren_chain_doc, build_ternary_doc,
+    build_brace_doc, build_call_doc, build_chain_doc, build_cond_doc, build_element_doc,
+    build_expr_doc, build_for_doc, build_paren_chain_doc, build_ternary_doc,
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
@@ -123,7 +123,8 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         }
 
         // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its
-        // own line with the colon trailing (§2.4). Parens are author-written (§8.2), not inserted.
+        // own line with the colon trailing (§2.4). These parens are the author's; a bare ternary is
+        // bounded by `build_chain_doc` instead, which adds its own.
         // Skip `(` that are part of a function call (`ident(`): a call whose args contain a comment
         // or are unbalanced falls through to per-token verbatim, so without this guard the ternary
         // handler would accidentally reformat the call's argument list, collapsing whitespace and
@@ -213,9 +214,9 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && !contains_comment(&toks[i..semi])
             && is_balanced(&toks[i..semi])
             && !toks[i..semi].iter().any(|s| s.text == "{")
-            && split_chain(&toks[i..semi]).is_some()
+            && build_chain_doc(&toks[i..semi]).is_some()
         {
-            let doc = build_expr_doc(&toks[i..semi]);
+            let doc = build_element_doc(&toks[i..semi]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
             // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the
             // line after it, which this pass's own whitespace changes shift — an unstable measure.
@@ -541,6 +542,12 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
                 text.push_str(t.text);
                 break;
             }
+            // Nothing past the `;` shares this construct's fate: jphfmt never moves a token across
+            // one, so counting further would make the reserve depend on the next statement.
+            TokenKind::Punct if t.text == ";" => {
+                text.push_str(t.text);
+                break;
+            }
             _ => {
                 // Stop at the first newline embedded in any token (not just Newline tokens),
                 // so Unknown tokens containing multiple lines don't inflate the reserve.
@@ -653,9 +660,16 @@ mod tests {
     }
 
     #[test]
-    fn trailing_reserved_counts_punct_then_stops_at_bracket() {
-        // `;` counts (1), then `(` opens a bracket and stops the reserve.
+    fn trailing_reserved_stops_at_the_statement_end() {
+        // The `;` counts (1) and ends the reserve: what follows it is another statement's.
         let toks = [tok(TokenKind::Punct, ";"), tok(TokenKind::Punct, "(")];
+        assert_eq!(trailing_reserved(&toks, 0), 1);
+    }
+
+    #[test]
+    fn trailing_reserved_counts_punct_then_stops_at_bracket() {
+        // ` {` of a function body: the space and brace count, and the brace stops the reserve.
+        let toks = [tok(TokenKind::Whitespace, " "), tok(TokenKind::Punct, "{")];
         assert_eq!(trailing_reserved(&toks, 0), 2);
     }
 
