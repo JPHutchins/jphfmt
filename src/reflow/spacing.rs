@@ -6,7 +6,7 @@
 
 use super::tokens::{
     closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_decl_specifier,
-    is_excluded_callee, is_qualifier, is_trivia, is_type_context, is_type_group,
+    is_excluded_callee, is_qualifier, is_tag_keyword, is_trivia, is_type_context, is_type_group,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -15,24 +15,6 @@ type Piece<'src> = (String, Token<'src>);
 
 fn same_line(gap: &str) -> bool {
     !gap.contains(['\n', '\r'])
-}
-
-/// Index of the `(` matching the `)` at `close`, scanning the piece list backward.
-fn piece_open_paren(pieces: &[Piece], close: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    for j in (0..=close).rev() {
-        match pieces[j].1.text {
-            ")" => depth += 1,
-            "(" => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(j);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Index of the `)` matching the `(` at `open`, scanning forward.
@@ -139,19 +121,28 @@ fn enclosing_open(pieces: &[Piece], j: usize) -> Option<usize> {
     })
 }
 
-/// A token a declarator can be made of.
+/// A token a declarator can be made of. `,` is one: a declaration may list several declarators, and
+/// the type of the second belongs to the first.
 fn declarator_shaped(t: &Token) -> bool {
-    (t.kind == TokenKind::Ident && !is_excluded_callee(t.text)) || matches!(t.text, "*" | "[" | "]")
+    (t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
+        || matches!(t.text, "*" | "[" | "]" | ",")
 }
 
 /// The declarator run ending at `before`.
 fn declaration_head<'a, 'src>(pieces: &'a [Piece<'src>], before: usize) -> &'a [Piece<'src>] {
     let start = (0..before)
         .rev()
-        .take_while(|&k| declarator_shaped(&pieces[k].1))
-        .last()
-        .unwrap_or(before);
+        .find(|&k| !declarator_shaped(&pieces[k].1))
+        .map_or(0, |k| k + 1);
     &pieces[start..before]
+}
+
+/// Whether the declarator run ending at `before` reads as a declaration: a declaration specifier, or
+/// two or more identifiers separated only by `*` and `[]`.
+fn declares_head(pieces: &[Piece], before: usize) -> bool {
+    let head = declaration_head(pieces, before);
+    head.iter().any(|p| is_decl_specifier(p.1.text))
+        || head.iter().filter(|p| p.1.kind == TokenKind::Ident).count() >= 2
 }
 
 /// Whether the `(` at `open` heads a declaration's parameter list rather than a call's argument
@@ -159,19 +150,27 @@ fn declaration_head<'a, 'src>(pieces: &'a [Piece<'src>], before: usize) -> &'a [
 /// two are structurally identical, so the verdict comes from what precedes the `(` — a declaration
 /// specifier, or the bare `T name(` shape that a call's single callee cannot produce.
 fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
-    let head = declaration_head(pieces, open);
-    head.iter().any(|p| is_decl_specifier(p.1.text))
-        || head.iter().filter(|p| p.1.kind == TokenKind::Ident).count() >= 2
+    declares_head(pieces, open)
 }
 
 /// Whether the `{` at `open` opens a block rather than an initializer list, whose elements are
 /// expressions: the structure pass collapses an element's newline to a space, which would otherwise
-/// let a multiply reach [`declares_pointer`] as a same-line run on the next pass.
+/// let a multiply reach [`declares_pointer`] as a same-line run on the next pass. An `=` since the
+/// last `;` marks an initializer, and so does a preceding `(T)` — a compound literal reaches neither
+/// `=` nor a statement boundary in `return (T){…}` or `f((T){…})`.
 fn opens_block(pieces: &[Piece], open: usize) -> bool {
-    !(0..open)
-        .rev()
-        .take_while(|&k| pieces[k].1.text != ";")
-        .any(|k| pieces[k].1.text == "=")
+    !opens_literal(pieces, open)
+        && (0..open)
+            .rev()
+            .take_while(|&k| pieces[k].1.text != ";")
+            .all(|k| pieces[k].1.text != "=")
+}
+
+/// Whether the `{` at `open` follows a compound literal's `(T)`. The piece list is the token stream
+/// minus trivia, so the shared predicate reads it directly.
+fn opens_literal(pieces: &[Piece], open: usize) -> bool {
+    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
+    open > 0 && toks[open - 1].text == ")" && closes_literal_type(&toks, open - 1)
 }
 
 /// Whether the type name at `name` opens a declaration, which makes a following `*` run a
@@ -213,18 +212,17 @@ fn space_pointers(pieces: &mut [Piece]) {
         let prev_is_type = is_type_context(pieces[j - 1].1.text)
             || (pieces[j - 1].1.kind == TokenKind::Ident
                 && j >= 2
-                && matches!(pieces[j - 2].1.text, "struct" | "union" | "enum"));
-        let next_is_qualifier = pieces
-            .get(k + 1)
-            .is_some_and(|after| same_line(&after.0) && is_qualifier(after.1.text));
-        let next_names_declarator = pieces
-            .get(k + 1)
-            .is_some_and(|after| same_line(&after.0) && after.1.kind == TokenKind::Ident);
+                && is_tag_keyword(pieces[j - 2].1.text));
+        // `int *p, *q` — the second declarator's type is back past the comma.
+        let continues_declarator = pieces[j - 1].1.text == "," && declares_head(pieces, j - 1);
+        let after_run = pieces.get(k + 1).filter(|after| same_line(&after.0));
+        let next_is_qualifier = after_run.is_some_and(|after| is_qualifier(after.1.text));
+        let next_names_declarator = after_run.is_some_and(|after| after.1.kind == TokenKind::Ident);
         let typedef_declarator = pieces[j - 1].1.kind == TokenKind::Ident
             && !is_excluded_callee(pieces[j - 1].1.text)
             && next_names_declarator
             && declares_pointer(pieces, j - 1);
-        if prev_is_type || next_is_qualifier || typedef_declarator {
+        if prev_is_type || next_is_qualifier || typedef_declarator || continues_declarator {
             for piece in &mut pieces[j..=k] {
                 piece.0 = " ".to_owned();
             }
@@ -291,7 +289,7 @@ fn space_braces(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
         if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
-            let function_or_control = piece_open_paren(pieces, j - 1)
+            let function_or_control = enclosing_open(pieces, j - 1)
                 .and_then(|open| open.checked_sub(1))
                 .is_some_and(|before| heads_body(&pieces[before].1));
             if function_or_control {

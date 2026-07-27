@@ -235,6 +235,41 @@ fn typedef_pointer_declarators_are_middle_spaced() {
 }
 
 #[test]
+fn comma_separated_declarators_are_all_spaced() {
+    // The second declarator's type is back past the comma, so its `*` is a declarator too.
+    assert_eq!(format("int *p, *q, *r;\n"), "int * p, * q, * r;\n");
+    assert_eq!(format("PyObject *x, *y;\n"), "PyObject * x, * y;\n");
+    assert_eq!(format("struct foo *a, *b;\n"), "struct foo * a, * b;\n");
+}
+
+#[test]
+fn a_multiply_inside_braces_is_left_alone() {
+    // An initializer element is an expression, whichever brace holds it — `=`, a compound literal
+    // in `return` or in an argument, or a nested list.
+    for src in [
+        "int v[] = {a*b};\n",
+        "int m[] = {{a*b}, {c*d}};\n",
+        "f((struct Foo){a*b});\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+    assert_eq!(
+        format("return (struct Foo){a*b};\n"),
+        "return (struct Foo){a*b};\n"
+    );
+}
+
+#[test]
+fn a_declaration_after_a_brace_is_spaced() {
+    // The `{` and `}` statement boundaries, not just `;` and start-of-input.
+    assert_eq!(format("{ PyObject *p; }\n"), "{ PyObject * p; }\n");
+    assert_eq!(
+        format("void f(void) {}\nPyObject *p;\n"),
+        "void f(void) {}\nPyObject * p;\n"
+    );
+}
+
+#[test]
 fn multiply_is_not_a_declarator() {
     // Every `Ident * Ident` an expression can produce must pass through (§6): the two are
     // token-level identical, so only declaration position tells them apart.
@@ -251,6 +286,9 @@ fn multiply_is_not_a_declarator() {
         assert_eq!(format(src), src, "expression must pass through: {src:?}");
     }
     assert_eq!(format("return f(a*b);\n"), "return f(a*b);\n");
+    // Accepted §6 trade-off: an expression statement whose result is discarded is
+    // token-indistinguishable from a declaration, so it is spaced as one.
+    assert_eq!(format("a*b;\n"), "a * b;\n");
 }
 
 #[test]

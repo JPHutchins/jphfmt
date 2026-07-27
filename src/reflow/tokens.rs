@@ -51,24 +51,21 @@ pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
 /// not a multiply, and after which `(` opens a declarator group, not a call's argument list. User
 /// typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p`/`foo(x)` pass through (§6).
 pub(super) fn is_type_context(text: &str) -> bool {
-    matches!(
-        text,
-        "void"
-            | "char"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "signed"
-            | "unsigned"
-            | "_Bool"
-            | "bool"
-            | "const"
-            | "volatile"
-            | "_Atomic"
-            | "restrict"
-    )
+    is_qualifier(text)
+        || matches!(
+            text,
+            "void"
+                | "char"
+                | "short"
+                | "int"
+                | "long"
+                | "float"
+                | "double"
+                | "signed"
+                | "unsigned"
+                | "_Bool"
+                | "bool"
+        )
 }
 
 /// A type qualifier — a keyword that may follow a declarator's `*` but never a multiply's.
@@ -76,10 +73,16 @@ pub(super) fn is_qualifier(text: &str) -> bool {
     matches!(text, "const" | "volatile" | "restrict" | "_Atomic")
 }
 
+/// A keyword that introduces a `struct`/`union`/`enum` tag, after which an identifier names a type.
+pub(super) fn is_tag_keyword(text: &str) -> bool {
+    matches!(text, "struct" | "union" | "enum")
+}
+
 /// A keyword that can only introduce a declaration, so an `Ident *` after one is a declarator
 /// rather than a multiply — the disambiguation `is_type_context` cannot make for a typedef name.
 pub(super) fn is_decl_specifier(text: &str) -> bool {
     is_type_context(text)
+        || is_tag_keyword(text)
         || matches!(
             text,
             "static"
@@ -90,9 +93,9 @@ pub(super) fn is_decl_specifier(text: &str) -> bool {
                 | "thread_local"
                 | "_Thread_local"
                 | "constexpr"
-                | "struct"
-                | "union"
-                | "enum"
+                | "_Noreturn"
+                | "_Alignas"
+                | "alignas"
         )
 }
 
