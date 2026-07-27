@@ -4,7 +4,7 @@
 //! the layout measures final widths (otherwise a later space could widen a line and flip a
 //! fits/explode decision on the next pass, breaking idempotency).
 
-use super::tokens::{is_callee_ident, is_trivia, is_type_context};
+use super::tokens::{heads_body, is_callee_ident, is_trivia, is_type_context};
 use crate::lexer::{Token, TokenKind, tokenize};
 
 /// A significant token paired with the whitespace that preceded it.
@@ -168,17 +168,20 @@ fn space_casts(pieces: &mut [Piece]) {
 }
 
 /// K&R brace attach: `) {` keeps one space (§2.5) for function and control bodies, but the tight
-/// `({` statement-expression and `(type){...}` compound literal are left alone. The matching `(`
-/// follows an identifier for the former and an operator/`&`/`=` for the latter, which decides it.
+/// `({` statement-expression and `(type){...}` compound literal are left alone (§8.4). What precedes
+/// the matching `(` decides it: a callee name or a control keyword opens a body, while `&`, `=`,
+/// `return` and every other operator or statement keyword introduce a value.
 fn space_braces(pieces: &mut [Piece]) {
     for j in 1..pieces.len() {
         if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
             let function_or_control = piece_open_paren(pieces, j - 1)
                 .and_then(|open| open.checked_sub(1))
-                .is_some_and(|before| pieces[before].1.kind == TokenKind::Ident);
-            if function_or_control {
-                pieces[j].0 = " ".to_owned();
-            }
+                .is_some_and(|before| heads_body(&pieces[before].1));
+            pieces[j].0 = if function_or_control {
+                " ".to_owned()
+            } else {
+                String::new()
+            };
         }
     }
 }

@@ -11,6 +11,13 @@ pub(super) fn is_callee_ident(t: &Token) -> bool {
     t.kind == TokenKind::Ident && !is_excluded_callee(t.text) && !is_type_context(t.text)
 }
 
+/// A token before a `(` whose `)` may be followed by a body brace: a function's own name, or a
+/// control keyword. `return` and the other statement keywords introduce a value instead, so a `{`
+/// after them opens a compound literal (§8.4), not a block.
+pub(super) fn heads_body(t: &Token) -> bool {
+    is_callee_ident(t) || matches!(t.text, "if" | "for" | "while" | "switch")
+}
+
 /// A callee identifier ([`is_callee_ident`]) immediately followed by `(` (no intervening
 /// whitespace) — a call or the structurally identical declaration parameter list.
 pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
@@ -102,6 +109,27 @@ pub(super) fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
 /// The next non-trivia token index at or after `from`.
 pub(super) fn next_nontrivia(toks: &[Token], from: usize) -> Option<usize> {
     next_nontrivia_in(toks, from, toks.len())
+}
+
+/// The last non-trivia token index before `before`.
+pub(super) fn prev_nontrivia(toks: &[Token], before: usize) -> Option<usize> {
+    (0..before).rev().find(|&j| !is_trivia(&toks[j]))
+}
+
+/// Index of the `(` matching the `)` at `close`, or `None` if unbalanced.
+pub(super) fn match_open_paren(toks: &[Token], close: usize) -> Option<usize> {
+    if toks.get(close).map(|t| t.text) != Some(")") {
+        return None;
+    }
+    let mut depth = 0usize;
+    (0..=close).rev().find(|&j| {
+        match toks[j].text {
+            ")" => depth += 1,
+            "(" => depth -= 1,
+            _ => {}
+        }
+        depth == 0 && toks[j].text == "("
+    })
 }
 
 /// The next non-trivia token index in `[from, end)`.

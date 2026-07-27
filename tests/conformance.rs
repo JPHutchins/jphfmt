@@ -233,6 +233,25 @@ fn brace_attaches_for_functions_and_control() {
 }
 
 #[test]
+fn compound_literal_padding_is_canonical() {
+    // One construct, one rendering: the brace interior is emitted tight whatever the input had,
+    // so a file cannot drift into a mix of `{ .x = 1 }` and `{.x = 1}` and stay that way.
+    for src in [
+        "return (struct s){ .x = 1 };\n",
+        "return (struct s) { .x = 1 };\n",
+        "return (struct s){.x = 1};\n",
+    ] {
+        assert_eq!(format(src), "return (struct s){.x = 1};\n", "input {src:?}");
+    }
+    // `return` heads a value, not a body, so the `){` stays tight like every other compound
+    // literal (§8.4) — it is not a K&R brace attach.
+    assert_eq!(
+        format("int y = f((struct s) { .x = 1 });\n"),
+        "int y = f((struct s){.x = 1});\n"
+    );
+}
+
+#[test]
 fn compound_literal_brace_stays_tight() {
     // §8.4: `&(struct shape){…}` has no space before `{` (it is not a function/control body)
     assert_eq!(

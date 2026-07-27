@@ -11,8 +11,9 @@ use super::builders::{
 };
 use super::tokens::{
     contains_comment, directive_end, enum_body_brace, has_middle_newline, has_non_trivia,
-    has_top_level_question, is_balanced, is_call_head, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, split_top_level,
+    has_top_level_question, heads_body, is_balanced, is_call_head, is_excluded_callee, is_trivia,
+    match_brace, match_bracket, match_open_paren, next_nontrivia, next_nontrivia_in, next_paren,
+    prev_nontrivia, split_top_level,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -159,6 +160,21 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && t.kind == TokenKind::Punct
             && t.text == "{"
             && last_nonspace_char(&out) != Some('(')
+            && match_brace(toks, i).is_some()
+        {
+            i = emit_brace(toks, i, false, &mut out, &mut col, width);
+            continue;
+        }
+
+        // A compound literal `(T){...}` outside an `= ... ;` region — `return (T){...}`, a call
+        // argument, a bare statement. Its `)` closes neither a parameter list nor a control header,
+        // which is what tells it from a body brace.
+        if t.kind == TokenKind::Punct
+            && t.text == "{"
+            && let Some(paren) = prev_nontrivia(toks, i)
+            && toks[paren].text == ")"
+            && let Some(open) = match_open_paren(toks, paren)
+            && prev_nontrivia(toks, open).is_none_or(|before| !heads_body(&toks[before]))
             && match_brace(toks, i).is_some()
         {
             i = emit_brace(toks, i, false, &mut out, &mut col, width);
