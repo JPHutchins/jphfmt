@@ -634,6 +634,23 @@ fn constructs_inside_a_function_body_are_structured() {
 }
 
 #[test]
+fn a_literal_inside_a_body_canonicalizes_too() {
+    // #16's own repro wraps its compound literal in a one-line function, so it needed the body to be
+    // walked at all — the padding rule and this one only meet here.
+    for src in [
+        "int f(void) { return (struct s){ .x = 1 }; }\n",
+        "int f(void) { return (struct s) { .x = 1 }; }\n",
+        "int f(void) { return (struct s){.x = 1}; }\n",
+    ] {
+        assert_eq!(
+            format(src),
+            "int f(void) {\n\treturn (struct s){.x = 1};\n}\n",
+            "input {src:?}"
+        );
+    }
+}
+
+#[test]
 fn a_comment_on_the_brace_line_stays_there() {
     // §2.1: comments are never moved, so the forced break after `{` goes after the comment.
     let src = "int f(int n) { /* VLA-syntax parameter */\n\treturn n;\n}\n";
