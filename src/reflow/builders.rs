@@ -5,7 +5,7 @@
 
 use super::tokens::{
     has_non_trivia, is_balanced, is_callee_ident, is_trivia, match_brace, match_bracket,
-    split_on_commas, split_top_level, top_level_logical_op,
+    split_chain, split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -107,6 +107,11 @@ fn call_head_before(toks: &[Token], open: usize) -> bool {
 /// Build one element/argument: collapsed text, with any nested `{...}` or nested call `f(...)`
 /// rendered as its own group so it collapses or explodes independently of its parent.
 pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
+    if is_balanced(toks)
+        && let Some((segments, ops)) = split_chain(toks)
+    {
+        return build_chain_doc(&segments, &chain_seps(&ops));
+    }
     let mut parts: Vec<Doc> = Vec::new();
     let mut text = String::new();
     let mut pending_space = false;
@@ -145,6 +150,23 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             }
             parts.push(build_call_doc(&toks[j + 1..close]));
             j = close + 1;
+        } else if t.kind == TokenKind::Punct
+            && t.text == "("
+            && let Some(close) = match_bracket(toks, j)
+            && let Some((segments, ops)) = split_chain(&toks[j + 1..close])
+        {
+            if pending_space && !text.is_empty() {
+                text.push(' ');
+            }
+            pending_space = false;
+            if !text.is_empty() {
+                parts.push(Doc::Text(std::mem::take(&mut text)));
+            }
+            parts.push(build_clause_group(
+                segments.iter().map(|s| build_expr_doc(s)).collect(),
+                &chain_seps(&ops),
+            ));
+            j = close + 1;
         } else {
             if pending_space {
                 text.push(' ');
@@ -164,27 +186,49 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     }
 }
 
-/// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with `sep`
-/// trailing each element but the last (`;` for a `for` header, ` &&`/` ||` for a condition).
-fn build_clause_group(segments: Vec<Doc>, sep: &str) -> Doc {
-    if segments.is_empty() {
-        return Doc::text("()");
-    }
-    let last = segments.len() - 1;
-    let mut items = vec![Doc::SoftLine];
+/// `segments` with `seps[i]` trailing segment `i`: flat `a sep b`, or one element per line with the
+/// separator ending each (§2.4, §2.7).
+fn trailing_items(segments: Vec<Doc>, seps: &[String]) -> Vec<Doc> {
+    let mut items = Vec::new();
     for (idx, seg) in segments.into_iter().enumerate() {
         items.push(seg);
-        if idx < last {
-            items.push(Doc::text(sep.to_owned()));
+        if let Some(sep) = seps.get(idx) {
+            items.push(Doc::text(sep.clone()));
             items.push(Doc::Line);
         }
     }
+    items
+}
+
+/// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with each `seps[i]`
+/// trailing its element (`;` for a `for` header, ` &&` for a condition, ` |` for a bit chain).
+fn build_clause_group(segments: Vec<Doc>, seps: &[String]) -> Doc {
+    if segments.is_empty() {
+        return Doc::text("()");
+    }
+    let mut items = vec![Doc::SoftLine];
+    items.extend(trailing_items(segments, seps));
     Doc::group(Doc::concat([
         Doc::text("("),
         Doc::nest(Doc::concat(items)),
         Doc::SoftLine,
         Doc::text(")"),
     ]))
+}
+
+/// An operator chain outside parentheses: flat, or one operand per line with the operator trailing
+/// and continuations indented one level. jphfmt never adds the parentheses a full container would
+/// need (§8.2), so the chain hangs from its first line instead of getting a `(`/`)` of its own.
+fn build_chain_doc(segments: &[&[Token]], seps: &[String]) -> Doc {
+    Doc::group(Doc::nest(Doc::concat(trailing_items(
+        segments.iter().map(|s| build_expr_doc(s)).collect(),
+        seps,
+    ))))
+}
+
+/// The trailing separators for an operator chain: ` |`, ` &&`, and so on.
+fn chain_seps(ops: &[&str]) -> Vec<String> {
+    ops.iter().map(|op| format!(" {op}")).collect()
 }
 
 /// Split `inner` on the depth-zero separators `is_sep` selects, build each segment as its own
@@ -194,11 +238,9 @@ fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str)
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    let segments = split_top_level(inner, is_sep)
-        .iter()
-        .map(|s| build_expr_doc(s))
-        .collect();
-    build_clause_group(segments, sep)
+    let segments: Vec<&[Token]> = split_top_level(inner, is_sep);
+    let seps = vec![sep.to_owned(); segments.len().saturating_sub(1)];
+    build_clause_group(segments.iter().map(|s| build_expr_doc(s)).collect(), &seps)
 }
 
 /// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
@@ -227,6 +269,18 @@ fn render_segment(toks: &[Token]) -> String {
     s
 }
 
+/// A parenthesized operator chain: the author's own parentheses make it a container, so it breaks
+/// one operand per line with the operator trailing and the `)` back at the parent's indentation.
+pub(super) fn build_paren_chain_doc(inner: &[Token]) -> Doc {
+    match split_chain(inner) {
+        Some((segments, ops)) => build_clause_group(
+            segments.iter().map(|s| build_expr_doc(s)).collect(),
+            &chain_seps(&ops),
+        ),
+        None => Doc::Text(format!("({})", render_segment(inner))),
+    }
+}
+
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
 pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     build_clause_doc(inner, |t| t.kind == TokenKind::Punct && t.text == ";", ";")
@@ -235,11 +289,13 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
 /// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
 /// trailing (§2.7); a condition with no such operator explodes as a single indented element.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
-    match top_level_logical_op(inner) {
-        Some(op) => build_clause_doc(
-            inner,
-            |t| t.kind == TokenKind::Operator && t.text == op,
-            &format!(" {op}"),
+    if !is_balanced(inner) {
+        return Doc::Text(format!("({})", render_segment(inner)));
+    }
+    match split_chain(inner) {
+        Some((segments, ops)) => build_clause_group(
+            segments.iter().map(|s| build_expr_doc(s)).collect(),
+            &chain_seps(&ops),
         ),
         None => build_clause_doc(inner, |_| false, ""),
     }

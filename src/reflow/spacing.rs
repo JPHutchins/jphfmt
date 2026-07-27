@@ -253,7 +253,8 @@ fn ternary_open_before(pieces: &[Piece], j: usize) -> bool {
 }
 
 /// Normalize spacing around a single `=` (assignment, not `==`/`!=`/`<=`/`>=`/`+=` etc. which have
-/// different text): exactly one space before and after, same-line only. No-op on canonical input.
+/// different text): exactly one space before and after, same-line only. Never before a `;`, which
+/// would put the space `space_semicolons` exists to remove. No-op on canonical input.
 fn space_equals(pieces: &mut [Piece]) {
     for j in 0..pieces.len() {
         if pieces[j].1.kind == TokenKind::Punct && pieces[j].1.text == "=" {
@@ -262,6 +263,7 @@ fn space_equals(pieces: &mut [Piece]) {
             }
             if let Some(after) = pieces.get_mut(j + 1)
                 && same_line(&after.0)
+                && after.1.text != ";"
             {
                 after.0 = " ".to_owned();
             }

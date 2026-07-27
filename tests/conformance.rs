@@ -469,6 +469,50 @@ fn statement_expression_in_code_block_indents() {
 }
 
 #[test]
+fn long_binary_chain_explodes_with_trailing_operators() {
+    // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line
+    // with the operator trailing rather than overrunning the width.
+    let bare = "int x = AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE;\n";
+    let hanging = "int x = AAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDDDD |\n\tEEEEEEEEEEEEEEEE;\n";
+    assert_eq!(format(bare), hanging);
+    assert_eq!(format(hanging), hanging);
+
+    // With the author's own parentheses it is a full container, `)` back at the parent's indent.
+    let parens = "int x = (AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE);\n";
+    let broken = "int x = (\n\tAAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDDDD |\n\tEEEEEEEEEEEEEEEE\n);\n";
+    assert_eq!(format(parens), broken);
+    assert_eq!(format(broken), broken);
+}
+
+#[test]
+fn a_chain_that_fits_stays_flat() {
+    for src in [
+        "int x = A | B | C;\n",
+        "int x = (A | B | C);\n",
+        "flags = a & b;\n",
+        "total = first + second - third;\n",
+    ] {
+        assert_eq!(format(src), src, "must stay flat: {src:?}");
+    }
+}
+
+#[test]
+fn a_chain_splits_on_its_loosest_operator() {
+    let src = "int x = aaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccccc * dddddddddddddddddddddddd;\n";
+    let expected = "int x = aaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb +\n\tcccccccccccccccccccccccc * dddddddddddddddddddddddd;\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn a_declaration_is_never_a_chain() {
+    // §6: `*` is not a chain operator, so a long declarator is left alone rather than broken
+    // between its type and its name.
+    let src =
+        "static struct a_rather_long_type_name_here * const the_pointer_variable_name = nullptr;\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
 fn short_parenthesized_ternary_stays_flat() {
     assert_eq!(format("x = (b != 0 ? b : 1);\n"), "x = (b != 0 ? b : 1);\n");
 }

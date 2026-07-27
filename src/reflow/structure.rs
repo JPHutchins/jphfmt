@@ -7,13 +7,13 @@
 
 use super::builders::{
     build_brace_doc, build_call_doc, build_cond_doc, build_expr_doc, build_for_doc,
-    build_ternary_doc,
+    build_paren_chain_doc, build_ternary_doc,
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
     has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_excluded_callee,
     is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
-    prev_nontrivia, split_top_level,
+    prev_nontrivia, split_chain, split_top_level, statement_end,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -180,6 +180,48 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && match_brace(toks, i).is_some()
         {
             i = emit_brace(toks, i, false, &mut out, &mut col, width);
+            continue;
+        }
+
+        // A parenthesized operator chain — a breakable container like any other bracket group, with
+        // the operator trailing each line (§2.7).
+        if t.kind == TokenKind::Punct
+            && t.text == "("
+            && let Some(close) = match_bracket(toks, i)
+            && !contains_comment(&toks[i + 1..close])
+            && is_balanced(&toks[i + 1..close])
+            && split_chain(&toks[i + 1..close]).is_some()
+            && !(i > 0
+                && toks[i - 1].kind == TokenKind::Ident
+                && !is_excluded_callee(toks[i - 1].text))
+        {
+            let doc = build_paren_chain_doc(&toks[i + 1..close]);
+            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let reserved = trailing_reserved(toks, close + 1);
+            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
+            emit_str(&mut out, &mut col, &rendered);
+            i = close + 1;
+            continue;
+        }
+
+        // A statement whose own top level is an operator chain. Nothing else lays a bare statement
+        // out, so without this the one construct that cannot be a container is also the one that
+        // can overrun the width.
+        if !is_trivia(&t)
+            && matches!(last_nonspace_char(&out), None | Some(';' | '{' | '}'))
+            && let Some(semi) = statement_end(toks, i)
+            && !contains_comment(&toks[i..semi])
+            && is_balanced(&toks[i..semi])
+            && !toks[i..semi].iter().any(|s| s.text == "{")
+            && split_chain(&toks[i..semi]).is_some()
+        {
+            let doc = build_expr_doc(&toks[i..semi]);
+            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the
+            // line after it, which this pass's own whitespace changes shift — an unstable measure.
+            let rendered = render(&doc, width.saturating_sub(1), col, base_level);
+            emit_str(&mut out, &mut col, &rendered);
+            i = semi;
             continue;
         }
 
@@ -490,27 +532,29 @@ fn last_nonspace_char(out: &str) -> Option<char> {
 /// `f(x)->g(...)` reserves only `->g(`, not `g`'s arguments), which keeps formatting idempotent.
 /// Comments are ignored so a trailing comment never forces a break.
 fn trailing_reserved(toks: &[Token], from: usize) -> usize {
-    let mut w = 0;
+    let mut text = String::new();
     for t in toks.iter().skip(from) {
         match t.kind {
             TokenKind::Newline => break,
             TokenKind::LineComment | TokenKind::BlockComment => {}
             TokenKind::Punct if matches!(t.text, "(" | "[" | "{") => {
-                w += col_width(t.text);
+                text.push_str(t.text);
                 break;
             }
             _ => {
                 // Stop at the first newline embedded in any token (not just Newline tokens),
                 // so Unknown tokens containing multiple lines don't inflate the reserve.
                 if let Some(nl) = t.text.find('\n') {
-                    w += col_width(&t.text[..nl]);
+                    text.push_str(&t.text[..nl]);
                     break;
                 }
-                w += col_width(t.text);
+                text.push_str(t.text);
             }
         }
     }
-    w
+    // Whitespace ending the line never reaches the output, so reserving for it would measure a line
+    // this pass is about to shorten — and reach a different verdict than the next pass does.
+    col_width(text.trim_end())
 }
 
 /// Column width of raw token text, counting a tab as [`TAB_WIDTH`] (unlike [`display_width`], which
