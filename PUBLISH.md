@@ -18,16 +18,23 @@ Set these in repo Settings → Secrets and variables → Actions:
 | `VSCE_PAT` | VS Code Marketplace personal access token |
 | `DEEPSEEK_API_KEY` | DeepSeek API key (`sk-...`) |
 
-## First Release
+## Releasing
+
+`Cargo.toml` holds the version; `Cargo.lock`, `editors/vscode/package.json` and its lock follow it.
+camas owns the three steps:
 
 ```sh
-# Bump version in Cargo.toml and editors/vscode/package.json
-# Commit, then tag:
-git tag v0.1.0
-git push origin v0.1.0
+camas version_sync -- 0.1.6   # rewrite the version across all four files
+git commit -am "release 0.1.6"
+camas release                 # re-check, then tag v0.1.6 and push it
 ```
 
-CI will:
+`camas version_check` runs as part of `check`, `all` and CI, so a file left behind fails the build
+rather than surfacing as a wrong `--version` after someone installs from `main`. `camas release`
+refuses a dirty tree, an existing tag, or a branch other than `main` — the default branch must carry
+what was published, or `cargo install --git` reports a version that was never released.
+
+Pushing the tag is what publishes. CI will:
 1. Build and test on push (the `v*` tag triggers release jobs)
 2. Build binaries for linux/macos/windows
 3. Upload binaries and `.vsix` to the GitHub Release

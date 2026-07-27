@@ -79,6 +79,27 @@ ts_typecheck = Task("npm run typecheck", cwd=VSCODE, when=VSCODE_DIR)
 ts_build = Task("npm run build", cwd=VSCODE, when=VSCODE_DIR)
 knip = Task("npx --yes knip", cwd=VSCODE, when=VSCODE_DIR)
 
+# ---- Release: one version across four files, and the tag that ships it ----
+# `release` is manual and outward-facing, so it stays out of `check`, `ci` and `all`; `version_check`
+# joins them, because the drift it catches is invisible until someone installs from the wrong place.
+RELEASE_FILES = (
+	"Cargo.toml",
+	"Cargo.lock",
+	f"{VSCODE_DIR}/package.json",
+	f"{VSCODE_DIR}/package-lock.json",
+	"release.py",
+)
+
+
+def release_files(changed: tuple[str, ...]) -> bool:
+	return any(c in RELEASE_FILES for c in changed)
+
+
+version_check = Task("uv run release.py check", when=release_files)
+version_sync = Task("uv run release.py sync", mutates=True, help="uv run release.py sync X.Y.Z")
+release = Sequential(version_check, Task("uv run release.py send"))
+py_types = Task("uvx ty check release.py", when=release_files)
+
 # ---- Cross-cutting checkers ----
 # typos runs reproducibly via uvx (no install) and covers the whole tree.
 typos = Task("uvx typos")
@@ -93,12 +114,12 @@ rust_check = Parallel(rust_fmt_check, clippy, test, doc, name="rust_check")
 ts_check = Parallel(ts_fmt_check, eslint, ts_typecheck, ts_build, knip, name="ts_check")
 
 # Every read-only validation, maximally parallel across both ecosystems and the cross-cutting checkers.
-check = Parallel(rust_check, ts_check, nix_fmt_check, typos)
+check = Parallel(rust_check, ts_check, nix_fmt_check, typos, version_check, py_types)
 
 # The agent gate's tight inner loop: raw-cargo Rust checks (warm target/, no MSRV) in place of the
 # crane apps; the TS and cross-cutting leaves are already raw and stay as-is.
 rust_check_fast = Parallel(rust_fmt_check_fast, clippy_fast, test_fast, doc_fast, name="rust_check_fast")
-check_fast = Parallel(rust_check_fast, ts_check, nix_fmt_check, typos)
+check_fast = Parallel(rust_check_fast, ts_check, nix_fmt_check, typos, version_check, py_types)
 
 # Every deterministic fixer, grouped per ecosystem. The Rust side is the flake's `.#fix` app (cargo
 # fmt then clippy --fix); TypeScript lint-fixes then formats so prettier has the last word.
@@ -114,7 +135,7 @@ ts = Sequential(ts_fix, ts_check)
 
 # Everyday default: fix in place, then validate — the two ecosystem pipelines and the cross-cutting
 # checkers (which wait on no fixer) all run in parallel, so neither ecosystem ever blocks the other.
-all = Parallel(rust, ts, nix_fmt_check, typos)
+all = Parallel(rust, ts, nix_fmt_check, typos, version_check, py_types)
 ci = Parallel(check, audit, name="validate")
 
 _ = Config(default_task=all, github_task=ci, agent=Claude(fix=fix_fast, check=check_fast))
