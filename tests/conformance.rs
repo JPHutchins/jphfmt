@@ -525,6 +525,9 @@ fn preprocessor_scope_is_idempotent() {
     assert_eq!(format(&once), once, "scope pass must be idempotent");
 }
 
+// A `#define` has no fixture shape: `tests/cases` mutates trivia, and any newline inserted into a
+// directive ends it — leaving a malformed macro whose trailing code lands on a fits boundary that
+// merged `main` is already unstable on. These conformance cases pin the behavior instead.
 #[test]
 fn define_params_explode_when_the_line_overruns() {
     // §2.2: a macro's parameter list is a container like a call's, so it breaks one per line and
