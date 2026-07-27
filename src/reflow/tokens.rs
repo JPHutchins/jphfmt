@@ -11,6 +11,33 @@ pub(super) fn is_callee_ident(t: &Token) -> bool {
     t.kind == TokenKind::Ident && !is_excluded_callee(t.text) && !is_type_context(t.text)
 }
 
+/// A control keyword whose `(` heads a clause, not an argument list.
+pub(super) fn is_control_keyword(text: &str) -> bool {
+    matches!(text, "if" | "for" | "while" | "switch")
+}
+
+/// A token before a `(` whose `)` may be followed by a body brace: a function's own name, or a
+/// control keyword. `return` and the other statement keywords introduce a value instead, so a `{`
+/// after them opens a compound literal (§8.4), not a block.
+pub(super) fn heads_body(t: &Token) -> bool {
+    is_callee_ident(t) || is_control_keyword(t.text)
+}
+
+/// Whether `inner` spells a type and nothing else — the parenthesized `(struct s)` of a cast or of a
+/// compound literal. A type keyword or tag must appear, so a grouped expression `(x)`, an attribute's
+/// `(noreturn)`, or a parameter list is never mistaken for one.
+pub(super) fn is_type_group(inner: &[Token]) -> bool {
+    let significant = || inner.iter().filter(|t| !is_trivia(t));
+    significant().any(|t| is_type_context(t.text) || matches!(t.text, "struct" | "union" | "enum"))
+        && significant().all(|t| {
+            // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
+            // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
+            (t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
+                || t.kind == TokenKind::Number
+                || matches!(t.text, "*" | "[" | "]" | "(" | ")")
+        })
+}
+
 /// A callee identifier ([`is_callee_ident`]) immediately followed by `(` (no intervening
 /// whitespace) — a call or the structurally identical declaration parameter list.
 pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
@@ -102,6 +129,47 @@ pub(super) fn next_paren(toks: &[Token], i: usize) -> Option<usize> {
 /// The next non-trivia token index at or after `from`.
 pub(super) fn next_nontrivia(toks: &[Token], from: usize) -> Option<usize> {
     next_nontrivia_in(toks, from, toks.len())
+}
+
+/// The last non-trivia token index before `before`.
+pub(super) fn prev_nontrivia(toks: &[Token], before: usize) -> Option<usize> {
+    (0..before).rev().find(|&j| !is_trivia(&toks[j]))
+}
+
+/// The last token before `before` that carries meaning — trivia and comments skipped, so a commented
+/// `f /* c */ (void)` still reads as the function `f`.
+pub(super) fn prev_significant(toks: &[Token], before: usize) -> Option<usize> {
+    (0..before)
+        .rev()
+        .find(|&j| !is_trivia(&toks[j]) && !contains_comment(&toks[j..=j]))
+}
+
+/// Whether the `)` at `close` closes a compound literal's type — the `(T)` of `(T){…}` — rather than
+/// a parameter list, a `__attribute__` argument, or a declarator suffix, each of which can also put a
+/// `)` before a body's `{`.
+pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
+    match_open_paren(toks, close).is_some_and(|open| {
+        is_type_group(&toks[open + 1..close])
+            && prev_significant(toks, open).is_none_or(|before| {
+                !heads_body(&toks[before]) && !matches!(toks[before].text, ")" | "]")
+            })
+    })
+}
+
+/// Index of the `(` matching the `)` at `close`, or `None` if unbalanced.
+pub(super) fn match_open_paren(toks: &[Token], close: usize) -> Option<usize> {
+    if toks.get(close).map(|t| t.text) != Some(")") {
+        return None;
+    }
+    let mut depth = 0usize;
+    (0..=close).rev().find(|&j| {
+        match toks[j].text {
+            ")" => depth += 1,
+            "(" => depth -= 1,
+            _ => {}
+        }
+        depth == 0 && toks[j].text == "("
+    })
 }
 
 /// The next non-trivia token index in `[from, end)`.

@@ -233,6 +233,52 @@ fn brace_attaches_for_functions_and_control() {
 }
 
 #[test]
+fn compound_literal_padding_is_canonical() {
+    // One construct, one rendering: the brace interior is emitted tight whatever the input had,
+    // so a file cannot drift into a mix of `{ .x = 1 }` and `{.x = 1}` and stay that way.
+    for src in [
+        "return (struct s){ .x = 1 };\n",
+        "return (struct s) { .x = 1 };\n",
+        "return (struct s){.x = 1};\n",
+    ] {
+        assert_eq!(format(src), "return (struct s){.x = 1};\n", "input {src:?}");
+    }
+    // `return` heads a value, not a body, so the `){` stays tight like every other compound
+    // literal (§8.4) — it is not a K&R brace attach.
+    assert_eq!(
+        format("int y = f((struct s) { .x = 1 });\n"),
+        "int y = f((struct s){.x = 1});\n"
+    );
+}
+
+#[test]
+fn a_body_brace_after_an_extra_paren_group_is_not_a_literal() {
+    // A `)` before a body's `{` is not enough: a function-pointer return type, a `__attribute__`,
+    // and a commented callee all put one there, and none of them is a compound literal.
+    for src in [
+        "void (*signal(int sig, void (*handler)(int)))(int) { return handler; }\n",
+        "void f(void) __attribute__((noreturn)) { g(); }\n",
+        "void f /* c */ (void) { g(); }\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+}
+
+#[test]
+fn a_declarator_inside_the_type_is_still_a_literal() {
+    // `(int (*)[10])` spells a type, parentheses and all, so its list canonicalizes like any other.
+    assert_eq!(
+        format("p = (int (*)[10]){ 1, 2, 3 };\n"),
+        "p = (int (*)[10]){1, 2, 3};\n"
+    );
+    // A keyword that takes its own argument list does not make a type group.
+    assert_eq!(
+        format("y = (sizeof(int)) * 2;\n"),
+        "y = (sizeof(int)) * 2;\n"
+    );
+}
+
+#[test]
 fn compound_literal_brace_stays_tight() {
     // §8.4: `&(struct shape){…}` has no space before `{` (it is not a function/control body)
     assert_eq!(

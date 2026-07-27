@@ -4,7 +4,10 @@
 //! (otherwise a later space could widen a line and flip a fits/explode decision on the next pass,
 //! breaking idempotency).
 
-use super::tokens::{is_callee_ident, is_trivia, is_type_context};
+use super::tokens::{
+    closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_trivia,
+    is_type_context, is_type_group,
+};
 use crate::lexer::{Token, TokenKind, tokenize};
 
 /// A significant token paired with the whitespace that preceded it.
@@ -175,22 +178,14 @@ fn space_casts(pieces: &mut [Piece]) {
         let Some(close) = piece_close_paren(pieces, open) else {
             continue;
         };
-        let inner = &pieces[open + 1..close];
-        let type_only = inner.iter().all(|p| {
-            p.1.kind == TokenKind::Ident
-                || matches!(p.1.text, "*" | "[" | "]")
-                || p.1.kind == TokenKind::Number
-        });
-        let has_type = inner
-            .iter()
-            .any(|p| is_type_context(p.1.text) || matches!(p.1.text, "struct" | "union" | "enum"));
+        let inner: Vec<Token> = pieces[open + 1..close].iter().map(|p| p.1).collect();
         let prev_is_value = open > 0
             && (pieces[open - 1].1.kind == TokenKind::Ident
                 || matches!(pieces[open - 1].1.text, ")" | "]"));
         let followed_by_operand = pieces
             .get(close + 1)
             .is_some_and(|after| same_line(&after.0) && value_start(&after.1));
-        if type_only && has_type && !prev_is_value && followed_by_operand {
+        if is_type_group(&inner) && !prev_is_value && followed_by_operand {
             // Tighten the `(`: strip a same-line gap after `(` so `( int)` -> `(int)`. No-op on
             // canonical `(int)`. (Stripping the gap before `)` was tried but broke idempotency on
             // barely-cast proptest input — the cast detector's verdict shifts across passes once
@@ -207,16 +202,20 @@ fn space_casts(pieces: &mut [Piece]) {
 }
 
 /// K&R brace attach: `) {` keeps one space (§2.5) for function and control bodies, but the tight
-/// `({` statement-expression and `(type){...}` compound literal are left alone. The matching `(`
-/// follows an identifier for the former and an operator/`&`/`=` for the latter, which decides it.
+/// `({` statement-expression and `(type){...}` compound literal are left alone (§8.4). What precedes
+/// the matching `(` decides it: a callee name or a control keyword opens a body, while `&`, `=`,
+/// `return` and every other operator or statement keyword introduce a value.
 fn space_braces(pieces: &mut [Piece]) {
+    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
         if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
             let function_or_control = piece_open_paren(pieces, j - 1)
                 .and_then(|open| open.checked_sub(1))
-                .is_some_and(|before| pieces[before].1.kind == TokenKind::Ident);
+                .is_some_and(|before| heads_body(&pieces[before].1));
             if function_or_control {
                 pieces[j].0 = " ".to_owned();
+            } else if closes_literal_type(&toks, j - 1) {
+                pieces[j].0.clear();
             }
         }
     }
@@ -319,9 +318,7 @@ fn space_call_heads(pieces: &mut [Piece]) {
         }
         if is_callee_ident(&pieces[j].1) {
             pieces[j + 1].0.clear();
-        } else if matches!(pieces[j].1.text, "if" | "for" | "while" | "switch")
-            || is_type_context(pieces[j].1.text)
-        {
+        } else if is_control_keyword(pieces[j].1.text) || is_type_context(pieces[j].1.text) {
             pieces[j + 1].0 = " ".to_owned();
         }
     }
