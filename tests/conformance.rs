@@ -252,6 +252,19 @@ fn compound_literal_padding_is_canonical() {
 }
 
 #[test]
+fn a_body_brace_after_an_extra_paren_group_is_not_a_literal() {
+    // A `)` before a body's `{` is not enough: a function-pointer return type, a `__attribute__`,
+    // and a commented callee all put one there, and none of them is a compound literal.
+    for src in [
+        "void (*signal(int sig, void (*handler)(int)))(int) { return handler; }\n",
+        "void f(void) __attribute__((noreturn)) { g(); }\n",
+        "void f /* c */ (void) { g(); }\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+}
+
+#[test]
 fn compound_literal_brace_stays_tight() {
     // §8.4: `&(struct shape){…}` has no space before `{` (it is not a function/control body)
     assert_eq!(

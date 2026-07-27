@@ -10,9 +10,9 @@ use super::builders::{
     build_ternary_doc,
 };
 use super::tokens::{
-    contains_comment, directive_end, enum_body_brace, has_middle_newline, has_non_trivia,
-    has_top_level_question, heads_body, is_balanced, is_call_head, is_excluded_callee, is_trivia,
-    match_brace, match_bracket, match_open_paren, next_nontrivia, next_nontrivia_in, next_paren,
+    closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
+    has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_excluded_callee,
+    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
     prev_nontrivia, split_top_level,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
@@ -167,14 +167,17 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         }
 
         // A compound literal `(T){...}` outside an `= ... ;` region — `return (T){...}`, a call
-        // argument, a bare statement. Its `)` closes neither a parameter list nor a control header,
-        // which is what tells it from a body brace.
+        // argument, a bare statement. The parenthesized group must spell a type, and must not be a
+        // suffix of something larger: a function-pointer return type (`…))(int) {`) and an attribute
+        // (`__attribute__((noreturn)) {`) both put a `)` before the `{` of a body, and mistaking
+        // either for a literal would lay that body out as an initializer list.
         if t.kind == TokenKind::Punct
             && t.text == "{"
+            && !pending_func_def
             && let Some(paren) = prev_nontrivia(toks, i)
             && toks[paren].text == ")"
-            && let Some(open) = match_open_paren(toks, paren)
-            && prev_nontrivia(toks, open).is_none_or(|before| !heads_body(&toks[before]))
+            && closes_literal_type(toks, paren)
+            && !contains_comment(&toks[paren..i])
             && match_brace(toks, i).is_some()
         {
             i = emit_brace(toks, i, false, &mut out, &mut col, width);
