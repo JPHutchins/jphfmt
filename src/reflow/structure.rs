@@ -239,6 +239,12 @@ fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
     let params = def.params.as_deref()?;
     let continued = width.saturating_sub(CONTINUATION_WIDTH);
     let body = format_define_body(&def.body, 0, continued.saturating_sub(TAB_WIDTH))?;
+    // A body of more than one line cannot be indented under the `)`: on the next pass its own line
+    // breaks make it a passthrough, so the tab added here would be part of the text and another
+    // would be added on top of it, once per run.
+    if body.contains('\n') {
+        return None;
+    }
     let params = render(
         &Doc::ForceBreak(Box::new(build_call_body(params))),
         continued,
