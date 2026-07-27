@@ -616,6 +616,36 @@ fn function_params_break_before_inner_call_in_body() {
 }
 
 #[test]
+fn constructs_inside_a_function_body_are_structured() {
+    // §2.2 applies wherever the construct is: a body is walked, not passed through.
+    let long_call = "void f(void) {\n\tresult = some_function_with_a_fairly_long_name(first_argument_value, second_argument_value, third_argument_value);\n}\n";
+    let expected = "void f(void) {\n\tresult = some_function_with_a_fairly_long_name(\n\t\tfirst_argument_value,\n\t\tsecond_argument_value,\n\t\tthird_argument_value\n\t);\n}\n";
+    assert_eq!(format(long_call), expected);
+
+    // A nested block no longer stops the walk, and a leading-operator condition is re-laid out
+    // with the operators trailing (§2.7).
+    let nested = "void f(void) {\n\tif (x) {\n\t\tif (alpha_value > 100\n\t\t\t&& bravo_value > 200\n\t\t\t&& charlie_value > 300\n\t\t\t&& delta_value > 400\n\t\t\t&& echo_value > 500\n\t\t\t&& foxtrot_value > 600) {\n\t\t\tg();\n\t\t}\n\t}\n}\n";
+    let once = format(nested);
+    assert!(
+        once.contains("alpha_value > 100 &&\n"),
+        "condition must re-lay out with trailing operators: {once}"
+    );
+    assert_eq!(format(&once), once);
+}
+
+#[test]
+fn a_comment_on_the_brace_line_stays_there() {
+    // §2.1: comments are never moved, so the forced break after `{` goes after the comment.
+    let src = "int f(int n) { /* VLA-syntax parameter */\n\treturn n;\n}\n";
+    assert_eq!(format(src), src);
+    assert_eq!(
+        format("void f(void) { /* nothing */ }\n"),
+        "void f(void) { /* nothing */ }\n"
+    );
+    assert_eq!(format("void f(void) {\n\n}\n"), "void f(void) {}\n");
+}
+
+#[test]
 fn preprocessor_scope_indents_between_hash_and_keyword() {
     let src = "#if a\n#define thing\n#else\n#if b\n#define thing\n#if c\n#define thing\n#endif\n#endif\n#endif\n";
     let expected = "#if a\n#\tdefine thing\n#else\n#\tif b\n#\t\tdefine thing\n#\t\tif c\n#\t\t\tdefine thing\n#\t\tendif\n#\tendif\n#endif\n";
