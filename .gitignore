@@ -2,7 +2,9 @@
 /.camas
 /result
 /result-*
+.claude/settings.json
 .claude/settings.local.json
+.mcp.json
 editors/vscode/node_modules
 editors/vscode/out
 editors/vscode/*.vsix

@@ -192,7 +192,7 @@ fn curated_inputs_match_expected() {
                 format(src),
                 case.expected,
                 "shape `{shape}` input `{name}` did not format to expected",
-                shape = &case.shape,
+                shape = case.shape,
             );
         }
     }
@@ -209,20 +209,20 @@ fn whitespace_mutants_are_idempotent_and_significant() {
                     .unwrap_or_else(|_| {
                         panic!(
                             "formatter panicked: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
-                            shape = &case.shape,
+                            shape = case.shape,
                         )
                     });
                 assert_eq!(
                     format(&once),
                     once,
                     "idempotency broke: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
-                    shape = &case.shape,
+                    shape = case.shape,
                 );
                 assert_eq!(
                     significant(&once),
                     significant(&mutant),
                     "significance broke: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
-                    shape = &case.shape,
+                    shape = case.shape,
                 );
             }
         }
@@ -243,14 +243,14 @@ fn spacing_mutants_match_expected() {
                     .unwrap_or_else(|_| {
                         panic!(
                             "formatter panicked: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
-                            shape = &case.shape,
+                            shape = case.shape,
                         )
                     });
                 assert_eq!(
                     once,
                     case.expected,
                     "tier 3 exact-equality broke: shape `{shape}` input `{name}` mutant #{k}\n--- mutant ---\n{mutant}",
-                    shape = &case.shape,
+                    shape = case.shape,
                 );
             }
         }
