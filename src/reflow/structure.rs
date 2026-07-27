@@ -13,7 +13,7 @@ use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
     has_non_trivia, has_top_level_question, is_backslash, is_balanced, is_call_head, is_comment,
     is_excluded_callee, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
-    next_paren, prev_nontrivia, split_top_level,
+    next_paren, prev_nontrivia, split_brace_line_comment, split_top_level,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -378,10 +378,9 @@ fn format_stmt_expr(
     let paren_close = match_bracket(toks, open)?;
     let brace_close = match_brace(toks, open + 1)?;
     let inner = &toks[open + 2..brace_close];
-    let unformattable = inner.iter().any(|t| {
-        (t.kind == TokenKind::Punct && t.text == "{")
-            || matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
-    });
+    let unformattable = inner
+        .iter()
+        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
     if unformattable || !is_balanced(inner) {
         return None;
     }
@@ -433,10 +432,9 @@ fn emit_brace(
         return open + 1;
     };
     let inner = &toks[open + 1..close];
-    let has_comment_or_directive = inner.iter().any(|t| {
-        matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
-            || (t.kind == TokenKind::Punct && t.text == "#")
-    });
+    let has_comment_or_directive = inner
+        .iter()
+        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "#"));
     if has_comment_or_directive || !is_balanced(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
@@ -451,9 +449,10 @@ fn emit_brace(
     close + 1
 }
 
-/// Format a function definition body: always break with `{\n\tstatements\n}`. Preserves blank
-/// lines within the body (they survive `retab` normalization). Falls back to verbatim for bodies
-/// with comments, directives, or nested braces (same M7/M8 policy as [`emit_brace`]).
+/// Format a function definition body: always break with `{\n\tstatements\n}`, the statements walked
+/// by [`emit_tokens`] so every construct inside is laid out. Blank lines within the body survive.
+/// Falls back to verbatim only for unbalanced braces — a comment, a directive or a nested block is
+/// handled rather than refused, which is where this differs from [`emit_brace`].
 fn emit_func_body(
     toks: &[Token],
     open: usize,
@@ -489,7 +488,7 @@ fn emit_func_body(
     if body.is_empty() {
         // Nothing to lay out. A comment-only body keeps its own spacing rather than have its `}`
         // moved for no gain; an empty one collapses to `{}`.
-        if contains_comment(inner) {
+        if !head.is_empty() {
             for tok in &inner[head.len()..] {
                 emit_str(out, col, tok.text);
             }
@@ -503,44 +502,14 @@ fn emit_func_body(
         emit_str(out, col, &inner_indent);
     }
     emit_tokens(body, out, col, width);
-    emit_str(out, col, "\n");
+    // A directive carries its own line break, so the one before `}` is already there.
+    if !out.ends_with('\n') {
+        emit_str(out, col, "\n");
+    }
     emit_str(out, col, &close_indent);
     emit_str(out, col, "}");
 
     close + 1
-}
-
-/// Split a body into the comment run sharing the `{`'s line — sacred, so it stays there (§2.1) — and
-/// the statements after it, trimmed of trivia.
-fn split_brace_line_comment<'a, 'src>(
-    inner: &'a [Token<'src>],
-) -> (&'a [Token<'src>], &'a [Token<'src>]) {
-    let line_end = inner
-        .iter()
-        .position(|t| t.kind == TokenKind::Newline)
-        .unwrap_or(inner.len());
-    let head_len = if contains_comment(&inner[..line_end])
-        && inner[..line_end]
-            .iter()
-            .all(|t| is_trivia(t) || is_comment(t))
-    {
-        line_end
-    } else {
-        0
-    };
-    let rest = &inner[head_len..];
-    let start = rest
-        .iter()
-        .position(|t| !is_trivia(t))
-        .unwrap_or(rest.len());
-    let end = rest
-        .iter()
-        .rposition(|t| !is_trivia(t))
-        .map_or(0, |p| p + 1);
-    (
-        &inner[..head_len],
-        if start < end { &rest[start..end] } else { &[] },
-    )
 }
 
 /// Append `s` to `out`, tracking the display column (tabs count as [`TAB_WIDTH`]).

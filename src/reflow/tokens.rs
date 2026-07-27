@@ -374,6 +374,39 @@ pub(super) fn has_middle_newline(inner: &[Token]) -> bool {
     false
 }
 
+/// Split a body into the comment run sharing the `{`'s line — sacred, so it stays there (§2.1) — and
+/// the statements after it, trimmed of trivia.
+pub(super) fn split_brace_line_comment<'a, 'src>(
+    inner: &'a [Token<'src>],
+) -> (&'a [Token<'src>], &'a [Token<'src>]) {
+    let line_end = inner
+        .iter()
+        .position(|t| t.kind == TokenKind::Newline)
+        .unwrap_or(inner.len());
+    let head_len = if contains_comment(&inner[..line_end])
+        && inner[..line_end]
+            .iter()
+            .all(|t| is_trivia(t) || is_comment(t))
+    {
+        line_end
+    } else {
+        0
+    };
+    let rest = &inner[head_len..];
+    let start = rest
+        .iter()
+        .position(|t| !is_trivia(t))
+        .unwrap_or(rest.len());
+    let end = rest
+        .iter()
+        .rposition(|t| !is_trivia(t))
+        .map_or(0, |p| p + 1);
+    (
+        &inner[..head_len],
+        if start < end { &rest[start..end] } else { &[] },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

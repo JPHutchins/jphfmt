@@ -651,6 +651,13 @@ fn a_literal_inside_a_body_canonicalizes_too() {
 }
 
 #[test]
+fn a_directive_last_in_a_body_leaves_no_blank_line() {
+    // A directive brings its own line break; the one before `}` must not be added on top of it.
+    let src = "void f(void) {\n\tg();\n#define M(a) call(a)\n}\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
 fn a_comment_on_the_brace_line_stays_there() {
     // §2.1: comments are never moved, so the forced break after `{` goes after the comment.
     let src = "int f(int n) { /* VLA-syntax parameter */\n\treturn n;\n}\n";
