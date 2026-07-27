@@ -96,8 +96,13 @@ def release_files(changed: tuple[str, ...]) -> bool:
 
 
 version_check = Task("uv run release.py check", when=release_files)
-version_sync = Task("uv run release.py sync", mutates=True, help="uv run release.py sync X.Y.Z")
-release = Sequential(version_check, Task("uv run release.py send"))
+# One command does the whole release — check, rewrite the four files, commit, tag, push main and the
+# tag. `--VERSION` takes major/minor/patch or an explicit X.Y.Z; bare `camas release` bumps the patch.
+release = Sequential(
+	Task("uv run release.py ship {VERSION}", mutates=True),
+	matrix={"VERSION": ("patch",)},
+	help="camas release [--VERSION=major|minor|patch|X.Y.Z]",
+)
 py_types = Task("uvx ty check release.py", when=release_files)
 
 # ---- Cross-cutting checkers ----

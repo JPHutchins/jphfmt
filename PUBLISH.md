@@ -21,21 +21,25 @@ Set these in repo Settings → Secrets and variables → Actions:
 ## Releasing
 
 `Cargo.toml` holds the version; `Cargo.lock`, `editors/vscode/package.json` and its lock follow it.
-camas owns the three steps:
+One command does the whole release:
 
 ```sh
-camas version_sync -- 0.1.6   # rewrite the version across all four files
-git commit -am "release 0.1.6"
-camas release                 # re-check, then push main and the tag v0.1.6
+camas release                      # bump the patch, ship it
+camas release --VERSION=minor      # or major, or an explicit X.Y.Z
 ```
 
-`camas version_check` runs as part of `check`, `all` and CI, so a file left behind fails the build
-rather than surfacing as a wrong `--version` after someone installs from `main`. `camas release`
-refuses a dirty tree, an existing tag, or a branch other than `main`, and pushes `main` before the
-tag — the default branch must carry what was published, or `cargo install --git` reports a version
-that was never released.
+It checks the metadata, rewrites all four files, commits `release X.Y.Z`, tags `vX.Y.Z`, and pushes
+`main` and the tag — the tag push is what starts CI's publish jobs.
 
-Pushing the tag is what publishes. CI will:
+Nothing is written until it is safe to release: it refuses unless you are on `main`, the tree is clean,
+`main` is level with `origin/main`, the tag does not exist, and the new version follows the current one.
+`main` is pushed before the tag, because the default branch has to carry what was published or
+`cargo install --git` reports a version that was never released.
+
+`camas version_check` runs as part of `check`, `all` and CI, so a file left behind fails the build
+rather than surfacing as a wrong `--version` after someone installs from `main`.
+
+From the tag, CI will:
 1. Build and test on push (the `v*` tag triggers release jobs)
 2. Build binaries for linux/macos/windows
 3. Upload binaries and `.vsix` to the GitHub Release

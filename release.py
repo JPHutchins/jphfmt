@@ -3,10 +3,11 @@
 # ///
 """Release metadata: one version, four files, and the tag that ships it.
 
-``Cargo.toml`` holds the version; ``check`` fails when any other file disagrees,
-``sync X.Y.Z`` rewrites them all, and ``send`` pushes ``main`` and the tag, which
-is what starts CI's publish jobs. Run through ``camas`` (``version_check``,
-``version_sync``, ``release``), never by hand.
+``Cargo.toml`` holds the version. ``check`` fails when any other file disagrees;
+``ship`` does a whole release in one go — check, rewrite, commit, tag, push
+``main`` and the tag, which is what starts CI's publish jobs — refusing before it
+touches anything if the tree, the branch, or the version is not fit to release
+from. Run through ``camas release``, never by hand.
 """
 
 import json
@@ -172,23 +173,61 @@ def git(*args: str) -> str:
 	return done.stdout.strip()
 
 
-def send() -> int:
-	if check() != 0:
-		return 1
-	version = cargo_version()
-	tag = f"v{version}"
-	if git("status", "--porcelain"):
-		raise SystemExit("working tree is dirty; commit the release metadata first")
-	if git("tag", "--list", tag):
-		raise SystemExit(f"{tag} already exists; bump with: uv run release.py sync X.Y.Z")
+def bumped(version: str, part: str) -> str:
+	major, minor, patch = (int(n) for n in version.split(".")[:3])
+	match part:
+		case "major":
+			return f"{major + 1}.0.0"
+		case "minor":
+			return f"{major}.{minor + 1}.0"
+		case _:
+			return f"{major}.{minor}.{patch + 1}"
+
+
+def ordered(version: str) -> tuple[int, ...]:
+	return tuple(int(n) for n in version.split("-")[0].split("."))
+
+
+def resolve(spec: str) -> str:
+	"""The version `spec` asks for: a bump of the current one, or an explicit X.Y.Z ahead of it."""
+	current = cargo_version()
+	if spec in ("major", "minor", "patch"):
+		return bumped(current, spec)
+	if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", spec):
+		raise SystemExit(f"expected major, minor, patch, or X.Y.Z — got {spec!r}")
+	if ordered(spec) <= ordered(current):
+		raise SystemExit(f"{spec} does not follow {current}")
+	return spec
+
+
+def refuse_unless_releasable(tag: str) -> None:
+	"""Everything that must hold before a release is allowed to write, commit, or push."""
 	if git("rev-parse", "--abbrev-ref", "HEAD") != "main":
 		raise SystemExit("release from main, so the default branch carries what was published")
-	print(git("tag", "-a", tag, "-m", tag))
+	if git("status", "--porcelain"):
+		raise SystemExit("working tree is dirty; the release commit must hold only the version")
+	git("fetch", "--quiet", "origin", "main", "--tags")
+	if git("rev-parse", "HEAD") != git("rev-parse", "origin/main"):
+		raise SystemExit("main is not level with origin/main; pull or push first")
+	if git("tag", "--list", tag):
+		raise SystemExit(f"{tag} already exists")
+
+
+def ship(spec: str) -> int:
+	if check() != 0:
+		return 1
+	version = resolve(spec)
+	tag = f"v{version}"
+	refuse_unless_releasable(tag)
+	if sync(version) != 0:
+		return 1
+	print(git("commit", "--all", "--message", f"release {version}"))
+	print(git("tag", "--annotate", tag, "--message", tag))
 	# main before the tag: a published version whose commit is not on the default branch is how this
 	# metadata drifted in the first place, and `cargo install --git` builds that branch.
 	print(git("push", "origin", "main"))
 	print(git("push", "origin", tag))
-	print(f"pushed main and {tag}: CI publishes the crate and the extension from the tag")
+	print(f"shipped {tag}: CI publishes the crate and the extension from the tag")
 	return 0
 
 
@@ -198,11 +237,11 @@ def main(argv: tuple[str, ...]) -> int:
 			return check()
 		case ("sync", version):
 			return sync(version)
-		case ("send",):
-			return send()
+		case ("ship", spec):
+			return ship(spec)
 		case _:
 			print(__doc__)
-			print("usage: release.py check | sync X.Y.Z | send")
+			print("usage: release.py check | sync X.Y.Z | ship (major|minor|patch|X.Y.Z)")
 			return 2
 
 
