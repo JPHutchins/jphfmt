@@ -7,13 +7,13 @@
 
 use super::builders::{
     build_brace_doc, build_call_doc, build_chain_doc, build_cond_doc, build_element_doc,
-    build_expr_doc, build_for_doc, build_paren_chain_doc, build_ternary_doc,
+    build_expr_doc, build_for_doc, build_paren_group, build_ternary_doc,
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_excluded_callee,
-    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
-    prev_nontrivia, split_chain, split_top_level, statement_end,
+    has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_control_keyword,
+    is_excluded_callee, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
+    next_paren, prev_nontrivia, split_top_level, statement_end,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -42,7 +42,7 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         }
 
         if t.kind == TokenKind::Ident
-            && matches!(t.text, "if" | "while" | "switch" | "for")
+            && is_control_keyword(t.text)
             && let Some(open) = next_paren(toks, i)
             && let Some(close) = match_bracket(toks, open)
             && !contains_comment(&toks[open + 1..close])
@@ -191,12 +191,11 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && let Some(close) = match_bracket(toks, i)
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
-            && split_chain(&toks[i + 1..close]).is_some()
             && !(i > 0
                 && toks[i - 1].kind == TokenKind::Ident
                 && !is_excluded_callee(toks[i - 1].text))
+            && let Some(doc) = build_paren_group(&toks[i + 1..close])
         {
-            let doc = build_paren_chain_doc(&toks[i + 1..close]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
             let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
@@ -533,35 +532,34 @@ fn last_nonspace_char(out: &str) -> Option<char> {
 /// `f(x)->g(...)` reserves only `->g(`, not `g`'s arguments), which keeps formatting idempotent.
 /// Comments are ignored so a trailing comment never forces a break.
 fn trailing_reserved(toks: &[Token], from: usize) -> usize {
-    let mut text = String::new();
+    // `pending` holds the width of a whitespace run: it counts only once something follows it, since
+    // whitespace ending the line never reaches the output — reserving for it would measure a line
+    // this pass is about to shorten, and reach a different verdict than the next pass does.
+    let (mut width, mut pending) = (0usize, 0usize);
     for t in toks.iter().skip(from) {
-        match t.kind {
+        let counted = match t.kind {
             TokenKind::Newline => break,
-            TokenKind::LineComment | TokenKind::BlockComment => {}
-            TokenKind::Punct if matches!(t.text, "(" | "[" | "{") => {
-                text.push_str(t.text);
-                break;
+            TokenKind::LineComment | TokenKind::BlockComment => continue,
+            // Nothing past a bracket or a `;` shares this construct's fate: anything past the
+            // bracket can break onto a later line, and the `;` ends the statement.
+            TokenKind::Punct if matches!(t.text, "(" | "[" | "{" | ";") => {
+                return width + pending + col_width(t.text);
             }
-            // Nothing past the `;` shares this construct's fate: jphfmt never moves a token across
-            // one, so counting further would make the reserve depend on the next statement.
-            TokenKind::Punct if t.text == ";" => {
-                text.push_str(t.text);
-                break;
-            }
-            _ => {
-                // Stop at the first newline embedded in any token (not just Newline tokens),
-                // so Unknown tokens containing multiple lines don't inflate the reserve.
-                if let Some(nl) = t.text.find('\n') {
-                    text.push_str(&t.text[..nl]);
-                    break;
-                }
-                text.push_str(t.text);
-            }
+            // Stop at the first newline embedded in any token (not just Newline tokens),
+            // so Unknown tokens containing multiple lines don't inflate the reserve.
+            _ => match t.text.find('\n') {
+                Some(nl) => return width + pending + col_width(t.text[..nl].trim_end()),
+                None => t.text,
+            },
+        };
+        if counted.trim().is_empty() {
+            pending += col_width(counted);
+        } else {
+            width += pending + col_width(counted);
+            pending = 0;
         }
     }
-    // Whitespace ending the line never reaches the output, so reserving for it would measure a line
-    // this pass is about to shorten — and reach a different verdict than the next pass does.
-    col_width(text.trim_end())
+    width
 }
 
 /// Column width of raw token text, counting a tab as [`TAB_WIDTH`] (unlike [`display_width`], which

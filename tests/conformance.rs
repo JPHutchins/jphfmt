@@ -496,6 +496,24 @@ fn a_long_bare_ternary_is_bounded_too() {
 }
 
 #[test]
+fn a_container_that_already_bounds_gets_no_parens() {
+    // A call's own parentheses bound its argument, so a chain there needs none of its own — the
+    // parentheses exist to bound operands nothing else does, after an assignment or a `return`.
+    let src = "call_something(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC);\n";
+    let expected = "call_something(\n\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\n);\n";
+    assert_eq!(format(src), expected);
+    assert_eq!(format(expected), expected);
+}
+
+#[test]
+fn a_postfix_operand_ends_a_value() {
+    // `i++ | x` splits at the `|`: the `++` ends its operand as much as the identifier does.
+    let src = "int x = counter_value_here++ | BBBBBBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDD;\n";
+    let expected = "int x = (\n\tcounter_value_here++ |\n\tBBBBBBBBBBBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDD\n);\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
 fn a_list_is_never_bounded() {
     // A depth-zero `,` means the span is a list, not one expression: `(a | b, c)` is not `a | b, c`,
     // so a second declarator or a comma expression is left overrunning rather than changed.

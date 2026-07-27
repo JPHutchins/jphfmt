@@ -283,16 +283,18 @@ const CHAIN_CLASSES: [&[&str]; 10] = [
 /// Whether the operator at `j` binds two operands rather than one: `a - b` splits, `a + -b` and
 /// `&x` do not. A keyword that takes an expression (`return`, `sizeof`) does not end a value.
 fn is_binary_position(inner: &[Token], j: usize) -> bool {
-    inner[..j]
-        .iter()
-        .rev()
-        .find(|t| !is_trivia(t))
-        .is_some_and(|prev| match prev.kind {
-            TokenKind::Ident => !is_excluded_callee(prev.text) && !is_type_context(prev.text),
-            TokenKind::Number | TokenKind::String | TokenKind::Char => true,
-            TokenKind::Punct => matches!(prev.text, ")" | "]"),
-            _ => false,
-        })
+    prev_nontrivia(inner, j).is_some_and(|k| match inner[k].kind {
+        TokenKind::Ident => !is_excluded_callee(inner[k].text) && !is_type_context(inner[k].text),
+        TokenKind::Number | TokenKind::String | TokenKind::Char => true,
+        TokenKind::Punct => matches!(inner[k].text, ")" | "]"),
+        // A postfix `++`/`--` ends a value as much as its operand does.
+        TokenKind::Operator => matches!(inner[k].text, "++" | "--"),
+        TokenKind::Newline
+        | TokenKind::Whitespace
+        | TokenKind::Unknown
+        | TokenKind::LineComment
+        | TokenKind::BlockComment => false,
+    })
 }
 
 /// Depth-zero indices where a `class` operator binds two operands.
@@ -324,6 +326,10 @@ pub(super) fn split_chain<'a, 'src>(
     inner: &'a [Token<'src>],
 ) -> Option<(Vec<&'a [Token<'src>]>, Vec<&'src str>)> {
     if has_top_level_question(inner) || !chain_cuts(inner, &[":"]).is_empty() {
+        return None;
+    }
+    // A depth-zero `,` is a list, not a chain: its parts are not this operator's operands.
+    if !chain_cuts(inner, &[","]).is_empty() {
         return None;
     }
     let cuts = CHAIN_CLASSES

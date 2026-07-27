@@ -171,7 +171,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
         } else if t.kind == TokenKind::Punct
             && t.text == "("
             && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_paren_group_doc(&toks[j + 1..close])
+            && let Some(group) = build_paren_group(&toks[j + 1..close])
         {
             if pending_space && !text.is_empty() {
                 text.push(' ');
@@ -291,6 +291,11 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
 /// tokens jphfmt writes, and they are legal precisely because the operands are already an implicit
 /// container: bounding it changes the layout and nothing else.
 fn build_bounded_doc(head: String, segments: Vec<Doc>, seps: &[String]) -> Doc {
+    // No head means the enclosing container's own brackets already bound these operands — a call
+    // argument, a `{}` element — so parentheses here would be a second pair around the same span.
+    if head.is_empty() {
+        return Doc::group(Doc::concat(trailing_items(segments, seps)));
+    }
     Doc::group(Doc::concat([
         Doc::Text(if head.is_empty() {
             head
@@ -353,6 +358,21 @@ fn chain_seps(ops: &[&str]) -> Vec<String> {
     ops.iter().map(|op| format!(" {op}")).collect()
 }
 
+/// The `:`-separated arms of a ternary, or `None` if any arm is missing its operand — a stranded
+/// separator would put this layout's spacing where the author had none.
+fn ternary_arms<'a, 'src>(inner: &'a [Token<'src>]) -> Option<Vec<&'a [Token<'src>]>> {
+    if !has_top_level_question(inner) {
+        return None;
+    }
+    let arms = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":");
+    (arms.len() >= 2 && arms.iter().all(|s| has_non_trivia(s))).then_some(arms)
+}
+
+/// Each segment as its own expression, paired with the separators that trail them.
+fn segment_docs(segments: &[&[Token]]) -> Vec<Doc> {
+    segments.iter().map(|s| build_expr_doc(s)).collect()
+}
+
 /// Split `inner` on the depth-zero separators `is_sep` selects, build each segment as its own
 /// expression [`Doc`], and lay them out as a [`build_clause_group`] with `sep` trailing all but the
 /// last — the shared shape of a ternary chain, a `for` header, and a logical-operator condition.
@@ -391,35 +411,19 @@ fn render_segment(toks: &[Token]) -> String {
     s
 }
 
-/// A parenthesized operator chain: the author's own parentheses make it a container, so it breaks
-/// one operand per line with the operator trailing and the `)` back at the parent's indentation.
-pub(super) fn build_paren_chain_doc(inner: &[Token]) -> Doc {
-    build_paren_group_doc(inner)
-        .unwrap_or_else(|| Doc::Text(format!("({})", render_segment(inner))))
-}
-
 /// A parenthesized chain or ternary as its own container. A ternary belongs here as much as a chain
 /// does: [`build_chain_doc`] bounds a bare one with parentheses, and this is the same content on the
 /// next pass, so both must reach the same layout or neither is a fixpoint.
-fn build_paren_group_doc(inner: &[Token]) -> Option<Doc> {
+pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
         return Some(build_clause_group(
-            segments.iter().map(|s| build_expr_doc(s)).collect(),
+            segment_docs(&segments),
             &chain_seps(&ops),
         ));
     }
-    if !has_top_level_question(inner) {
-        return None;
-    }
-    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":");
-    if segments.len() < 2 || !segments.iter().all(|s| has_non_trivia(s)) {
-        return None;
-    }
-    let seps = vec![" :".to_owned(); segments.len() - 1];
-    Some(build_clause_group(
-        segments.iter().map(|s| build_expr_doc(s)).collect(),
-        &seps,
-    ))
+    let arms = ternary_arms(inner)?;
+    let seps = vec![" :".to_owned(); arms.len() - 1];
+    Some(build_clause_group(segment_docs(&arms), &seps))
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -427,17 +431,15 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     build_clause_doc(inner, |t| t.kind == TokenKind::Punct && t.text == ";", ";")
 }
 
-/// An `if`/`while`/`switch` condition — split on the outermost `&&`/`||` with the operator
-/// trailing (§2.7); a condition with no such operator explodes as a single indented element.
+/// An `if`/`while`/`switch` condition — split on its loosest-binding operator with that operator
+/// trailing (§2.7), so `a | b | c` breaks on the same rule `&&` does; a condition with no operator at
+/// depth zero explodes as a single indented element.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
     match split_chain(inner) {
-        Some((segments, ops)) => build_clause_group(
-            segments.iter().map(|s| build_expr_doc(s)).collect(),
-            &chain_seps(&ops),
-        ),
+        Some((segments, ops)) => build_clause_group(segment_docs(&segments), &chain_seps(&ops)),
         None => build_clause_doc(inner, |_| false, ""),
     }
 }
