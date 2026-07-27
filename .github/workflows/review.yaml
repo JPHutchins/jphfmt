@@ -40,6 +40,12 @@ jobs:
       # registry (index + crate downloads), and the Nix binary cache (defensive — a store-cache HIT
       # masks it, but a cache miss fetches from it). alpha.19's egress canary fails the job closed if
       # harden-runner silently drops this back to audit (step-security/harden-runner#675).
+      #
+      # The last two are the same cold-cache class as cache.nixos.org: rust-overlay's toolchain
+      # tarballs are fixed-output derivations that cache.nixos.org does not substitute, so a cold
+      # store cache builds them and fetches from static.rust-lang.org, falling back to the
+      # tarballs.nixos.org mirror. The audit pass ran against a warm cache and never saw either;
+      # GitHub evicts the store cache after 7 idle days, which is when this surfaces.
       use_setup_action: true
       egress_policy: block
       extra_endpoints: >-
@@ -48,6 +54,8 @@ jobs:
         index.crates.io:443
         static.crates.io:443
         cache.nixos.org:443
+        static.rust-lang.org:443
+        tarballs.nixos.org:443
       mechanic_time_limit: 3m
       mechanic_grace_period: 90s
       mechanic_usd_limit: "0.10"
