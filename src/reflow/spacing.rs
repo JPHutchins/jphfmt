@@ -86,13 +86,9 @@ fn is_comment(t: &Token) -> bool {
     matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
 }
 
-/// Canonicalize one inter-token whitespace gap: a same-line run becomes exactly one space, and a
-/// run that ends a line is dropped. Only the indentation after the gap's last line break survives,
-/// for [`super::retab`] to normalize — collapsing that would strip a passthrough line's indentation
-/// entirely. Line breaks themselves are copied through verbatim, so `\r\n` reaches
-/// [`super::normalize_endings`] intact. `keep_inline_run` preserves a leading same-line run for the
-/// one case that must not move: a gap that positions a comment (§2.1, comments are never
-/// re-aligned).
+/// Canonicalize one inter-token gap to a single space, keeping the indentation that follows its last
+/// line break for `retab` and the line breaks themselves for `normalize_endings`. `keep_inline_run`
+/// spares a same-line run that positions a comment (§2.1).
 fn collapse_gap(gap: &str, keep_inline_run: bool) -> String {
     match gap.rfind(['\n', '\r']) {
         None if keep_inline_run || gap.is_empty() => gap.to_owned(),
@@ -108,16 +104,10 @@ fn collapse_gap(gap: &str, keep_inline_run: bool) -> String {
     }
 }
 
-/// Collapse every inter-token whitespace run to a single space (§2.5) — the alignment padding a
-/// no-column-alignment formatter must not preserve, including a run left before a line break.
-///
-/// Three gaps are left alone. The first piece's gap is line-one indentation, not an inter-token run.
-/// A same-line gap that precedes a comment sets that comment's column, which is sacred (§2.1) — the
-/// gap that *follows* one positions ordinary code, so it collapses like any other. And the gap
-/// between a directive's `#` and its keyword belongs to [`super::scope::scope_directives`], which
-/// rewrites it to the `#if` nesting depth — collapsing it here would feed `emit_define` a prefix one
-/// column wider than the one that survives to the output, flipping a body's fits/explode decision on
-/// the next pass.
+/// Collapse the inter-token whitespace runs (§2.5): the alignment padding a no-column-alignment
+/// formatter must not preserve. Line-one indentation is not an inter-token run, and the `#`-to-keyword
+/// gap belongs to `scope_directives` — collapsing that one hands `emit_define` a prefix a column wider
+/// than the one that reaches the output, flipping a body's fits/explode decision on the next pass.
 fn collapse_runs(pieces: &mut [Piece]) {
     for j in 1..pieces.len() {
         if pieces[j - 1].1.text == "#" {
