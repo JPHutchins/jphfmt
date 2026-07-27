@@ -1,8 +1,8 @@
-//! The §2.5 token-spacing pass: middle-align pointer `*`, space C-style casts, K&R brace attach,
-//! and bit-field colons. Whitespace is semantically inert, so this never changes meaning; only the
-//! listed pairs are touched and everything else keeps its exact spacing. Runs before structuring so
-//! the layout measures final widths (otherwise a later space could widen a line and flip a
-//! fits/explode decision on the next pass, breaking idempotency).
+//! The §2.5 token-spacing pass: collapse inter-token whitespace runs, middle-align pointer `*`,
+//! space C-style casts, K&R brace attach, and bit-field colons. Whitespace is semantically inert, so
+//! this never changes meaning. Runs before structuring so the layout measures final widths
+//! (otherwise a later space could widen a line and flip a fits/explode decision on the next pass,
+//! breaking idempotency).
 
 use super::tokens::{is_callee_ident, is_trivia, is_type_context};
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -11,7 +11,7 @@ use crate::lexer::{Token, TokenKind, tokenize};
 type Piece<'src> = (String, Token<'src>);
 
 fn same_line(gap: &str) -> bool {
-    !gap.contains('\n')
+    !gap.contains(['\n', '\r'])
 }
 
 /// Index of the `(` matching the `)` at `close`, scanning the piece list backward.
@@ -51,7 +51,7 @@ fn piece_close_paren(pieces: &[Piece], open: usize) -> Option<usize> {
 }
 
 /// Apply the §2.5 token-spacing rules. Whitespace is semantically inert, so this never changes
-/// meaning; only the listed pairs are touched and everything else keeps its exact spacing.
+/// meaning. [`collapse_runs`] goes first so every later rule sees a canonical one-space gap.
 pub(super) fn space_tokens(s: &str) -> String {
     let mut pieces: Vec<Piece> = Vec::new();
     let mut gap = String::new();
@@ -64,6 +64,7 @@ pub(super) fn space_tokens(s: &str) -> String {
     }
     let trailing = gap;
 
+    collapse_runs(&mut pieces);
     space_pointers(&mut pieces);
     space_casts(&mut pieces);
     space_braces(&mut pieces);
@@ -79,6 +80,44 @@ pub(super) fn space_tokens(s: &str) -> String {
     }
     out.push_str(&trailing);
     out
+}
+
+fn is_comment(t: &Token) -> bool {
+    matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+}
+
+/// Canonicalize one inter-token gap to a single space, keeping the indentation that follows its last
+/// line break for `retab` and the line breaks themselves for `normalize_endings`. `keep_inline_run`
+/// spares a same-line run that positions a comment (§2.1).
+fn collapse_gap(gap: &str, keep_inline_run: bool) -> String {
+    match gap.rfind(['\n', '\r']) {
+        None if keep_inline_run || gap.is_empty() => gap.to_owned(),
+        None => " ".to_owned(),
+        Some(last) => {
+            let (breaks, indent) = gap.split_at(last + 1);
+            breaks
+                .chars()
+                .filter(|c| matches!(c, '\n' | '\r'))
+                .chain(indent.chars())
+                .collect()
+        }
+    }
+}
+
+/// Collapse the inter-token whitespace runs (§2.5): the alignment padding a no-column-alignment
+/// formatter must not preserve. Line-one indentation is not an inter-token run, and the `#`-to-keyword
+/// gap belongs to `scope_directives` — collapsing that one hands `emit_define` a prefix a column wider
+/// than the one that reaches the output, flipping a body's fits/explode decision on the next pass.
+fn collapse_runs(pieces: &mut [Piece]) {
+    for j in 1..pieces.len() {
+        let directive_hash =
+            pieces[j - 1].1.text == "#" && (j == 1 || !same_line(&pieces[j - 1].0));
+        if directive_hash {
+            continue;
+        }
+        let keep_inline_run = is_comment(&pieces[j].1);
+        pieces[j].0 = collapse_gap(&pieces[j].0, keep_inline_run);
+    }
 }
 
 /// Middle-align pointer `*` (§2.5: `T * p`, `T ** p`). A `*` cluster is a pointer only when
@@ -231,22 +270,23 @@ fn space_equals(pieces: &mut [Piece]) {
     }
 }
 
-/// Strip trailing same-line whitespace before `;` at bracket depth zero. Leaves `;` inside
-/// `()`/`[]`/`{}` alone — the structure pass may collapse newlines to spaces inside such
+/// Strip trailing same-line whitespace before `;` at paren depth zero — a statement terminator,
+/// wherever the statement lives, so a `;` inside a function body or a `struct` body qualifies.
+/// Leaves `;` inside `()`/`[]` alone — the structure pass may collapse newlines to spaces inside such
 /// constructs (e.g. parenthesized ternaries), and stripping those collapsed spaces would break
 /// idempotency because the original newline-gap form survives (not same-line) but the collapsed
 /// form does not. Also leaves newline gaps alone (structural breaks), and leaves gaps before
-/// `;`/`{`/`}` alone (defensive guard for `for(;;)`-style patterns, though those gaps are empty
+/// `;`/`{` alone (defensive guard for `for(;;)`-style patterns, though those gaps are empty
 /// in canonical form). No-op on canonical input.
 fn space_semicolons(pieces: &mut [Piece]) {
     let mut depth = 0i32;
     for j in 0..pieces.len() {
         match pieces[j].1.text {
-            "(" | "[" | "{" => {
+            "(" | "[" => {
                 depth += 1;
                 continue;
             }
-            ")" | "]" | "}" => {
+            ")" | "]" => {
                 depth = (depth - 1).max(0);
                 continue;
             }
@@ -260,7 +300,7 @@ fn space_semicolons(pieces: &mut [Piece]) {
             && pieces[j].1.text == ";"
             && same_line(&pieces[j].0)
             && !pieces[j].0.is_empty()
-            && !matches!(pieces[j - 1].1.text, ";" | "{" | "}")
+            && !matches!(pieces[j - 1].1.text, ";" | "{")
         {
             pieces[j].0.clear();
         }
@@ -294,6 +334,10 @@ mod tests {
     #[test]
     fn same_line_newline() {
         assert!(!same_line("\n"));
+        // A `\r`-only ending is a line break too, and `collapse_gap` copies it through, so the
+        // spacing rules must not replace that gap with a space and merge the two lines.
+        assert!(!same_line("\r"));
+        assert!(!same_line("\r\n"));
     }
 
     #[test]
@@ -398,13 +442,77 @@ mod tests {
     }
 
     #[test]
+    fn space_semicolons_strips_inside_braces() {
+        // A `;` is a statement terminator wherever the statement lives: only `()`/`[]` are
+        // excluded, so a function body and a `struct` body both canonicalize.
+        assert_eq!(space_tokens("{ return x ; }"), "{ return x; }");
+        assert_eq!(space_tokens("struct s { int x ; }"), "struct s { int x; }");
+    }
+
+    #[test]
+    fn collapse_gap_same_line_run_becomes_one_space() {
+        assert_eq!(collapse_gap("   ", false), " ");
+        assert_eq!(collapse_gap("\t", false), " ");
+        assert_eq!(collapse_gap(" \t ", false), " ");
+    }
+
+    #[test]
+    fn collapse_gap_empty_stays_empty() {
+        assert_eq!(collapse_gap("", false), "");
+    }
+
+    #[test]
+    fn collapse_gap_keeps_indentation_after_the_last_break() {
+        // The run before a break is trailing whitespace and goes; the run after it is
+        // indentation, left for `retab`.
+        assert_eq!(collapse_gap("   \n\t\t", false), "\n\t\t");
+        assert_eq!(collapse_gap("\n", false), "\n");
+    }
+
+    #[test]
+    fn collapse_gap_drops_blank_line_padding() {
+        assert_eq!(collapse_gap("  \n  \n\t", false), "\n\n\t");
+    }
+
+    #[test]
+    fn collapse_gap_preserves_crlf() {
+        // Line breaks are copied verbatim so `normalize_endings` still sees `\r\n`.
+        assert_eq!(collapse_gap("  \r\n\t", false), "\r\n\t");
+    }
+
+    #[test]
+    fn collapse_gap_keeps_an_inline_run_before_a_comment() {
+        assert_eq!(collapse_gap("   ", true), "   ");
+        // Only the same-line run is sacred; a run that ends a line still goes.
+        assert_eq!(collapse_gap("   \n\t", true), "\n\t");
+    }
+
+    #[test]
+    fn collapse_runs_leaves_line_one_indentation() {
+        // The first piece's gap is indentation, not an inter-token run — collapsing it to one
+        // space would leave a space-indented line after `retab`.
+        assert_eq!(space_tokens("\t\tfoo"), "\t\tfoo");
+    }
+
+    #[test]
+    fn collapse_runs_leaves_the_directive_hash_gap() {
+        // `scope_directives` owns the `#`-to-keyword gap and rewrites it to the nesting depth.
+        assert_eq!(space_tokens("#\t\tdefine A 1"), "#\t\tdefine A 1");
+    }
+
+    #[test]
+    fn collapse_runs_collapses_a_declaration_run() {
+        assert_eq!(space_tokens("static int   f"), "static int f");
+    }
+
+    #[test]
     fn space_semicolons_preserves_inside_parens() {
         // A `;` inside `()` is not stripped — the structure pass may collapse a
         // newline to a space inside such constructs, and stripping that space would
         // break idempotency (the original newline form survives, the collapsed
         // form would not).
         assert_eq!(space_tokens("(foo ;)"), "(foo ;)");
-        assert_eq!(space_tokens("(foo ;)"), "(foo ;)");
+        assert_eq!(space_tokens("[foo ;]"), "[foo ;]");
     }
 
     #[test]
