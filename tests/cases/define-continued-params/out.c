@@ -1,6 +1,10 @@
-#define RANGE(access_kind, retention_policy, length, metadata, addr) prefetch( \
-	addr, \
+#define RANGE_PREFETCH( \
 	access_kind, \
 	retention_policy, \
-	metadata \
-)
+	length, \
+	count, \
+	stride, \
+	metadata, \
+	addr \
+) \
+	builtin_range_prefetch(addr, access_kind, retention_policy, metadata)

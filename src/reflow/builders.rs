@@ -14,6 +14,16 @@ use crate::lexer::{Token, TokenKind};
 /// argument is built recursively (via [`build_expr_doc`]), so a nested `{...}` or a nested call
 /// is its own group that can collapse or explode independently.
 pub(super) fn build_call_doc(inner: &[Token]) -> Doc {
+    match build_call_body(inner) {
+        Doc::Text(flat) => Doc::Text(flat),
+        body => Doc::group(body),
+    }
+}
+
+/// [`build_call_doc`]'s document without its enclosing group, so a caller that has already decided to
+/// break — a `#define`'s parameter list, whose line the body overflows — can wrap it in a
+/// [`Doc::ForceBreak`] instead of leaving the group to re-measure and stay flat.
+pub(super) fn build_call_body(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
@@ -33,12 +43,12 @@ pub(super) fn build_call_doc(inner: &[Token]) -> Doc {
             items.push(Doc::Line);
         }
     }
-    Doc::group(Doc::concat([
+    Doc::concat([
         Doc::text("("),
         Doc::nest(Doc::concat(items)),
         Doc::SoftLine,
         Doc::text(")"),
-    ]))
+    ])
 }
 
 /// Build the document for a `{}` list: comma-separated elements, a trailing comma when broken, and

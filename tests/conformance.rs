@@ -526,6 +526,21 @@ fn preprocessor_scope_is_idempotent() {
 }
 
 #[test]
+fn define_params_explode_when_the_line_overruns() {
+    // §2.2: a macro's parameter list is a container like a call's, so it breaks one per line and
+    // the body starts after the `)`.
+    let src = "#define __pldx_range(access_kind, retention_policy, length, \\\n                    metadata, addr) \\\n  __builtin_arm_range_prefetch(addr, access_kind, retention_policy, metadata)\n";
+    let expected = "#define __pldx_range( \\\n\taccess_kind, \\\n\tretention_policy, \\\n\tlength, \\\n\tmetadata, \\\n\taddr \\\n) \\\n\t__builtin_arm_range_prefetch(addr, access_kind, retention_policy, metadata)\n";
+    assert_eq!(format(src), expected);
+    assert_eq!(format(expected), expected);
+    // A list whose line fits keeps the body on the `#define` line.
+    assert_eq!(
+        format("#define M(a, b) f(a, b)\n"),
+        "#define M(a, b) f(a, b)\n"
+    );
+}
+
+#[test]
 fn continued_define_params_do_not_accumulate_backslashes() {
     // A `\` left in the parameter list is not a continuation but an invalid token, and
     // `significant()` filters backslashes out, so nothing else in the suite would notice.
