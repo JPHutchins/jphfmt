@@ -28,7 +28,7 @@ pub(super) fn heads_body(t: &Token) -> bool {
 /// `(noreturn)`, or a parameter list is never mistaken for one.
 pub(super) fn is_type_group(inner: &[Token]) -> bool {
     let significant = || inner.iter().filter(|t| !is_trivia(t));
-    significant().any(|t| is_type_context(t.text) || matches!(t.text, "struct" | "union" | "enum"))
+    significant().any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
         && significant().all(|t| {
             // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
             // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
@@ -122,6 +122,7 @@ pub(super) fn is_excluded_callee(name: &str) -> bool {
             | "_Static_assert"
             | "__attribute__"
             | "_Pragma"
+            | "_Noreturn"
             | "asm"
             | "__asm__"
             | "__asm"

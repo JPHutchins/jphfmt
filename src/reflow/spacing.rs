@@ -158,8 +158,8 @@ fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
 /// let a multiply reach [`declares_pointer`] as a same-line run on the next pass. An `=` since the
 /// last `;` marks an initializer, and so does a preceding `(T)` — a compound literal reaches neither
 /// `=` nor a statement boundary in `return (T){…}` or `f((T){…})`.
-fn opens_block(pieces: &[Piece], open: usize) -> bool {
-    !opens_literal(pieces, open)
+fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
+    !opens_literal(toks, open)
         && (0..open)
             .rev()
             .take_while(|&k| pieces[k].1.text != ";")
@@ -168,18 +168,17 @@ fn opens_block(pieces: &[Piece], open: usize) -> bool {
 
 /// Whether the `{` at `open` follows a compound literal's `(T)`. The piece list is the token stream
 /// minus trivia, so the shared predicate reads it directly.
-fn opens_literal(pieces: &[Piece], open: usize) -> bool {
-    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
-    open > 0 && toks[open - 1].text == ")" && closes_literal_type(&toks, open - 1)
+fn opens_literal(toks: &[Token], open: usize) -> bool {
+    open > 0 && toks[open - 1].text == ")" && closes_literal_type(toks, open - 1)
 }
 
 /// Whether the type name at `name` opens a declaration, which makes a following `*` run a
 /// declarator rather than a multiply. A statement boundary or declaration specifier settles it
 /// outright; inside brackets, only a parameter list does.
-fn declares_pointer(pieces: &[Piece], name: usize) -> bool {
+fn declares_pointer(pieces: &[Piece], toks: &[Token], name: usize) -> bool {
     let enclosing = enclosing_open(pieces, name);
     let statement_level =
-        enclosing.is_none_or(|open| pieces[open].1.text == "{" && opens_block(pieces, open));
+        enclosing.is_none_or(|open| pieces[open].1.text == "{" && opens_block(pieces, toks, open));
     match name.checked_sub(1).map(|k| pieces[k].1.text) {
         None | Some(";" | "{" | "}") => statement_level,
         Some("(" | ",") => enclosing.is_some_and(|open| {
@@ -198,6 +197,9 @@ fn declares_pointer(pieces: &[Piece], name: usize) -> bool {
 /// position precedes it and a name follows; multiply, deref, and function pointers `(*f)` are left as
 /// is (§6).
 fn space_pointers(pieces: &mut [Piece]) {
+    // One view of the piece list as tokens, for the predicates `tokens` owns; a `Token` is `Copy`, so
+    // this neither borrows `pieces` nor is rebuilt per candidate.
+    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
     let mut j = 0;
     while j < pieces.len() {
@@ -215,13 +217,15 @@ fn space_pointers(pieces: &mut [Piece]) {
                 && is_tag_keyword(pieces[j - 2].1.text));
         // `int *p, *q` — the second declarator's type is back past the comma.
         let continues_declarator = pieces[j - 1].1.text == "," && declares_head(pieces, j - 1);
-        let after_run = pieces.get(k + 1).filter(|after| same_line(&after.0));
-        let next_is_qualifier = after_run.is_some_and(|after| is_qualifier(after.1.text));
-        let next_names_declarator = after_run.is_some_and(|after| after.1.kind == TokenKind::Ident);
+        let after_run = pieces
+            .get(k + 1)
+            .filter(|after| same_line(&after.0))
+            .map(|after| (is_qualifier(after.1.text), after.1.kind == TokenKind::Ident));
+        let (next_is_qualifier, next_names_declarator) = after_run.unwrap_or((false, false));
         let typedef_declarator = pieces[j - 1].1.kind == TokenKind::Ident
             && !is_excluded_callee(pieces[j - 1].1.text)
             && next_names_declarator
-            && declares_pointer(pieces, j - 1);
+            && declares_pointer(pieces, &toks, j - 1);
         if prev_is_type || next_is_qualifier || typedef_declarator || continues_declarator {
             for piece in &mut pieces[j..=k] {
                 piece.0 = " ".to_owned();

@@ -235,6 +235,17 @@ fn typedef_pointer_declarators_are_middle_spaced() {
 }
 
 #[test]
+fn a_specifier_keyword_is_not_a_callee() {
+    // `_Noreturn` introduces a declaration; it never takes an argument list, so its `(` must not be
+    // tightened the way a call's is.
+    assert_eq!(format("_Noreturn (void) f;\n"), "_Noreturn (void) f;\n");
+    assert_eq!(
+        format("_Noreturn void die(void);\n"),
+        "_Noreturn void die(void);\n"
+    );
+}
+
+#[test]
 fn comma_separated_declarators_are_all_spaced() {
     // The second declarator's type is back past the comma, so its `*` is a declarator too.
     assert_eq!(format("int *p, *q, *r;\n"), "int * p, * q, * r;\n");
