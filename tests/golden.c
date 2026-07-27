@@ -164,7 +164,7 @@ thread_local int g_per_thread;
 [[maybe_unused]] constexpr int MAX_ITEMS = 16; /* C23 */
 
 int const * const g_table_ptr = nullptr; /* east const, middle pointer */
-int ** g_pointer_to_pointer = nullptr;
+int * * g_pointer_to_pointer = nullptr;
 
 [[maybe_unused]] static uint8_t __aligned(32) g_dma_buffer[64];
 

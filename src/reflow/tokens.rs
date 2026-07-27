@@ -71,6 +71,11 @@ pub(super) fn is_type_context(text: &str) -> bool {
     )
 }
 
+/// A type qualifier — a keyword that may follow a declarator's `*` but never a multiply's.
+pub(super) fn is_qualifier(text: &str) -> bool {
+    matches!(text, "const" | "volatile" | "restrict" | "_Atomic")
+}
+
 /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
 /// excluded: its associations are a comma list and explode exactly per §2.2.
 pub(super) fn is_excluded_callee(name: &str) -> bool {

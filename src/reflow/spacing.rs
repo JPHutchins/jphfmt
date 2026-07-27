@@ -5,7 +5,7 @@
 //! breaking idempotency).
 
 use super::tokens::{
-    closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_trivia,
+    closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_qualifier, is_trivia,
     is_type_context, is_type_group,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -123,26 +123,32 @@ fn collapse_runs(pieces: &mut [Piece]) {
     }
 }
 
-/// Middle-align pointer `*` (§2.5: `T * p`, `T ** p`). A `*` cluster is a pointer only when
-/// preceded by a type keyword/qualifier or a `struct`/`union`/`enum` tag; multiply, deref,
-/// function pointers `(*f)`, and bare-typedef pointers are left as is (§6).
+/// Middle-align pointer `*` (§2.5: `T * p`, `T * * p`) — only the dereference operator clusters with
+/// its operand. A `*` run is a declarator when a type keyword/qualifier or a `struct`/`union`/`enum`
+/// tag precedes it, or a qualifier follows it (`*const` is no expression, so it disambiguates a bare
+/// typedef); multiply, deref, and function pointers `(*f)` are left as is (§6).
 fn space_pointers(pieces: &mut [Piece]) {
     let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
     let mut j = 0;
     while j < pieces.len() {
-        let prev_is_type = j > 0
-            && (is_type_context(pieces[j - 1].1.text)
-                || (pieces[j - 1].1.kind == TokenKind::Ident
-                    && j >= 2
-                    && matches!(pieces[j - 2].1.text, "struct" | "union" | "enum")));
-        if is_star(&pieces[j].1) && prev_is_type && same_line(&pieces[j].0) {
-            let mut k = j;
-            while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
-                k += 1;
-            }
-            pieces[j].0 = " ".to_owned();
-            for piece in &mut pieces[j + 1..=k] {
-                piece.0.clear();
+        if !(is_star(&pieces[j].1) && same_line(&pieces[j].0) && j > 0) {
+            j += 1;
+            continue;
+        }
+        let mut k = j;
+        while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
+            k += 1;
+        }
+        let prev_is_type = is_type_context(pieces[j - 1].1.text)
+            || (pieces[j - 1].1.kind == TokenKind::Ident
+                && j >= 2
+                && matches!(pieces[j - 2].1.text, "struct" | "union" | "enum"));
+        let next_is_qualifier = pieces
+            .get(k + 1)
+            .is_some_and(|after| same_line(&after.0) && is_qualifier(after.1.text));
+        if prev_is_type || next_is_qualifier {
+            for piece in &mut pieces[j..=k] {
+                piece.0 = " ".to_owned();
             }
             if let Some(after) = pieces.get_mut(k + 1)
                 && same_line(&after.0)
@@ -153,10 +159,8 @@ fn space_pointers(pieces: &mut [Piece]) {
                     String::new()
                 };
             }
-            j = k + 1;
-            continue;
         }
-        j += 1;
+        j = k + 1;
     }
 }
 

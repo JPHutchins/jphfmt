@@ -187,9 +187,26 @@ fn control_keyword_gets_one_space_before_paren() {
 #[test]
 fn pointers_are_middle_spaced_after_type_keywords() {
     assert_eq!(format("int*p;\n"), "int * p;\n");
-    assert_eq!(format("int **p;\n"), "int ** p;\n");
     assert_eq!(format("char const*const q;\n"), "char const * const q;\n");
     assert_eq!(format("void*f(void);\n"), "void * f(void);\n");
+}
+
+#[test]
+fn pointer_declarator_stars_never_cluster() {
+    // §2.5: only the dereference operator clusters with its operand, so each `*` in a declarator
+    // stands alone.
+    assert_eq!(format("int **p;\n"), "int * * p;\n");
+    assert_eq!(format("int***q;\n"), "int * * * q;\n");
+    // A trailing qualifier resolves the ambiguity after a bare typedef: `*const` is not an
+    // expression, so this run is a declarator.
+    assert_eq!(
+        format("void py_release(PyObject ** const r);\n"),
+        "void py_release(PyObject * * const r);\n"
+    );
+    assert_eq!(format("PyObject *const s;\n"), "PyObject * const s;\n");
+    // Without that signal a bare-typedef run stays ambiguous with multiply-by-deref (§6).
+    assert_eq!(format("PyObject **t;\n"), "PyObject **t;\n");
+    assert_eq!(format("z = a ** b;\n"), "z = a ** b;\n");
 }
 
 #[test]
