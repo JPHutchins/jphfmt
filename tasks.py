@@ -22,8 +22,6 @@ from pathlib import Path
 
 from camas import Claude, Config, Parallel, Sequential, Task, run_cli
 
-from release import TRACKED
-
 VSCODE_DIR = "editors/vscode"
 VSCODE = Path(VSCODE_DIR)
 
@@ -84,8 +82,16 @@ knip = Task("npx --yes knip", cwd=VSCODE, when=VSCODE_DIR)
 # ---- Release: one version across four files, and the tag that ships it ----
 # `release` is manual and outward-facing, so it stays out of `check`, `ci` and `all`; `version_check`
 # joins them, because the drift it catches is invisible until someone installs from the wrong place.
-# The list release.py rewrites, plus the script itself — one definition, imported rather than repeated.
-RELEASE_FILES = (*TRACKED, "release.py")
+# release.py's TRACKED, plus the script itself. Not imported from it: camas evaluates this file
+# without its own directory on sys.path, so `from release import TRACKED` is a ModuleNotFoundError
+# under `camas`, however well it resolves from the repo root.
+RELEASE_FILES = (
+	"Cargo.toml",
+	"Cargo.lock",
+	f"{VSCODE_DIR}/package.json",
+	f"{VSCODE_DIR}/package-lock.json",
+	"release.py",
+)
 
 
 def release_files(changed: tuple[str, ...]) -> bool:
