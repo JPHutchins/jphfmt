@@ -11,7 +11,7 @@ use crate::lexer::{Token, TokenKind, tokenize};
 type Piece<'src> = (String, Token<'src>);
 
 fn same_line(gap: &str) -> bool {
-    !gap.contains('\n')
+    !gap.contains(['\n', '\r'])
 }
 
 /// Index of the `(` matching the `)` at `close`, scanning the piece list backward.
@@ -110,7 +110,9 @@ fn collapse_gap(gap: &str, keep_inline_run: bool) -> String {
 /// than the one that reaches the output, flipping a body's fits/explode decision on the next pass.
 fn collapse_runs(pieces: &mut [Piece]) {
     for j in 1..pieces.len() {
-        if pieces[j - 1].1.text == "#" {
+        let directive_hash =
+            pieces[j - 1].1.text == "#" && (j == 1 || !same_line(&pieces[j - 1].0));
+        if directive_hash {
             continue;
         }
         let keep_inline_run = is_comment(&pieces[j].1);
@@ -332,6 +334,10 @@ mod tests {
     #[test]
     fn same_line_newline() {
         assert!(!same_line("\n"));
+        // A `\r`-only ending is a line break too, and `collapse_gap` copies it through, so the
+        // spacing rules must not replace that gap with a space and merge the two lines.
+        assert!(!same_line("\r"));
+        assert!(!same_line("\r\n"));
     }
 
     #[test]
@@ -506,7 +512,7 @@ mod tests {
         // break idempotency (the original newline form survives, the collapsed
         // form would not).
         assert_eq!(space_tokens("(foo ;)"), "(foo ;)");
-        assert_eq!(space_tokens("(foo ;)"), "(foo ;)");
+        assert_eq!(space_tokens("[foo ;]"), "[foo ;]");
     }
 
     #[test]
