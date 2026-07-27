@@ -40,6 +40,14 @@ jobs:
       # registry (index + crate downloads), and the Nix binary cache (defensive — a store-cache HIT
       # masks it, but a cache miss fetches from it). alpha.19's egress canary fails the job closed if
       # harden-runner silently drops this back to audit (step-security/harden-runner#675).
+      #
+      # static.rust-lang.org and tarballs.nixos.org are the toolchain's own download hosts, reached
+      # whenever the dev shell is BUILT rather than restored. In a workflow_run context the cache
+      # token has no writable scope and the restore itself 404s ("workflow run not found"), so this
+      # job always builds — the audit pass that produced the list above ran with a warm store and
+      # never saw them. Without these two the setup step dies on `cannot download
+      # cargo-<ver>-x86_64-unknown-linux-gnu.tar.xz from any mirror` and every review reports
+      # "Review did not run".
       use_setup_action: true
       egress_policy: block
       extra_endpoints: >-
@@ -48,6 +56,8 @@ jobs:
         index.crates.io:443
         static.crates.io:443
         cache.nixos.org:443
+        static.rust-lang.org:443
+        tarballs.nixos.org:443
       mechanic_time_limit: 3m
       mechanic_grace_period: 90s
       mechanic_usd_limit: "0.10"
