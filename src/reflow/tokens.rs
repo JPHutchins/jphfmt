@@ -177,13 +177,18 @@ pub(super) fn next_nontrivia_in(toks: &[Token], from: usize, end: usize) -> Opti
     (from..end).find(|&j| !is_trivia(&toks[j]))
 }
 
+/// A line-continuation `\`.
+pub(super) fn is_backslash(t: &Token) -> bool {
+    t.kind == TokenKind::Punct && t.text == "\\"
+}
+
 /// One past the last token of the preprocessor directive starting at `start` (following `\` line
 /// continuations).
 pub(super) fn directive_end(toks: &[Token], start: usize) -> usize {
     let mut i = start;
     while i < toks.len() {
         let is_newline = toks[i].kind == TokenKind::Newline;
-        let continued = is_newline && i > 0 && toks[i - 1].text == "\\";
+        let continued = is_newline && i > 0 && is_backslash(&toks[i - 1]);
         i += 1;
         if is_newline && !continued {
             break;

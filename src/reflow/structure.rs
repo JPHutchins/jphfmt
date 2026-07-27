@@ -11,9 +11,9 @@ use super::builders::{
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_excluded_callee,
-    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
-    prev_nontrivia, split_top_level,
+    has_non_trivia, has_top_level_question, is_backslash, is_balanced, is_call_head,
+    is_excluded_callee, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
+    next_paren, prev_nontrivia, split_top_level,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -236,10 +236,12 @@ fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
     if display_width(flat.lines().next().unwrap_or(flat)) + continuation <= width {
         return None;
     }
-    let body = format_define_body(&def.body, 0, width.saturating_sub(TAB_WIDTH))?;
+    let params = def.params.as_deref()?;
+    let continued = width.saturating_sub(CONTINUATION_WIDTH);
+    let body = format_define_body(&def.body, 0, continued.saturating_sub(TAB_WIDTH))?;
     let params = render(
-        &Doc::ForceBreak(Box::new(build_call_body(def.params.as_deref()?))),
-        width,
+        &Doc::ForceBreak(Box::new(build_call_body(params))),
+        continued,
         display_width(&def.head),
         0,
     );
@@ -261,7 +263,7 @@ fn flatten_continuations(toks: &[Token]) -> String {
     let mut out = String::new();
     let mut broken = false;
     for t in toks {
-        if (t.kind == TokenKind::Punct && t.text == "\\") || t.kind == TokenKind::Newline {
+        if is_backslash(t) || t.kind == TokenKind::Newline {
             while out.ends_with([' ', '\t']) {
                 out.pop();
             }
@@ -289,10 +291,7 @@ struct Define<'src> {
 /// Drop the continuation `\`s from `toks` — they belong to the input's line breaks, not to the
 /// construct, and are re-added per line by [`emit_define`].
 fn without_continuations<'src>(toks: &[Token<'src>]) -> Vec<Token<'src>> {
-    toks.iter()
-        .filter(|t| !(t.kind == TokenKind::Punct && t.text == "\\"))
-        .copied()
-        .collect()
+    toks.iter().filter(|t| !is_backslash(t)).copied().collect()
 }
 
 fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<Define<'src>> {
@@ -305,7 +304,11 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
     // closed within it (e.g. a newline ended the directive mid-params), so it is not a
     // function-like macro we can split — pass through verbatim.
     let close = if function_like {
-        Some(match_bracket(toks, name + 1).filter(|&close| close < end)?)
+        let close = match_bracket(toks, name + 1)?;
+        if close >= end {
+            return None;
+        }
+        Some(close)
     } else {
         None
     };
