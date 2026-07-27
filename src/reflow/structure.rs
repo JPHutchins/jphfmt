@@ -11,7 +11,7 @@ use super::builders::{
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, has_top_level_question, is_backslash, is_balanced, is_call_head,
+    has_non_trivia, has_top_level_question, is_backslash, is_balanced, is_call_head, is_comment,
     is_excluded_callee, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
     next_paren, prev_nontrivia, split_top_level,
 };
@@ -186,7 +186,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) 
             && !contains_comment(&toks[paren..i])
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, &mut out, &mut col, width);
+            i = emit_brace(toks, i, false, out, col, width);
             continue;
         }
 
@@ -365,6 +365,10 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
 /// at `base_level + 1` laid out with the §2.2 rule (so a nested call explodes when it overflows),
 /// `})` at `base_level`. Returns the block and the index past the `)`, or `None` if the braces are
 /// unbalanced or a statement nests a block or carries a comment.
+///
+/// That last guard is load-bearing here, unlike in [`emit_func_body`], which hands its body back to
+/// [`emit_tokens`]: this splits on `;`, and a nested block is not `;`-terminated, so a `{` inside
+/// would land mid-statement. Such a body passes through instead.
 fn format_stmt_expr(
     toks: &[Token],
     open: usize,
@@ -518,7 +522,7 @@ fn split_brace_line_comment<'a, 'src>(
     let head_len = if contains_comment(&inner[..line_end])
         && inner[..line_end]
             .iter()
-            .all(|t| is_trivia(t) || contains_comment(std::slice::from_ref(t)))
+            .all(|t| is_trivia(t) || is_comment(t))
     {
         line_end
     } else {

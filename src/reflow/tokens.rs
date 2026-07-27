@@ -308,9 +308,12 @@ pub(super) fn has_non_trivia(toks: &[Token]) -> bool {
     toks.iter().any(|t| !is_trivia(t))
 }
 
+pub(super) fn is_comment(t: &Token) -> bool {
+    matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+}
+
 pub(super) fn contains_comment(toks: &[Token]) -> bool {
-    toks.iter()
-        .any(|t| matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment))
+    toks.iter().any(is_comment)
 }
 
 /// Whether `()`, `[]`, and `{}` are all balanced (never negative, net zero) in `toks`. Unbalanced
