@@ -30,9 +30,11 @@ pub(super) fn is_type_group(inner: &[Token]) -> bool {
     let significant = || inner.iter().filter(|t| !is_trivia(t));
     significant().any(|t| is_type_context(t.text) || matches!(t.text, "struct" | "union" | "enum"))
         && significant().all(|t| {
-            t.kind == TokenKind::Ident
+            // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
+            // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
+            (t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
                 || t.kind == TokenKind::Number
-                || matches!(t.text, "*" | "[" | "]")
+                || matches!(t.text, "*" | "[" | "]" | "(" | ")")
         })
 }
 

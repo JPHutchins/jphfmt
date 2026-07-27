@@ -265,6 +265,20 @@ fn a_body_brace_after_an_extra_paren_group_is_not_a_literal() {
 }
 
 #[test]
+fn a_declarator_inside_the_type_is_still_a_literal() {
+    // `(int (*)[10])` spells a type, parentheses and all, so its list canonicalizes like any other.
+    assert_eq!(
+        format("p = (int (*)[10]){ 1, 2, 3 };\n"),
+        "p = (int (*)[10]){1, 2, 3};\n"
+    );
+    // A keyword that takes its own argument list does not make a type group.
+    assert_eq!(
+        format("y = (sizeof(int)) * 2;\n"),
+        "y = (sizeof(int)) * 2;\n"
+    );
+}
+
+#[test]
 fn compound_literal_brace_stays_tight() {
     // §8.4: `&(struct shape){…}` has no space before `{` (it is not a function/control body)
     assert_eq!(

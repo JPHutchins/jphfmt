@@ -173,7 +173,6 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         // either for a literal would lay that body out as an initializer list.
         if t.kind == TokenKind::Punct
             && t.text == "{"
-            && !pending_func_def
             && let Some(paren) = prev_nontrivia(toks, i)
             && toks[paren].text == ")"
             && closes_literal_type(toks, paren)
