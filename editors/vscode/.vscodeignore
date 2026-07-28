@@ -8,4 +8,5 @@ eslint.config.mjs
 knip.json
 .prettierrc.json
 bundle.mjs
+tasks.py
 *.vsix
