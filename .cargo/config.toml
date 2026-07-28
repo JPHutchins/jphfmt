@@ -1,0 +1,6 @@
+# glibc cannot be linked self-contained, so the ARM Linux build is musl. `rust-lld` and Rust's own
+# musl libc need no cross toolchain, which is what lets `cargo build --target
+# aarch64-unknown-linux-musl` work from a plain x86-64 checkout as well as in CI.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]
