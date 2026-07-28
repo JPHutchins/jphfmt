@@ -251,11 +251,7 @@ fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
         display_width(&def.head),
         0,
     );
-    Some(format!(
-        "{head}{params}\n\t{body}",
-        head = def.head,
-        body = body.replace('\n', "\n\t")
-    ))
+    Some(format!("{head}{params}\n\t{body}", head = def.head))
 }
 
 /// Columns the ` \` a continued line ends with occupies.
