@@ -162,6 +162,20 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
 }
 
 #[test]
+fn comment_line_ends_are_trimmed() {
+    let src = "int a; // after a line comment   \nint b; /* first   \n * interior   \n */\n";
+    let expected = "int a; // after a line comment\nint b; /* first\n * interior\n */\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn a_continued_literal_keeps_the_spaces_in_its_value() {
+    // The spaces before the `\` are part of the string, not a line ending to trim.
+    let src = "char * s = \"keep   \\\n me\";\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
 fn indentation_is_normalized_to_tabs() {
     let src = "void f(void) {\n    int x = 1;\n        int y = 2;\n}\n";
     let expected = "void f(void) {\n\tint x = 1;\n\t\tint y = 2;\n}\n";

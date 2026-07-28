@@ -18,6 +18,8 @@ mod spacing;
 mod structure;
 mod tokens;
 
+use std::borrow::Cow;
+
 use crate::doc::TAB_WIDTH;
 use crate::lexer::{TokenKind, tokenize};
 
@@ -47,7 +49,30 @@ pub fn format_with_width(src: &str, width: usize) -> String {
     let spaced = spacing::space_tokens(src);
     let structured = structure::structure(&tokenize(&spaced), 0, width);
     let scoped = scope::scope_directives(&structured);
-    normalize_endings(&collapse_blank_lines(&retab(&scoped)))
+    normalize_endings(&collapse_blank_lines(&trim_comment_lines(&retab(&scoped))))
+}
+
+/// Strip trailing whitespace from every line of a comment (§2.1). Everywhere else it is already gone:
+/// the gap before a newline is dropped by [`spacing::space_tokens`], and a whitespace-only line is
+/// emitted as empty by [`collapse_blank_lines`]. A comment is one token, so its own line ends are the
+/// only ones those two never reach.
+///
+/// Only comments. A string or character literal continued with `\` keeps the spaces before it, which
+/// are part of its value, and an unterminated literal is not this pass's to edit.
+fn trim_comment_lines(s: &str) -> String {
+    tokenize(s)
+        .into_iter()
+        .map(|t| match t.kind {
+            TokenKind::LineComment | TokenKind::BlockComment => Cow::Owned(
+                t.text
+                    .split('\n')
+                    .map(str::trim_end)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => Cow::Borrowed(t.text),
+        })
+        .collect()
 }
 
 /// Collapse runs of two or more blank lines to a single blank line everywhere (file scope and
