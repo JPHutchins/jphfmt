@@ -33,13 +33,7 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
 /// Walk `toks`, appending to `out` so an enclosing construct's indentation is already in view when a
 /// nested one measures its own base level. `depth` is the `#if` nesting the walk has reached, carried
 /// through nested bodies because a scope opened in one can close outside it.
-fn emit_tokens(
-    toks: &[Token],
-    out: &mut String,
-    col: &mut usize,
-    depth: &mut usize,
-    width: usize,
-) {
+fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut usize, width: usize) {
     let mut i = 0usize;
     let mut paren_depth = 0i32;
     let mut in_init = false;
@@ -276,9 +270,15 @@ fn emit_define(
             format_define_body(&def.body, scoped_col + display_width(&def.prefix), width)
     {
         let flat = format!("{prefix}{body_str}", prefix = def.prefix);
+        // Each line is trimmed before its ` \` is added: a body that passed through verbatim carries
+        // the whitespace the *previous* run put before its `\`, and adding another would widen every
+        // continued line by one column per run.
         let continued = explode_params(&def, &flat, scoped_col, width)
             .unwrap_or(flat)
-            .replace('\n', " \\\n");
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join(" \\\n");
         emit_str(out, col, &continued);
         emit_str(out, col, "\n");
         return end;
