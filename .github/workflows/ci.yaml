@@ -39,8 +39,16 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          # ARM Linux is musl, not glibc, and its linker lives in `.cargo/config.toml` so the same
+          # `cargo build --target` works off CI. `aarch64-unknown-linux-gnu` is absent deliberately:
+          # glibc cannot be linked self-contained, so it would need a cross toolchain to buy nothing
+          # a static musl binary does not already give.
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl }
           - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -52,11 +60,19 @@ jobs:
       - id: bin
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "name=jphfmt.exe" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=jphfmt" >> "$GITHUB_OUTPUT"
-          fi
+          case "${{ matrix.target }}" in
+            *-pc-windows-*) echo "name=jphfmt.exe" >> "$GITHUB_OUTPUT" ;;
+            *) echo "name=jphfmt" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # Proves the binary is the architecture it claims, not merely that it linked. Skipped for the
+      # two targets this runner cannot execute; `file` covers the ARM Linux one.
+      - if: matrix.target != 'aarch64-unknown-linux-musl' && matrix.target != 'aarch64-pc-windows-msvc'
+        shell: bash
+        run: target/${{ matrix.target }}/release/${{ steps.bin.outputs.name }} --version
+
+      - if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: file target/${{ matrix.target }}/release/jphfmt | grep -q 'ARM aarch64.*statically linked'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -66,9 +82,8 @@ jobs:
       - if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
-          ext=""
-          [ "${{ matrix.os }}" = "windows-latest" ] && ext=".exe"
-          cp "target/${{ matrix.target }}/release/${{ steps.bin.outputs.name }}" "jphfmt-${{ matrix.target }}$ext"
+          name="${{ steps.bin.outputs.name }}"
+          cp "target/${{ matrix.target }}/release/$name" "jphfmt-${{ matrix.target }}${name#jphfmt}"
 
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/v')
