@@ -6,11 +6,15 @@
 /// emits literal tabs; this width is only used for measuring.
 pub const TAB_WIDTH: usize = 4;
 
-/// Display width of `s` in columns. Text never contains tabs or newlines (indentation is emitted
-/// separately), so one column per `char` is exact for the measurement — a literal holding either is
-/// refused a layout rather than measured wrongly (`is_boundable`).
+/// Display width of `s` in columns: one per `char`, [`TAB_WIDTH`] for a tab. A tab reaches here
+/// inside a token — a string or character literal holding one — and counting it as a single column
+/// measures the line narrower than it renders, which is how a line could pass the fits test and
+/// still overrun §8.5's limit. Newlines do not reach here: text spanning lines is refused a layout
+/// rather than measured wrongly (`is_boundable`).
 pub fn display_width(s: &str) -> usize {
-    s.chars().count()
+    s.chars()
+        .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
+        .sum()
 }
 
 /// A layout document. Built bottom-up, then rendered at a width.
@@ -212,6 +216,20 @@ mod tests {
     fn trailing_reserved_width_forces_a_break() {
         // `(a)` is 3 wide and would fit in 4 columns, but only 2 are available.
         assert_eq!(render(&bracket_group(&["a"]), 2, 0, 0), "(\n\ta\n)");
+    }
+
+    #[test]
+    fn display_width_counts_a_tab_as_a_tab() {
+        assert_eq!(display_width("abc"), 3);
+        assert_eq!(display_width("a\tb"), 1 + TAB_WIDTH + 1);
+    }
+
+    #[test]
+    fn a_tab_in_a_literal_is_measured_not_ignored() {
+        // `("a\tb")` is 7 chars but 10 columns, so it overflows a width its char count would fit.
+        let doc = bracket_group(&["\"a\tb\""]);
+        assert_eq!(render(&doc, 7, 0, 0), "(\n\t\"a\tb\"\n)");
+        assert_eq!(render(&doc, 10, 0, 0), "(\"a\tb\")");
     }
 
     #[test]

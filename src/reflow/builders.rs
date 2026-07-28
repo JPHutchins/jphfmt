@@ -5,7 +5,8 @@
 
 use super::tokens::{
     has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident, is_trivia,
-    match_brace, match_bracket, split_chain, split_designators, split_on_commas, split_top_level,
+    match_brace, match_bracket, spans_lines, split_chain, split_designators, split_on_commas,
+    split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -292,14 +293,12 @@ fn operand_span(toks: &[Token]) -> usize {
 /// span is a directive fragment whose column a later pass rewrites. Bounding either would decide a
 /// layout from a width that the next pass measures differently.
 fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
-    // A tab or line break inside a *token* is a literal the width model does not describe
-    // (`display_width` counts one column per char, and neither is one column), and a `#` means a
-    // directive fragment whose column a later pass rewrites. Either anywhere in the construct — head
-    // included — and the width this decides from is not the width the next pass measures.
-    if toks
-        .iter()
-        .any(|t| (!is_trivia(t) && t.text.contains(['\n', '\r', '\t'])) || t.text == "#")
-    {
+    // A line break inside a *token* is an unterminated literal spanning lines, which a one-line
+    // width cannot describe, and a `#` means a directive fragment whose column a later pass
+    // rewrites. Either anywhere in the construct — head included — and the width this decides from
+    // is not the width the next pass measures. A tab needs no refusal: `display_width` counts the
+    // columns it occupies, the same as every other measure in the pipeline.
+    if spans_lines(toks) || toks.iter().any(|t| t.text == "#") {
         return false;
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
@@ -414,6 +413,12 @@ fn render_segment(toks: &[Token]) -> String {
 /// does: [`build_chain_doc`] bounds a bare one with parentheses, and this is the same content on the
 /// next pass, so both must reach the same layout or neither is a fixpoint.
 pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
+    // The author's parentheses do not exempt the span from the width model: a literal running to the
+    // end of the file has no one-line width, so every group holding one passes through, exactly as
+    // `is_boundable` refuses one a chain would have bounded.
+    if spans_lines(inner) {
+        return None;
+    }
     if let Some((segments, ops)) = split_chain(inner) {
         return Some(build_clause_group(
             segment_docs(&segments),

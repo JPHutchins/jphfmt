@@ -575,6 +575,14 @@ pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
     has_top_level(inner, "?")
 }
 
+/// Whether any significant token's own text spans lines — an unterminated literal, which the lexer
+/// runs to the end of the file. A one-line width cannot describe it, so no layout may be decided from
+/// a span holding one.
+pub(super) fn spans_lines(toks: &[Token]) -> bool {
+    toks.iter()
+        .any(|t| !is_trivia(t) && t.text.contains(['\n', '\r']))
+}
+
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
 /// and trailing trivia). Such arguments would render differently on subsequent passes because
 /// `build_expr_doc` collapses the newline into a space, which can then be reinterpreted by
