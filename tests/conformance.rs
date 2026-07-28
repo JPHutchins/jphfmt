@@ -877,7 +877,14 @@ fn a_brace_list_is_not_joined_where_a_later_pass_would_respace_it() {
     // #28: joining these onto one line hands `space_bit_fields` an `Ident : Number` and
     // `space_semicolons` a space before a `;` — both of which they rewrite, so the layout's own
     // output would be a fixpoint of a different pass. Neither is valid C in a `{}` list.
-    for src in ["x = {A\n:0};\n", "x = {A\n;};\n"] {
+    // The indented forms too: a trivia run is a `Newline` and then the indentation, so a guard
+    // that reads only the token beside the punctuator misses every element that is laid out.
+    for src in [
+        "x = {A\n:0};\n",
+        "x = {A\n;};\n",
+        "x = {A\n\t:0};\n",
+        "x = {A\n\t;};\n",
+    ] {
         let once = format(src);
         assert_eq!(format(&once), once, "must be idempotent: {src:?}");
         assert_eq!(significant(&once), significant(src));
