@@ -30,8 +30,9 @@ jobs:
         with:
           tool: cargo-mutants
 
+      # Unguarded: a sub-millisecond command with no side effects, and an output the issue title
+      # reads. Gating it would make an empty title the failure mode if the guards ever diverged.
       - id: sha
-        if: steps.cache.outputs.cache-hit != 'true'
         run: echo "short=$(git rev-parse --short HEAD)" >>"$GITHUB_OUTPUT"
 
       - id: mutants
