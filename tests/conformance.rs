@@ -613,3 +613,33 @@ fn preprocessor_scope_preserves_define_continuation() {
     let src = "#define M(a) ((a) + 1) \\\n\t+ 2\n";
     assert_eq!(format(src), src);
 }
+
+#[test]
+fn a_braceless_control_body_is_a_statement_of_its_own() {
+    // The `)` of the header ends the previous statement as much as a `;` does: the chain that
+    // follows it is the loop's whole body, and nothing else would lay it out.
+    let src = "for (;;) aaaaaaaaaaaaa | bbbbbbbbbbbbbbb | ccccccccccccccc | ddddddddddddddd;\n";
+    let once = jphfmt::format_with_width(src, 40);
+    assert!(
+        once.contains("aaaaaaaaaaaaa |\n"),
+        "the body chain must break: {once:?}"
+    );
+    assert_eq!(jphfmt::format_with_width(&once, 40), once);
+    assert_eq!(significant(&once), significant(src));
+}
+
+#[test]
+fn a_comma_operator_after_a_ternary_is_never_bounded() {
+    // `x = (a ? b : c, d)` assigns `d` where `x = a ? b : c, d` assigns the ternary. The operands
+    // are a list, so they are not an implicit container and parentheses would not be free.
+    let src = "xxxxxxxxxxxxxxx = conditionaaaaaaaaaa ? valuebbbbbbbbbbbb : valuecccccccccccc, otherdddddddddd;\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
+fn a_depth_zero_colon_is_never_a_chain_to_split() {
+    // `<` and `>` are the relational class, but `Type<T>::member` is not a comparison — the `:`
+    // says the layout belongs to something else, whatever the operands look like.
+    let src = "using decay_t = typename decay<T>::type;\n";
+    assert_eq!(format(src), src);
+}

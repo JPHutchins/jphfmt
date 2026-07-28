@@ -4,8 +4,8 @@
 //! §2.2. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    has_non_trivia, has_top_level_question, is_balanced, is_callee_ident, is_trivia, match_brace,
-    match_bracket, split_chain, split_on_commas, split_top_level,
+    has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident, is_trivia,
+    match_brace, match_bracket, split_chain, split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -122,12 +122,11 @@ pub(super) fn build_element_doc(toks: &[Token]) -> Doc {
 pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
-        && segments.iter().all(|s| has_non_trivia(s))
     {
         // Hanging, not bounded: an operand adds no parentheses of its own.
         return Doc::group(Doc::nest(Doc::concat(trailing_items(
-            segments.iter().map(|s| build_expr_doc(s)).collect(),
-            &chain_seps(&ops),
+            segment_docs(&segments),
+            chain_seps(&ops),
         ))));
     }
     let mut parts: Vec<Doc> = Vec::new();
@@ -203,12 +202,13 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
 
 /// `segments` with `seps[i]` trailing segment `i`: flat `a sep b`, or one element per line with the
 /// separator ending each (§2.4, §2.7).
-fn trailing_items(segments: Vec<Doc>, seps: &[String]) -> Vec<Doc> {
+fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
+    let mut seps = seps.into_iter();
     let mut items = Vec::new();
-    for (idx, seg) in segments.into_iter().enumerate() {
+    for seg in segments {
         items.push(seg);
-        if let Some(sep) = seps.get(idx) {
-            items.push(Doc::text(sep.clone()));
+        if let Some(sep) = seps.next() {
+            items.push(Doc::text(sep));
             items.push(Doc::Line);
         }
     }
@@ -217,7 +217,7 @@ fn trailing_items(segments: Vec<Doc>, seps: &[String]) -> Vec<Doc> {
 
 /// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with each `seps[i]`
 /// trailing its element (`;` for a `for` header, ` &&` for a condition, ` |` for a bit chain).
-fn build_clause_group(segments: Vec<Doc>, seps: &[String]) -> Doc {
+fn build_clause_group(segments: Vec<Doc>, seps: Vec<String>) -> Doc {
     if segments.is_empty() {
         return Doc::text("()");
     }
@@ -275,33 +275,23 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     {
         return false;
     }
-    let mut depth = 0i32;
-    !operands.iter().any(|t| {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            _ => {}
-        }
-        // A depth-zero `,` makes the operands a list, not one expression.
-        depth == 0 && t.kind == TokenKind::Punct && t.text == ","
-    })
+    // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
+    // `d` where `x = a ? b : c, d` assigns the ternary. `split_chain` refuses one too, but the
+    // ternary arm below it does not, and this is the gate both pass through.
+    !has_top_level(operands, ",")
 }
 
 /// Lay `segments` out bounded by parentheses that appear only when they break. Those are the only
 /// tokens jphfmt writes, and they are legal precisely because the operands are already an implicit
 /// container: bounding it changes the layout and nothing else.
-fn build_bounded_doc(head: String, segments: Vec<Doc>, seps: &[String]) -> Doc {
+fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Vec<String>) -> Doc {
     // No head means the enclosing container's own brackets already bound these operands — a call
     // argument, a `{}` element — so parentheses here would be a second pair around the same span.
     if head.is_empty() {
         return Doc::group(Doc::concat(trailing_items(segments, seps)));
     }
     Doc::group(Doc::concat([
-        Doc::Text(if head.is_empty() {
-            head
-        } else {
-            format!("{head} ")
-        }),
+        Doc::Text(format!("{head} ")),
         Doc::IfBreak {
             broken: "(".to_owned(),
             flat: String::new(),
@@ -330,27 +320,15 @@ pub(super) fn build_chain_doc(toks: &[Token]) -> Option<Doc> {
     let head = render_segment(&toks[..start]);
     if let Some((segments, ops)) = split_chain(operands) {
         return Some(build_bounded_doc(
-            head,
-            segments.iter().map(|s| build_expr_doc(s)).collect(),
-            &chain_seps(&ops),
+            &head,
+            segment_docs(&segments),
+            chain_seps(&ops),
         ));
     }
     // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
-    if !has_top_level_question(operands) {
-        return None;
-    }
-    let segments = split_top_level(operands, |t| t.kind == TokenKind::Punct && t.text == ":");
-    // Every arm must have an operand, for the reason `split_chain` says: a stranded separator would
-    // put the layout's own spacing where the author had none.
-    if segments.len() < 2 || !segments.iter().all(|s| has_non_trivia(s)) {
-        return None;
-    }
-    let seps = vec![" :".to_owned(); segments.len() - 1];
-    Some(build_bounded_doc(
-        head,
-        segments.iter().map(|s| build_expr_doc(s)).collect(),
-        &seps,
-    ))
+    let arms = ternary_arms(operands)?;
+    let seps = vec![" :".to_owned(); arms.len() - 1];
+    Some(build_bounded_doc(&head, segment_docs(&arms), seps))
 }
 
 /// The trailing separators for an operator chain: ` |`, ` &&`, and so on.
@@ -382,13 +360,7 @@ fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str)
     }
     let segments: Vec<&[Token]> = split_top_level(inner, is_sep);
     let seps = vec![sep.to_owned(); segments.len().saturating_sub(1)];
-    build_clause_group(segments.iter().map(|s| build_expr_doc(s)).collect(), &seps)
-}
-
-/// Build the document for a parenthesized ternary chain: split on the depth-zero `:`, each
-/// `cond ? val` segment carrying a trailing ` :` when broken, flat otherwise (§2.4).
-pub(super) fn build_ternary_doc(inner: &[Token]) -> Doc {
-    build_clause_doc(inner, |t| t.kind == TokenKind::Punct && t.text == ":", " :")
+    build_clause_group(segment_docs(&segments), seps)
 }
 
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
@@ -418,12 +390,12 @@ pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
         return Some(build_clause_group(
             segment_docs(&segments),
-            &chain_seps(&ops),
+            chain_seps(&ops),
         ));
     }
     let arms = ternary_arms(inner)?;
     let seps = vec![" :".to_owned(); arms.len() - 1];
-    Some(build_clause_group(segment_docs(&arms), &seps))
+    Some(build_clause_group(segment_docs(&arms), seps))
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -439,7 +411,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
     match split_chain(inner) {
-        Some((segments, ops)) => build_clause_group(segment_docs(&segments), &chain_seps(&ops)),
+        Some((segments, ops)) => build_clause_group(segment_docs(&segments), chain_seps(&ops)),
         None => build_clause_doc(inner, |_| false, ""),
     }
 }

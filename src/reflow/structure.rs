@@ -6,14 +6,14 @@
 //! reservation live alongside.
 
 use super::builders::{
-    build_brace_doc, build_call_doc, build_chain_doc, build_cond_doc, build_element_doc,
-    build_expr_doc, build_for_doc, build_paren_group, build_ternary_doc,
+    build_brace_doc, build_call_doc, build_chain_doc, build_cond_doc, build_expr_doc,
+    build_for_doc, build_paren_group,
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_control_keyword,
-    is_excluded_callee, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
-    next_paren, prev_nontrivia, split_top_level, statement_end,
+    has_non_trivia, is_balanced, is_call_head, is_chain_break, is_control_keyword,
+    is_excluded_callee, is_trivia, match_brace, match_bracket, match_open_paren, next_nontrivia,
+    next_nontrivia_in, next_paren, prev_nontrivia, split_top_level, statement_end,
 };
 use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -122,32 +122,6 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             }
         }
 
-        // A parenthesized ternary `( ... ? ... : ... )` — flat chain, each `cond ? val :` on its
-        // own line with the colon trailing (§2.4). These parens are the author's; a bare ternary is
-        // bounded by `build_chain_doc` instead, which adds its own.
-        // Skip `(` that are part of a function call (`ident(`): a call whose args contain a comment
-        // or are unbalanced falls through to per-token verbatim, so without this guard the ternary
-        // handler would accidentally reformat the call's argument list, collapsing whitespace and
-        // losing empty leading arguments. Let it passthrough instead.
-        if t.kind == TokenKind::Punct
-            && t.text == "("
-            && let Some(close) = match_bracket(toks, i)
-            && has_top_level_question(&toks[i + 1..close])
-            && !contains_comment(&toks[i + 1..close])
-            && is_balanced(&toks[i + 1..close])
-            && !(i > 0
-                && toks[i - 1].kind == TokenKind::Ident
-                && !is_excluded_callee(toks[i - 1].text))
-        {
-            let doc = build_ternary_doc(&toks[i + 1..close]);
-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
-            let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
-            emit_str(&mut out, &mut col, &rendered);
-            i = close + 1;
-            continue;
-        }
-
         // Function definition body: `{` after `)` from a function/macro definition. Always break
         // with one statement per line, body indented, `}` at the definition's own indent level.
         if t.kind == TokenKind::Punct && t.text == "{" && pending_func_def {
@@ -184,8 +158,13 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             continue;
         }
 
-        // A parenthesized operator chain — a breakable container like any other bracket group, with
-        // the operator trailing each line (§2.7).
+        // A parenthesized operator chain or ternary — a breakable container like any other bracket
+        // group, with the operator trailing each line (§2.7). These parens are the author's; a bare
+        // chain is bounded by `build_chain_doc` instead, which adds its own.
+        // Skip `(` that are part of a function call (`ident(`): a call whose args contain a comment
+        // or are unbalanced falls through to per-token verbatim, so without this guard the handler
+        // would accidentally reformat the call's argument list, collapsing whitespace and losing
+        // empty leading arguments. Let it passthrough instead.
         if t.kind == TokenKind::Punct
             && t.text == "("
             && let Some(close) = match_bracket(toks, i)
@@ -208,14 +187,13 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         // out, so without this the one construct that cannot be a container is also the one that
         // can overrun the width.
         if !is_trivia(&t)
-            && matches!(last_nonspace_char(&out), None | Some(';' | '{' | '}'))
+            && starts_statement(toks, i)
             && let Some(semi) = statement_end(toks, i)
             && !contains_comment(&toks[i..semi])
             && is_balanced(&toks[i..semi])
             && !toks[i..semi].iter().any(|s| s.text == "{")
-            && build_chain_doc(&toks[i..semi]).is_some()
+            && let Some(doc) = build_chain_doc(&toks[i..semi])
         {
-            let doc = build_element_doc(&toks[i..semi]);
             let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
             // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the
             // line after it, which this pass's own whitespace changes shift — an unstable measure.
@@ -238,6 +216,21 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         i += 1;
     }
     out
+}
+
+/// Whether the token at `i` opens a statement: nothing precedes it, or what does ended the previous
+/// one — a `;`, either brace, or the `)` of a braceless `if`/`for`/`while`/`switch` header. A property
+/// of the token stream, not of what has been emitted so far: any other `)` is inside the statement,
+/// which some handler has already claimed from its first token.
+fn starts_statement(toks: &[Token], i: usize) -> bool {
+    let Some(k) = prev_nontrivia(toks, i) else {
+        return true;
+    };
+    matches!(toks[k].text, ";" | "{" | "}")
+        || (toks[k].text == ")"
+            && match_open_paren(toks, k)
+                .and_then(|open| prev_nontrivia(toks, open))
+                .is_some_and(|head| is_control_keyword(toks[head].text)))
 }
 
 /// Format a `#define`: a function-like macro whose body is a single call/`_Generic` or a
@@ -536,7 +529,13 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
     // whitespace ending the line never reaches the output — reserving for it would measure a line
     // this pass is about to shorten, and reach a different verdict than the next pass does.
     let (mut width, mut pending) = (0usize, 0usize);
-    for t in toks.iter().skip(from) {
+    for (j, t) in toks.iter().enumerate().skip(from) {
+        // A chain breaks after its operator as a bracket group breaks after its bracket: what
+        // follows can land on a later line, so its flat width is not this construct's to reserve —
+        // and once it has broken, the next pass measures a shorter run and decides differently.
+        if is_chain_break(toks, j) {
+            return width + pending + col_width(t.text);
+        }
         let counted = match t.kind {
             TokenKind::Newline => break,
             TokenKind::LineComment | TokenKind::BlockComment => continue,

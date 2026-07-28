@@ -220,40 +220,49 @@ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> 
     None
 }
 
+/// The tokens outside every bracket group, paired with their index — the level a construct's own
+/// separators live at. The brackets themselves are not yielded; a construct is never separated by one.
+fn at_depth_zero<'a, 'src>(
+    toks: &'a [Token<'src>],
+) -> impl Iterator<Item = (usize, &'a Token<'src>)> {
+    let mut depth = 0i32;
+    toks.iter().enumerate().filter(move |(_, t)| {
+        match t.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => depth -= 1,
+            _ => return depth == 0,
+        }
+        false
+    })
+}
+
+/// The spans `cuts` separates: before the first, between each pair, after the last. A cut token
+/// belongs to no span — it is the separator, which the layout re-spells.
+fn segments_at<'a, 'src>(inner: &'a [Token<'src>], cuts: &[usize]) -> Vec<&'a [Token<'src>]> {
+    std::iter::once(0)
+        .chain(cuts.iter().map(|&j| j + 1))
+        .zip(cuts.iter().copied().chain(std::iter::once(inner.len())))
+        .map(|(from, to)| &inner[from..to])
+        .collect()
+}
+
 /// Split `inner` into segments at the depth-zero tokens for which `is_sep` holds.
 pub(super) fn split_top_level<'a, 'src>(
     inner: &'a [Token<'src>],
     is_sep: impl Fn(&Token) -> bool,
 ) -> Vec<&'a [Token<'src>]> {
-    let mut segments = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (j, t) in inner.iter().enumerate() {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            _ if depth == 0 && is_sep(t) => {
-                segments.push(&inner[start..j]);
-                start = j + 1;
-            }
-            _ => {}
-        }
-    }
-    segments.push(&inner[start..]);
-    segments
+    let cuts: Vec<usize> = at_depth_zero(inner)
+        .filter(|(_, t)| is_sep(t))
+        .map(|(j, _)| j)
+        .collect();
+    segments_at(inner, &cuts)
 }
 
 /// The next `;` at bracket depth zero at or after `from`.
 pub(super) fn statement_end(toks: &[Token], from: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    (from..toks.len()).find(|&j| {
-        match toks[j].text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            _ => {}
-        }
-        depth == 0 && toks[j].kind == TokenKind::Punct && toks[j].text == ";"
-    })
+    at_depth_zero(&toks[from..])
+        .find(|(_, t)| t.kind == TokenKind::Punct && t.text == ";")
+        .map(|(j, _)| from + j)
 }
 
 /// Split `inner` on commas at bracket depth zero.
@@ -297,25 +306,39 @@ fn is_binary_position(inner: &[Token], j: usize) -> bool {
     })
 }
 
-/// Depth-zero indices where a `class` operator binds two operands.
-fn chain_cuts(inner: &[Token], class: &[&str]) -> Vec<usize> {
-    let mut depth = 0i32;
-    let mut cuts = Vec::new();
-    for (j, t) in inner.iter().enumerate() {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            text if depth == 0
-                && matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
-                && class.contains(&text)
-                && is_binary_position(inner, j) =>
-            {
-                cuts.push(j);
-            }
-            _ => {}
-        }
-    }
-    cuts
+/// Whether the token at `j` is an operator a chain breaks after — so what follows it can land on a
+/// later line, exactly as the contents of a bracket group can.
+pub(super) fn is_chain_break(toks: &[Token], j: usize) -> bool {
+    matches!(toks[j].kind, TokenKind::Operator | TokenKind::Punct)
+        && CHAIN_CLASSES.iter().any(|c| c.contains(&toks[j].text))
+        && is_binary_position(toks, j)
+}
+
+/// The depth-zero indices where the loosest-binding class present binds two operands, in one pass: a
+/// cut in a looser class discards the cuts collected for a tighter one, since only the loosest is the
+/// container this chain breaks as.
+fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
+    use std::cmp::Ordering;
+    at_depth_zero(inner)
+        .filter_map(|(j, t)| {
+            matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
+                .then(|| CHAIN_CLASSES.iter().position(|c| c.contains(&t.text)))
+                .flatten()
+                .filter(|_| is_binary_position(inner, j))
+                .map(|class| (class, j))
+        })
+        .fold(
+            (CHAIN_CLASSES.len(), Vec::new()),
+            |(loosest, mut cuts), (class, j)| match class.cmp(&loosest) {
+                Ordering::Less => (class, vec![j]),
+                Ordering::Equal => {
+                    cuts.push(j);
+                    (loosest, cuts)
+                }
+                Ordering::Greater => (loosest, cuts),
+            },
+        )
+        .1
 }
 
 /// Split `inner` into the operands of its loosest-binding binary operator run at depth zero, paired
@@ -325,22 +348,15 @@ fn chain_cuts(inner: &[Token], class: &[&str]) -> Vec<usize> {
 pub(super) fn split_chain<'a, 'src>(
     inner: &'a [Token<'src>],
 ) -> Option<(Vec<&'a [Token<'src>]>, Vec<&'src str>)> {
-    if has_top_level_question(inner) || !chain_cuts(inner, &[":"]).is_empty() {
-        return None;
-    }
     // A depth-zero `,` is a list, not a chain: its parts are not this operator's operands.
-    if !chain_cuts(inner, &[","]).is_empty() {
+    if has_top_level(inner, "?") || has_top_level(inner, ":") || has_top_level(inner, ",") {
         return None;
     }
-    let cuts = CHAIN_CLASSES
-        .iter()
-        .map(|class| chain_cuts(inner, class))
-        .find(|cuts| !cuts.is_empty())?;
-    let segments: Vec<&[Token]> = std::iter::once(0)
-        .chain(cuts.iter().map(|&j| j + 1))
-        .zip(cuts.iter().copied().chain(std::iter::once(inner.len())))
-        .map(|(from, to)| &inner[from..to])
-        .collect();
+    let cuts = loosest_cuts(inner);
+    if cuts.is_empty() {
+        return None;
+    }
+    let segments = segments_at(inner, &cuts);
     // An operator missing an operand is not a chain: rendering the empty segment would leave the
     // separator stranded, and the space it lands beside is not this pass's to keep.
     segments
@@ -389,18 +405,14 @@ pub(super) fn is_balanced(toks: &[Token]) -> bool {
     paren == 0 && brack == 0 && brace == 0
 }
 
+/// Whether the punctuator `text` appears at bracket depth zero in `inner`.
+pub(super) fn has_top_level(inner: &[Token], text: &str) -> bool {
+    at_depth_zero(inner).any(|(_, t)| t.kind == TokenKind::Punct && t.text == text)
+}
+
 /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
 pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
-    let mut depth = 0i32;
-    for t in inner {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            "?" if depth == 0 && t.kind == TokenKind::Punct => return true,
-            _ => {}
-        }
-    }
-    false
+    has_top_level(inner, "?")
 }
 
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
