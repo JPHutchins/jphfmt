@@ -39,15 +39,27 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          # glibc cannot be linked self-contained, so the ARM Linux build is musl: `rust-lld` plus
+          # Rust's own musl libc need no cross toolchain, and a static binary runs on any distro.
+          - {
+              os: ubuntu-latest,
+              target: aarch64-unknown-linux-musl,
+              rustflags: "-C linker=rust-lld -C link-self-contained=yes",
+            }
           - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
+      - env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - id: bin
         shell: bash
