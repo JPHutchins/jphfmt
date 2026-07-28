@@ -6,16 +6,17 @@
 //! reservation live alongside.
 
 use super::builders::{
-    build_brace_doc, build_call_doc, build_chain_doc, build_cond_doc, build_expr_doc,
-    build_for_doc, build_paren_group,
+    build_brace_doc, build_call_body, build_call_doc, build_chain_doc, build_cond_doc,
+    build_expr_doc, build_for_doc, build_paren_group,
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, is_balanced, is_call_head, is_chain_break, is_control_keyword,
-    is_excluded_callee, is_trivia, match_brace, match_bracket, match_open_paren, next_nontrivia,
-    next_nontrivia_in, next_paren, prev_nontrivia, split_top_level, statement_end,
+    has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break, is_comment,
+    is_control_keyword, is_excluded_callee, is_trivia, match_brace, match_bracket,
+    match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
+    split_brace_line_comment, split_top_level, statement_end,
 };
-use crate::doc::{TAB_WIDTH, display_width, render};
+use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
@@ -23,6 +24,13 @@ use crate::lexer::{Token, TokenKind};
 pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
     let mut out = String::new();
     let mut col = start_col;
+    emit_tokens(toks, &mut out, &mut col, width);
+    out
+}
+
+/// Walk `toks`, appending to `out` so an enclosing construct's indentation is already in view when a
+/// nested one measures its own base level.
+fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) {
     let mut i = 0usize;
     let mut paren_depth = 0i32;
     let mut in_init = false;
@@ -30,13 +38,13 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
     while i < toks.len() {
         let t = toks[i];
 
-        if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(&out) {
+        if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(out) {
             let is_define = next_nontrivia(toks, i + 1)
                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
             i = if is_define {
-                emit_define(toks, i, &mut out, &mut col, width)
+                emit_define(toks, i, out, col, width)
             } else {
-                emit_directive(toks, i, &mut out, &mut col)
+                emit_directive(toks, i, out, col)
             };
             continue;
         }
@@ -49,18 +57,18 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && is_balanced(&toks[open + 1..close])
         {
             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
-            emit_str(&mut out, &mut col, t.text);
-            emit_str(&mut out, &mut col, " ");
+            emit_str(out, col, t.text);
+            emit_str(out, col, " ");
             let inner = &toks[open + 1..close];
             let doc = if t.text == "for" {
                 build_for_doc(inner)
             } else {
                 build_cond_doc(inner)
             };
-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
-            emit_str(&mut out, &mut col, &rendered);
+            let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
+            emit_str(out, col, &rendered);
             i = close + 1;
             continue;
         }
@@ -70,9 +78,9 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && let Some(brace) = enum_body_brace(toks, i)
         {
             for tok in &toks[i..brace] {
-                emit_str(&mut out, &mut col, tok.text);
+                emit_str(out, col, tok.text);
             }
-            i = emit_brace(toks, brace, true, &mut out, &mut col, width);
+            i = emit_brace(toks, brace, true, out, col, width);
             continue;
         }
 
@@ -81,12 +89,12 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         {
             let inner = &toks[i + 2..close];
             if !contains_comment(inner) && is_balanced(inner) && !has_middle_newline(inner) {
-                emit_str(&mut out, &mut col, t.text);
+                emit_str(out, col, t.text);
                 let doc = build_call_doc(inner);
-                let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+                let base_level = current_line_indent_cols(out) / TAB_WIDTH;
                 let reserved = trailing_reserved(toks, close + 1);
-                let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
-                emit_str(&mut out, &mut col, &rendered);
+                let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
+                emit_str(out, col, &rendered);
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
                 i = close + 1;
@@ -98,7 +106,7 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
                 // their intra-arg newlines, flipping this call's fits/explode decision on the
                 // next pass and breaking idempotency.
                 for tok in &toks[i..=close] {
-                    emit_str(&mut out, &mut col, tok.text);
+                    emit_str(out, col, tok.text);
                 }
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
@@ -114,9 +122,9 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
                 .get(i + 1)
                 .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
         {
-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             if let Some((block, next)) = format_stmt_expr(toks, i, base_level, width) {
-                emit_str(&mut out, &mut col, &block);
+                emit_str(out, col, &block);
                 i = next;
                 continue;
             }
@@ -126,7 +134,7 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         // with one statement per line, body indented, `}` at the definition's own indent level.
         if t.kind == TokenKind::Punct && t.text == "{" && pending_func_def {
             pending_func_def = false;
-            i = emit_func_body(toks, i, &mut out, &mut col, width);
+            i = emit_func_body(toks, i, out, col, width);
             continue;
         }
 
@@ -134,10 +142,10 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
         if in_init
             && t.kind == TokenKind::Punct
             && t.text == "{"
-            && last_nonspace_char(&out) != Some('(')
+            && last_nonspace_char(out) != Some('(')
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, &mut out, &mut col, width);
+            i = emit_brace(toks, i, false, out, col, width);
             continue;
         }
 
@@ -154,7 +162,7 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && !contains_comment(&toks[paren..i])
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, &mut out, &mut col, width);
+            i = emit_brace(toks, i, false, out, col, width);
             continue;
         }
 
@@ -175,10 +183,10 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
                 && !is_excluded_callee(toks[i - 1].text))
             && let Some(doc) = build_paren_group(&toks[i + 1..close])
         {
-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), col, base_level);
-            emit_str(&mut out, &mut col, &rendered);
+            let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
+            emit_str(out, col, &rendered);
             i = close + 1;
             continue;
         }
@@ -194,11 +202,11 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
             && !toks[i..semi].iter().any(|s| s.text == "{")
             && let Some(doc) = build_chain_doc(&toks[i..semi])
         {
-            let base_level = current_line_indent_cols(&out) / TAB_WIDTH;
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the
             // line after it, which this pass's own whitespace changes shift — an unstable measure.
-            let rendered = render(&doc, width.saturating_sub(1), col, base_level);
-            emit_str(&mut out, &mut col, &rendered);
+            let rendered = render(&doc, width.saturating_sub(1), *col, base_level);
+            emit_str(out, col, &rendered);
             i = semi;
             continue;
         }
@@ -212,10 +220,9 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
                 _ => {}
             }
         }
-        emit_str(&mut out, &mut col, t.text);
+        emit_str(out, col, t.text);
         i += 1;
     }
-    out
 }
 
 /// Whether the token at `i` opens a statement: nothing precedes it, or what does ended the previous
@@ -244,11 +251,13 @@ fn emit_define(
     width: usize,
 ) -> usize {
     let end = directive_end(toks, start);
-    if let Some((prefix, body)) = split_define(toks, start, end)
-        && let Some(body_str) = format_define_body(&body, display_width(&prefix), width)
+    if let Some(def) = split_define(toks, start, end)
+        && let Some(body_str) = format_define_body(&def.body, display_width(&def.prefix), width)
     {
-        let full = format!("{prefix}{body_str}");
-        let continued = full.replace('\n', " \\\n");
+        let flat = format!("{prefix}{body_str}", prefix = def.prefix);
+        let continued = explode_params(&def, &flat, width)
+            .unwrap_or(flat)
+            .replace('\n', " \\\n");
         emit_str(out, col, &continued);
         emit_str(out, col, "\n");
         return end;
@@ -259,48 +268,114 @@ fn emit_define(
     end
 }
 
+/// A `#define`'s parameter list is a container like any other (§2.2), so it explodes one parameter
+/// per line when the flat form's first line — the parameters *and* however much of the body opens on
+/// it — overruns the width. The body then starts the line after the `)`, indented one level; its own
+/// layout is measured against the width that indent leaves. `None` when the flat form fits, or for an
+/// object-like macro, which has no list to break.
+fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
+    let continuation = usize::from(flat.contains('\n')) * CONTINUATION_WIDTH;
+    if display_width(flat.lines().next().unwrap_or(flat)) + continuation <= width {
+        return None;
+    }
+    let params = def.params.as_deref()?;
+    let continued = width.saturating_sub(CONTINUATION_WIDTH);
+    let body = format_define_body(&def.body, 0, continued.saturating_sub(TAB_WIDTH))?;
+    // A body of more than one line cannot be indented under the `)`: on the next pass its own line
+    // breaks make it a passthrough, so the tab added here would be part of the text and another
+    // would be added on top of it, once per run.
+    if body.contains('\n') {
+        return None;
+    }
+    let params = render(
+        &Doc::ForceBreak(Box::new(build_call_body(params))),
+        continued,
+        display_width(&def.head),
+        0,
+    );
+    Some(format!("{head}{params}\n\t{body}", head = def.head))
+}
+
+/// Columns the ` \` a continued line ends with occupies.
+const CONTINUATION_WIDTH: usize = 2;
+
+/// Join a continued run of tokens onto one line, dropping its `\`s. [`emit_define`] re-adds a
+/// continuation at every newline it is handed, so a newline surviving here would take the `\` beside
+/// it and grow another on each pass. Same-line whitespace is left as written: the `#`-to-keyword gap
+/// that [`super::scope::scope_directives`] rewrites must reach the width measurement unchanged.
+fn flatten_continuations(toks: &[Token]) -> String {
+    let mut out = String::new();
+    let mut broken = false;
+    for t in toks {
+        if is_backslash(t) || t.kind == TokenKind::Newline {
+            while out.ends_with([' ', '\t']) {
+                out.pop();
+            }
+            broken = true;
+        } else if !(broken && t.kind == TokenKind::Whitespace) {
+            if broken {
+                out.push(' ');
+                broken = false;
+            }
+            out.push_str(t.text);
+        }
+    }
+    out
+}
+
 /// Split a `#define` into its `#define NAME(params) ` prefix text and its body tokens (with
 /// continuation backslashes removed and surrounding trivia trimmed). `None` if it has no body.
-fn split_define<'src>(
-    toks: &[Token<'src>],
-    start: usize,
-    end: usize,
-) -> Option<(String, Vec<Token<'src>>)> {
+struct Define<'src> {
+    prefix: String,
+    head: String,
+    params: Option<Vec<Token<'src>>>,
+    body: Vec<Token<'src>>,
+}
+
+/// Drop the continuation `\`s from `toks` — they belong to the input's line breaks, not to the
+/// construct, and are re-added per line by [`emit_define`].
+fn without_continuations<'src>(toks: &[Token<'src>]) -> Vec<Token<'src>> {
+    toks.iter().filter(|t| !is_backslash(t)).copied().collect()
+}
+
+fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<Define<'src>> {
     let define = next_nontrivia_in(toks, start + 1, end)?;
     let name = next_nontrivia_in(toks, define + 1, end)?;
-    let prefix_end = match toks.get(name + 1) {
-        // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is
-        // not closed within it (e.g. a newline ended the directive mid-params), so it is not a
-        // function-like macro we can split — pass through verbatim.
-        Some(n) if n.kind == TokenKind::Punct && n.text == "(" => {
-            let close = match_bracket(toks, name + 1)?;
-            if close >= end {
-                return None;
-            }
-            close + 1
+    let function_like = toks
+        .get(name + 1)
+        .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");
+    // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is not
+    // closed within it (e.g. a newline ended the directive mid-params), so it is not a
+    // function-like macro we can split — pass through verbatim.
+    let close = if function_like {
+        let close = match_bracket(toks, name + 1)?;
+        if close >= end {
+            return None;
         }
-        _ => name + 1,
+        Some(close)
+    } else {
+        None
     };
-    let prefix: String = toks[start..prefix_end]
-        .iter()
-        .map(|t| t.text)
-        .collect::<String>()
-        + " ";
-    let mut body: Vec<Token> = toks[prefix_end..end]
-        .iter()
-        .filter(|t| !(t.kind == TokenKind::Punct && t.text == "\\"))
-        .copied()
-        .collect();
-    while body.first().is_some_and(is_trivia) {
-        body.remove(0);
-    }
-    while body.last().is_some_and(is_trivia) {
-        body.pop();
-    }
+    let prefix_end = close.map_or(name + 1, |close| close + 1);
+    let body = {
+        let mut body = without_continuations(&toks[prefix_end..end]);
+        while body.first().is_some_and(is_trivia) {
+            body.remove(0);
+        }
+        while body.last().is_some_and(is_trivia) {
+            body.pop();
+        }
+        body
+    };
     if body.is_empty() {
         return None;
     }
-    Some((prefix, body))
+    Some(Define {
+        prefix: flatten_continuations(&toks[start..prefix_end]) + " ",
+        head: flatten_continuations(&toks[start..=name]),
+        params: close.map(|close| without_continuations(&toks[name + 2..close])),
+        body,
+    })
 }
 
 /// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
@@ -326,6 +401,10 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
 /// at `base_level + 1` laid out with the §2.2 rule (so a nested call explodes when it overflows),
 /// `})` at `base_level`. Returns the block and the index past the `)`, or `None` if the braces are
 /// unbalanced or a statement nests a block or carries a comment.
+///
+/// That last guard is load-bearing here, unlike in [`emit_func_body`], which hands its body back to
+/// [`emit_tokens`]: this splits on `;`, and a nested block is not `;`-terminated, so a `{` inside
+/// would land mid-statement. Such a body passes through instead.
 fn format_stmt_expr(
     toks: &[Token],
     open: usize,
@@ -335,10 +414,9 @@ fn format_stmt_expr(
     let paren_close = match_bracket(toks, open)?;
     let brace_close = match_brace(toks, open + 1)?;
     let inner = &toks[open + 2..brace_close];
-    let unformattable = inner.iter().any(|t| {
-        (t.kind == TokenKind::Punct && t.text == "{")
-            || matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
-    });
+    let unformattable = inner
+        .iter()
+        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
     if unformattable || !is_balanced(inner) {
         return None;
     }
@@ -390,10 +468,9 @@ fn emit_brace(
         return open + 1;
     };
     let inner = &toks[open + 1..close];
-    let has_comment_or_directive = inner.iter().any(|t| {
-        matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
-            || (t.kind == TokenKind::Punct && t.text == "#")
-    });
+    let has_comment_or_directive = inner
+        .iter()
+        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "#"));
     if has_comment_or_directive || !is_balanced(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
@@ -408,26 +485,23 @@ fn emit_brace(
     close + 1
 }
 
-/// Format a function definition body: always break with `{\n\tstatements\n}`. Preserves blank
-/// lines within the body (they survive `retab` normalization). Falls back to verbatim for bodies
-/// with comments, directives, or nested braces (same M7/M8 policy as [`emit_brace`]).
+/// Format a function definition body: always break with `{\n\tstatements\n}`, the statements walked
+/// by [`emit_tokens`] so every construct inside is laid out. Blank lines within the body survive.
+/// Falls back to verbatim only for unbalanced braces — a comment, a directive or a nested block is
+/// handled rather than refused, which is where this differs from [`emit_brace`].
 fn emit_func_body(
     toks: &[Token],
     open: usize,
     out: &mut String,
     col: &mut usize,
-    _width: usize,
+    width: usize,
 ) -> usize {
     let Some(close) = match_brace(toks, open) else {
         emit_str(out, col, toks[open].text);
         return open + 1;
     };
     let inner = &toks[open + 1..close];
-    let unformattable = inner.iter().any(|t| {
-        matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
-            || (t.kind == TokenKind::Punct && matches!(t.text, "#" | "{"))
-    });
-    if unformattable || !is_balanced(inner) {
+    if !is_balanced(inner) {
         emit_str(out, col, toks[open].text);
         for tok in &toks[open + 1..=close] {
             emit_str(out, col, tok.text);
@@ -442,31 +516,34 @@ fn emit_func_body(
     // The space from `space_braces` is already in the token stream before `{`.
     emit_str(out, col, "{");
 
-    // Strip leading and trailing trivia from body tokens, then emit verbatim.
-    // `retab` at the end normalizes indentation; blank lines are naturally preserved.
-    let start = inner
-        .iter()
-        .position(|t| !is_trivia(t))
-        .unwrap_or(inner.len());
-    let end = inner
-        .iter()
-        .rposition(|t| !is_trivia(t))
-        .map_or(0, |p| p + 1);
-
-    if start < end {
-        let body_core = &inner[start..end];
-        emit_str(out, col, "\n");
-        emit_str(out, col, &inner_indent);
-        for tok in body_core {
-            emit_str(out, col, tok.text);
-        }
-        emit_str(out, col, "\n");
-        emit_str(out, col, &close_indent);
-        emit_str(out, col, "}");
-    } else {
-        // Empty body — keep `{}` inline
-        emit_str(out, col, "}");
+    let (head, body) = split_brace_line_comment(inner);
+    for tok in head {
+        emit_str(out, col, tok.text);
     }
+
+    if body.is_empty() {
+        // Nothing to lay out. A comment-only body keeps its own spacing rather than have its `}`
+        // moved for no gain; an empty one collapses to `{}`.
+        if !head.is_empty() {
+            for tok in &inner[head.len()..] {
+                emit_str(out, col, tok.text);
+            }
+        }
+        emit_str(out, col, "}");
+        return close + 1;
+    }
+
+    emit_str(out, col, "\n");
+    if body[0].text != "#" {
+        emit_str(out, col, &inner_indent);
+    }
+    emit_tokens(body, out, col, width);
+    // A directive carries its own line break, so the one before `}` is already there.
+    if !out.ends_with('\n') {
+        emit_str(out, col, "\n");
+    }
+    emit_str(out, col, &close_indent);
+    emit_str(out, col, "}");
 
     close + 1
 }

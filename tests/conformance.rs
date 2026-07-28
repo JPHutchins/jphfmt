@@ -189,17 +189,126 @@ fn control_keyword_gets_one_space_before_paren() {
 #[test]
 fn pointers_are_middle_spaced_after_type_keywords() {
     assert_eq!(format("int*p;\n"), "int * p;\n");
-    assert_eq!(format("int **p;\n"), "int ** p;\n");
     assert_eq!(format("char const*const q;\n"), "char const * const q;\n");
     assert_eq!(format("void*f(void);\n"), "void * f(void);\n");
 }
 
 #[test]
+fn pointer_declarator_stars_never_cluster() {
+    // §2.5: only the dereference operator clusters with its operand, so each `*` in a declarator
+    // stands alone.
+    assert_eq!(format("int **p;\n"), "int * * p;\n");
+    assert_eq!(format("int***q;\n"), "int * * * q;\n");
+    assert_eq!(
+        format("void py_release(PyObject ** const r);\n"),
+        "void py_release(PyObject * * const r);\n"
+    );
+    assert_eq!(format("PyObject *const s;\n"), "PyObject * const s;\n");
+    assert_eq!(format("PyObject **t;\n"), "PyObject * * t;\n");
+    // A multiply keeps its own spacing: no declaration position, no declarator.
+    assert_eq!(format("z = a ** b;\n"), "z = a ** b;\n");
+}
+
+#[test]
+fn typedef_pointer_declarators_are_middle_spaced() {
+    // A typedef name in declaration position is a type, so its `*` is a declarator (§6 only bars
+    // the runs an expression could also produce).
+    for src in [
+        "uint32_t *p;\n",
+        "size_t *p;\n",
+        "FILE *p;\n",
+        "PyObject *p;\n",
+    ] {
+        assert_eq!(format(src), src.replace('*', "* "));
+    }
+    assert_eq!(format("mytype*p;\n"), "mytype * p;\n");
+    assert_eq!(
+        format("static PyObject *probe(PyObject *self);\n"),
+        "static PyObject * probe(PyObject * self);\n"
+    );
+    assert_eq!(
+        format("void f(int a, PyObject *b);\n"),
+        "void f(int a, PyObject * b);\n"
+    );
+    assert_eq!(
+        format("typedef PyObject *ptr_t;\n"),
+        "typedef PyObject * ptr_t;\n"
+    );
+}
+
+#[test]
+fn a_specifier_keyword_is_not_a_callee() {
+    // `_Noreturn` introduces a declaration; it never takes an argument list, so its `(` must not be
+    // tightened the way a call's is.
+    assert_eq!(format("_Noreturn (void) f;\n"), "_Noreturn (void) f;\n");
+    assert_eq!(
+        format("_Noreturn void die(void);\n"),
+        "_Noreturn void die(void);\n"
+    );
+}
+
+#[test]
+fn comma_separated_declarators_are_all_spaced() {
+    // The second declarator's type is back past the comma, so its `*` is a declarator too.
+    assert_eq!(format("int *p, *q, *r;\n"), "int * p, * q, * r;\n");
+    assert_eq!(format("PyObject *x, *y;\n"), "PyObject * x, * y;\n");
+    assert_eq!(format("struct foo *a, *b;\n"), "struct foo * a, * b;\n");
+}
+
+#[test]
+fn a_multiply_inside_braces_is_left_alone() {
+    // An initializer element is an expression, whichever brace holds it — `=`, a compound literal
+    // in `return` or in an argument, or a nested list.
+    for src in [
+        "int v[] = {a*b};\n",
+        "int m[] = {{a*b}, {c*d}};\n",
+        "f((struct Foo){a*b});\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+    assert_eq!(
+        format("return (struct Foo){a*b};\n"),
+        "return (struct Foo){a*b};\n"
+    );
+}
+
+#[test]
+fn a_declaration_after_a_brace_is_spaced() {
+    // The `{` and `}` statement boundaries, not just `;` and start-of-input.
+    assert_eq!(format("{ PyObject *p; }\n"), "{ PyObject * p; }\n");
+    assert_eq!(
+        format("void f(void) {}\nPyObject *p;\n"),
+        "void f(void) {}\nPyObject * p;\n"
+    );
+}
+
+#[test]
+fn multiply_is_not_a_declarator() {
+    // Every `Ident * Ident` an expression can produce must pass through (§6): the two are
+    // token-level identical, so only declaration position tells them apart.
+    for src in [
+        "z = a*b;\n",
+        "int n = f(a*b);\n",
+        "x = arr[n*m];\n",
+        "q = obj->fn(a*b);\n",
+        "v = n*3;\n",
+        "w = sizeof(int)*n;\n",
+        "y = a * *p;\n",
+        "foo(bar, baz*qux);\n",
+    ] {
+        assert_eq!(format(src), src, "expression must pass through: {src:?}");
+    }
+    assert_eq!(format("return f(a*b);\n"), "return f(a*b);\n");
+    // Accepted §6 trade-off: an expression statement whose result is discarded is
+    // token-indistinguishable from a declaration, so it is spaced as one.
+    assert_eq!(format("a*b;\n"), "a * b;\n");
+}
+
+#[test]
 fn ambiguous_star_is_left_alone() {
-    // multiply and user-typedef pointers can't be told apart at the token level (§6)
+    // a multiply in expression position keeps whatever spacing it was written with (§6)
     assert_eq!(format("z = a*b;\n"), "z = a*b;\n");
     assert_eq!(format("z = a * b;\n"), "z = a * b;\n");
-    assert_eq!(format("mytype*p;\n"), "mytype*p;\n");
 }
 
 #[test]
@@ -588,6 +697,60 @@ fn function_params_break_before_inner_call_in_body() {
 }
 
 #[test]
+fn constructs_inside_a_function_body_are_structured() {
+    // §2.2 applies wherever the construct is: a body is walked, not passed through.
+    let long_call = "void f(void) {\n\tresult = some_function_with_a_fairly_long_name(first_argument_value, second_argument_value, third_argument_value);\n}\n";
+    let expected = "void f(void) {\n\tresult = some_function_with_a_fairly_long_name(\n\t\tfirst_argument_value,\n\t\tsecond_argument_value,\n\t\tthird_argument_value\n\t);\n}\n";
+    assert_eq!(format(long_call), expected);
+
+    // A nested block no longer stops the walk, and a leading-operator condition is re-laid out
+    // with the operators trailing (§2.7).
+    let nested = "void f(void) {\n\tif (x) {\n\t\tif (alpha_value > 100\n\t\t\t&& bravo_value > 200\n\t\t\t&& charlie_value > 300\n\t\t\t&& delta_value > 400\n\t\t\t&& echo_value > 500\n\t\t\t&& foxtrot_value > 600) {\n\t\t\tg();\n\t\t}\n\t}\n}\n";
+    let once = format(nested);
+    assert!(
+        once.contains("alpha_value > 100 &&\n"),
+        "condition must re-lay out with trailing operators: {once}"
+    );
+    assert_eq!(format(&once), once);
+}
+
+#[test]
+fn a_literal_inside_a_body_canonicalizes_too() {
+    // #16's own repro wraps its compound literal in a one-line function, so it needed the body to be
+    // walked at all — the padding rule and this one only meet here.
+    for src in [
+        "int f(void) { return (struct s){ .x = 1 }; }\n",
+        "int f(void) { return (struct s) { .x = 1 }; }\n",
+        "int f(void) { return (struct s){.x = 1}; }\n",
+    ] {
+        assert_eq!(
+            format(src),
+            "int f(void) {\n\treturn (struct s){.x = 1};\n}\n",
+            "input {src:?}"
+        );
+    }
+}
+
+#[test]
+fn a_directive_last_in_a_body_leaves_no_blank_line() {
+    // A directive brings its own line break; the one before `}` must not be added on top of it.
+    let src = "void f(void) {\n\tg();\n#define M(a) call(a)\n}\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
+fn a_comment_on_the_brace_line_stays_there() {
+    // §2.1: comments are never moved, so the forced break after `{` goes after the comment.
+    let src = "int f(int n) { /* VLA-syntax parameter */\n\treturn n;\n}\n";
+    assert_eq!(format(src), src);
+    assert_eq!(
+        format("void f(void) { /* nothing */ }\n"),
+        "void f(void) { /* nothing */ }\n"
+    );
+    assert_eq!(format("void f(void) {\n\n}\n"), "void f(void) {}\n");
+}
+
+#[test]
 fn preprocessor_scope_indents_between_hash_and_keyword() {
     let src = "#if a\n#define thing\n#else\n#if b\n#define thing\n#if c\n#define thing\n#endif\n#endif\n#endif\n";
     let expected = "#if a\n#\tdefine thing\n#else\n#\tif b\n#\t\tdefine thing\n#\t\tif c\n#\t\t\tdefine thing\n#\t\tendif\n#\tendif\n#endif\n";
@@ -604,6 +767,35 @@ fn preprocessor_scope_is_idempotent() {
     let src = "#if a\n#define thing\n#else\n#if b\n#define thing\n#if c\n#define thing\n#endif\n#endif\n#endif\n";
     let once = format(src);
     assert_eq!(format(&once), once, "scope pass must be idempotent");
+}
+
+// A `#define` has no fixture shape: `tests/cases` mutates trivia, and any newline inserted into a
+// directive ends it — leaving a malformed macro whose trailing code lands on a fits boundary that
+// merged `main` is already unstable on. These conformance cases pin the behavior instead.
+#[test]
+fn define_params_explode_when_the_line_overruns() {
+    // §2.2: a macro's parameter list is a container like a call's, so it breaks one per line and
+    // the body starts after the `)`.
+    let src = "#define __pldx_range(access_kind, retention_policy, length, \\\n                    metadata, addr) \\\n  __builtin_arm_range_prefetch(addr, access_kind, retention_policy, metadata)\n";
+    let expected = "#define __pldx_range( \\\n\taccess_kind, \\\n\tretention_policy, \\\n\tlength, \\\n\tmetadata, \\\n\taddr \\\n) \\\n\t__builtin_arm_range_prefetch(addr, access_kind, retention_policy, metadata)\n";
+    assert_eq!(format(src), expected);
+    assert_eq!(format(expected), expected);
+    // A list whose line fits keeps the body on the `#define` line.
+    assert_eq!(
+        format("#define M(a, b) f(a, b)\n"),
+        "#define M(a, b) f(a, b)\n"
+    );
+}
+
+#[test]
+fn continued_define_params_do_not_accumulate_backslashes() {
+    // A `\` left in the parameter list is not a continuation but an invalid token, and
+    // `significant()` filters backslashes out, so nothing else in the suite would notice.
+    let src = "#define M(a, \\\n\t\tb) f(a, b)\n";
+    let once = format(src);
+    assert_eq!(once, "#define M(a, b) f(a, b)\n");
+    assert_eq!(format(&once), once);
+    assert!(!once.contains("\\ \\"), "stray backslash: {once:?}");
 }
 
 #[test]

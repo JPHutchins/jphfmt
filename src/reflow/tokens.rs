@@ -28,7 +28,7 @@ pub(super) fn heads_body(t: &Token) -> bool {
 /// `(noreturn)`, or a parameter list is never mistaken for one.
 pub(super) fn is_type_group(inner: &[Token]) -> bool {
     let significant = || inner.iter().filter(|t| !is_trivia(t));
-    significant().any(|t| is_type_context(t.text) || matches!(t.text, "struct" | "union" | "enum"))
+    significant().any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
         && significant().all(|t| {
             // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
             // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
@@ -51,24 +51,52 @@ pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
 /// not a multiply, and after which `(` opens a declarator group, not a call's argument list. User
 /// typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p`/`foo(x)` pass through (§6).
 pub(super) fn is_type_context(text: &str) -> bool {
-    matches!(
-        text,
-        "void"
-            | "char"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "signed"
-            | "unsigned"
-            | "_Bool"
-            | "bool"
-            | "const"
-            | "volatile"
-            | "_Atomic"
-            | "restrict"
-    )
+    is_qualifier(text)
+        || matches!(
+            text,
+            "void"
+                | "char"
+                | "short"
+                | "int"
+                | "long"
+                | "float"
+                | "double"
+                | "signed"
+                | "unsigned"
+                | "_Bool"
+                | "bool"
+        )
+}
+
+/// A type qualifier — a keyword that may follow a declarator's `*` but never a multiply's.
+pub(super) fn is_qualifier(text: &str) -> bool {
+    matches!(text, "const" | "volatile" | "restrict" | "_Atomic")
+}
+
+/// A keyword that introduces a `struct`/`union`/`enum` tag, after which an identifier names a type.
+pub(super) fn is_tag_keyword(text: &str) -> bool {
+    matches!(text, "struct" | "union" | "enum")
+}
+
+/// A keyword that can only introduce a declaration, so an `Ident *` after one is a declarator
+/// rather than a multiply — the disambiguation `is_type_context` cannot make for a typedef name.
+pub(super) fn is_decl_specifier(text: &str) -> bool {
+    is_type_context(text)
+        || is_tag_keyword(text)
+        || matches!(
+            text,
+            "static"
+                | "extern"
+                | "register"
+                | "inline"
+                | "typedef"
+                | "thread_local"
+                | "_Thread_local"
+                | "constexpr"
+                | "_Noreturn"
+                | "_Alignas"
+                | "alignas"
+        )
 }
 
 /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
@@ -94,6 +122,7 @@ pub(super) fn is_excluded_callee(name: &str) -> bool {
             | "_Static_assert"
             | "__attribute__"
             | "_Pragma"
+            | "_Noreturn"
             | "asm"
             | "__asm__"
             | "__asm"
@@ -177,13 +206,18 @@ pub(super) fn next_nontrivia_in(toks: &[Token], from: usize, end: usize) -> Opti
     (from..end).find(|&j| !is_trivia(&toks[j]))
 }
 
+/// A line-continuation `\`.
+pub(super) fn is_backslash(t: &Token) -> bool {
+    t.kind == TokenKind::Punct && t.text == "\\"
+}
+
 /// One past the last token of the preprocessor directive starting at `start` (following `\` line
 /// continuations).
 pub(super) fn directive_end(toks: &[Token], start: usize) -> usize {
     let mut i = start;
     while i < toks.len() {
         let is_newline = toks[i].kind == TokenKind::Newline;
-        let continued = is_newline && i > 0 && toks[i - 1].text == "\\";
+        let continued = is_newline && i > 0 && is_backslash(&toks[i - 1]);
         i += 1;
         if is_newline && !continued {
             break;
@@ -375,9 +409,12 @@ pub(super) fn has_non_trivia(toks: &[Token]) -> bool {
     toks.iter().any(|t| !is_trivia(t))
 }
 
+pub(super) fn is_comment(t: &Token) -> bool {
+    matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment)
+}
+
 pub(super) fn contains_comment(toks: &[Token]) -> bool {
-    toks.iter()
-        .any(|t| matches!(t.kind, TokenKind::LineComment | TokenKind::BlockComment))
+    toks.iter().any(is_comment)
 }
 
 /// Whether `()`, `[]`, and `{}` are all balanced (never negative, net zero) in `toks`. Unbalanced
@@ -432,6 +469,39 @@ pub(super) fn has_middle_newline(inner: &[Token]) -> bool {
         }
     }
     false
+}
+
+/// Split a body into the comment run sharing the `{`'s line — sacred, so it stays there (§2.1) — and
+/// the statements after it, trimmed of trivia.
+pub(super) fn split_brace_line_comment<'a, 'src>(
+    inner: &'a [Token<'src>],
+) -> (&'a [Token<'src>], &'a [Token<'src>]) {
+    let line_end = inner
+        .iter()
+        .position(|t| t.kind == TokenKind::Newline)
+        .unwrap_or(inner.len());
+    let head_len = if contains_comment(&inner[..line_end])
+        && inner[..line_end]
+            .iter()
+            .all(|t| is_trivia(t) || is_comment(t))
+    {
+        line_end
+    } else {
+        0
+    };
+    let rest = &inner[head_len..];
+    let start = rest
+        .iter()
+        .position(|t| !is_trivia(t))
+        .unwrap_or(rest.len());
+    let end = rest
+        .iter()
+        .rposition(|t| !is_trivia(t))
+        .map_or(0, |p| p + 1);
+    (
+        &inner[..head_len],
+        if start < end { &rest[start..end] } else { &[] },
+    )
 }
 
 #[cfg(test)]
