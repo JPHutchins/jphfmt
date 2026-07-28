@@ -161,6 +161,24 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
     assert_eq!(format(src), expected);
 }
 
+/// The structure pass measures a `#define` at the `#if` depth the scope pass will indent it to, and
+/// nothing else asserts the two agree. This define's line is 94 columns: it fits at depth 0 and
+/// overruns at depth 2, so it explodes only if those 8 columns were counted.
+#[test]
+fn a_define_is_measured_at_the_depth_the_scope_pass_indents_it_to() {
+    const DEFINE: &str = "#define M(a) FFFFFFFFFFFF(aaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbb, \
+                          cccccccccccccccc, ddddddddddddd)\n";
+    assert_eq!(format(DEFINE), DEFINE);
+
+    let nested = format(&format!("#if A\n#if B\n{DEFINE}#endif\n#endif\n"));
+    assert_eq!(
+        nested,
+        "#if A\n#\tif B\n#\t\tdefine M(a) FFFFFFFFFFFF( \\\n\taaaaaaaaaaaaaaaa, \\\n\
+         \tbbbbbbbbbbbbbbbb, \\\n\tcccccccccccccccc, \\\n\tddddddddddddd \\\n)\n#\tendif\n#endif\n"
+    );
+    assert_eq!(format(&nested), nested);
+}
+
 #[test]
 fn comment_line_ends_are_trimmed() {
     let src = "int a; // after a line comment   \nint b; /* first   \n * interior   \n */\n";

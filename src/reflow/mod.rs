@@ -20,7 +20,8 @@ mod tokens;
 
 use std::borrow::Cow;
 
-use crate::doc::TAB_WIDTH;
+use self::tokens::is_comment;
+use crate::doc::{TAB_WIDTH, display_width};
 use crate::lexer::{TokenKind, tokenize};
 
 /// Default column limit (§8.5).
@@ -62,15 +63,19 @@ pub fn format_with_width(src: &str, width: usize) -> String {
 fn trim_comment_lines(s: &str) -> String {
     tokenize(s)
         .into_iter()
-        .map(|t| match t.kind {
-            TokenKind::LineComment | TokenKind::BlockComment => Cow::Owned(
-                t.text
-                    .split('\n')
-                    .map(str::trim_end)
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            _ => Cow::Borrowed(t.text),
+        .map(|t| {
+            // Borrowed unless there is something to trim, so the pass that reads its own output —
+            // every run after the first — allocates nothing.
+            if is_comment(&t) && t.text.split('\n').any(|l| l != l.trim_end()) {
+                return Cow::Owned(
+                    t.text
+                        .split('\n')
+                        .map(str::trim_end)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            Cow::Borrowed(t.text)
         })
         .collect()
 }
@@ -134,11 +139,7 @@ fn retab(s: &str) -> String {
         let pure_indent =
             t.kind == TokenKind::Whitespace && t.text.bytes().all(|b| b == b' ' || b == b'\t');
         if at_line_start && pure_indent {
-            let cols: usize = t
-                .text
-                .chars()
-                .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
-                .sum();
+            let cols = display_width(t.text);
             for _ in 0..cols / TAB_WIDTH {
                 out.push('\t');
             }

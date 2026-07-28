@@ -642,7 +642,7 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
         // follows can land on a later line, so its flat width is not this construct's to reserve —
         // and once it has broken, the next pass measures a shorter run and decides differently.
         if is_chain_break(toks, j) {
-            return width + pending + col_width(t.text);
+            return width + pending + display_width(t.text);
         }
         let counted = match t.kind {
             TokenKind::Newline => break,
@@ -650,32 +650,23 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             // Nothing past a bracket or a `;` shares this construct's fate: anything past the
             // bracket can break onto a later line, and the `;` ends the statement.
             TokenKind::Punct if matches!(t.text, "(" | "[" | "{" | ";") => {
-                return width + pending + col_width(t.text);
+                return width + pending + display_width(t.text);
             }
             // Stop at the first newline embedded in any token (not just Newline tokens),
             // so Unknown tokens containing multiple lines don't inflate the reserve.
             _ => match t.text.find('\n') {
-                Some(nl) => return width + pending + col_width(t.text[..nl].trim_end()),
+                Some(nl) => return width + pending + display_width(t.text[..nl].trim_end()),
                 None => t.text,
             },
         };
         if counted.trim().is_empty() {
-            pending += col_width(counted);
+            pending += display_width(counted);
         } else {
-            width += pending + col_width(counted);
+            width += pending + display_width(counted);
             pending = 0;
         }
     }
     width
-}
-
-/// Column width of raw token text, counting a tab as [`TAB_WIDTH`] (unlike [`display_width`], which
-/// assumes tab-free text). Used where the measured slice may contain a mid-line whitespace tab, so
-/// the reserve matches the cursor's own tab accounting and formatting stays idempotent.
-fn col_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
-        .sum()
 }
 
 /// Emit a preprocessor directive verbatim, following `\` line continuations; returns the index
@@ -758,14 +749,9 @@ mod tests {
     }
 
     #[test]
-    fn col_width_plain() {
-        assert_eq!(col_width("abc"), 3);
-    }
-
-    #[test]
-    fn col_width_tab_counts_as_tab_width() {
-        // `a` (1) + tab (TAB_WIDTH=4) + `b` (1) = 6
-        assert_eq!(col_width("a\tb"), 1 + TAB_WIDTH + 1);
+    fn trailing_reserved_counts_a_tab_as_tab_width() {
+        let toks = [tok(TokenKind::Unknown, "a\tb"), tok(TokenKind::Punct, ";")];
+        assert_eq!(trailing_reserved(&toks, 0), 1 + TAB_WIDTH + 1 + 1);
     }
 
     #[test]
