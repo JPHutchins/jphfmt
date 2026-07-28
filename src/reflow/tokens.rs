@@ -327,6 +327,74 @@ pub(super) fn split_designators<'a, 'src>(element: &'a [Token<'src>]) -> Vec<&'a
         .collect()
 }
 
+/// Whether joining `inner` onto fewer lines would hand a later pass a shape it respaces: a `;` that
+/// `space_semicolons` tightens, or the `Ident : Number` that `space_bit_fields` reads as a bit-field.
+/// The gap the layout writes is a space, and those rules take it away again, so laying this out
+/// would make the pass's output a fixpoint of a different pass rather than of itself.
+///
+/// Both are invalid C in a `{}` list, which is the only place this is asked — an initializer, an
+/// `enum` body, a compound literal — so refusing them costs no real code its layout (§6).
+/// Whether a ternary's `?` is still open at `j`: the nearest `?`, `;` or brace before it is a `?`.
+/// What `space_bit_fields` asks before reading an `Ident : Number` as a bit-field, and what
+/// [`respaced_when_joined`] must ask the same way — at any depth, since that rule does not track one.
+pub(super) fn ternary_open_before(toks: &[Token], j: usize) -> bool {
+    toks[..j]
+        .iter()
+        .rev()
+        .find_map(|t| match t.text {
+            "?" => Some(true),
+            ";" | "{" | "}" => Some(false),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
+    // A trivia run is more than one token — a `Newline`, then the next line's indentation — so a
+    // break is looked for across the whole run, not just the token adjacent to the punctuator.
+    let broken_before = |j: usize| {
+        inner[..j]
+            .iter()
+            .rev()
+            .take_while(|t| is_trivia(t))
+            .any(|t| t.text.contains(['\n', '\r']))
+    };
+    let broken_after = |j: usize| {
+        inner[j + 1..]
+            .iter()
+            .take_while(|t| is_trivia(t))
+            .any(|t| t.text.contains(['\n', '\r']))
+    };
+    let mut depth = 0i32;
+    for (j, t) in inner.iter().enumerate() {
+        match t.text {
+            "(" | "[" => depth += 1,
+            ")" | "]" => depth -= 1,
+            _ => {}
+        }
+        if depth != 0 || t.kind != TokenKind::Punct {
+            continue;
+        }
+        // `space_semicolons` leaves a `;` that opens its line alone, and never tightens one that
+        // follows a `;` or a `{`.
+        if t.text == ";"
+            && broken_before(j)
+            && prev_nontrivia(inner, j).is_some_and(|k| !matches!(inner[k].text, ";" | "{"))
+        {
+            return true;
+        }
+        if t.text == ":"
+            && !ternary_open_before(inner, j)
+            && (broken_before(j) || broken_after(j))
+            && prev_nontrivia(inner, j).is_some_and(|k| inner[k].kind == TokenKind::Ident)
+            && next_nontrivia(inner, j + 1).is_some_and(|k| inner[k].kind == TokenKind::Number)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Split `inner` on commas at bracket depth zero.
 pub(super) fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
     split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
@@ -909,5 +977,27 @@ mod tests {
         ] {
             assert!(!is_value_start(&Token { kind, text }), "{text}");
         }
+    }
+
+    #[test]
+    fn ternary_open_before_stops_at_a_statement_boundary() {
+        // A `?` before a `;` is in a different statement, so no ternary is open at `j`.
+        let toks = [
+            tok(TokenKind::Punct, "?"),
+            tok(TokenKind::Punct, ";"),
+            tok(TokenKind::Ident, "x"),
+            tok(TokenKind::Punct, ":"),
+        ];
+        assert!(!ternary_open_before(&toks, 3));
+    }
+
+    #[test]
+    fn ternary_open_before_finds_an_unmatched_question() {
+        let toks = [
+            tok(TokenKind::Punct, "?"),
+            tok(TokenKind::Ident, "x"),
+            tok(TokenKind::Punct, ":"),
+        ];
+        assert!(ternary_open_before(&toks, 2));
     }
 }
