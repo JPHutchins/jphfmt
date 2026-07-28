@@ -327,6 +327,54 @@ pub(super) fn split_designators<'a, 'src>(element: &'a [Token<'src>]) -> Vec<&'a
         .collect()
 }
 
+/// Whether joining `inner` onto fewer lines would hand a later pass a shape it respaces: a `;` that
+/// `space_semicolons` tightens, or the `Ident : Number` that `space_bit_fields` reads as a bit-field.
+/// The gap the layout writes is a space, and those rules take it away again, so laying this out
+/// would make the pass's output a fixpoint of a different pass rather than of itself.
+///
+/// Both are invalid C in a `{}` list, which is the only place this is asked — an initializer, an
+/// `enum` body, a compound literal — so refusing them costs no real code its layout (§6).
+pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
+    let broken = |j: usize| j > 0 && inner[j - 1].text.contains(['\n', '\r']);
+    let mut depth = 0i32;
+    let mut ternary = false;
+    for (j, t) in inner.iter().enumerate() {
+        match t.text {
+            "(" | "[" => depth += 1,
+            ")" | "]" => depth -= 1,
+            "?" if depth == 0 => ternary = true,
+            ";" | "{" | "}" if depth == 0 => ternary = false,
+            _ => {}
+        }
+        if depth != 0 {
+            continue;
+        }
+        // `space_semicolons` leaves a `;` that opens its line alone, and never tightens one that
+        // follows a `;` or a `{`.
+        if t.kind == TokenKind::Punct
+            && t.text == ";"
+            && broken(j)
+            && prev_nontrivia(inner, j).is_some_and(|k| !matches!(inner[k].text, ";" | "{"))
+        {
+            return true;
+        }
+        // `space_bit_fields`, whose own guard is a `?` earlier in the statement.
+        if t.kind == TokenKind::Punct
+            && t.text == ":"
+            && !ternary
+            && (broken(j)
+                || inner
+                    .get(j + 1)
+                    .is_some_and(|n| n.text.contains(['\n', '\r'])))
+            && prev_nontrivia(inner, j).is_some_and(|k| inner[k].kind == TokenKind::Ident)
+            && next_nontrivia(inner, j + 1).is_some_and(|k| inner[k].kind == TokenKind::Number)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Split `inner` on commas at bracket depth zero.
 pub(super) fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
     split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")

@@ -870,5 +870,24 @@ fn a_floating_exponent_keeps_its_sign() {
     // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
     // `1e - 5`, which does not compile — and musl's math sources are full of `0x1p-1022`.
     let src = "double a = 1e-5;\ndouble y = 0x1p-1022 * 0x1p53;\n";
+}
+
+#[test]
+fn a_brace_list_is_not_joined_where_a_later_pass_would_respace_it() {
+    // #28: joining these onto one line hands `space_bit_fields` an `Ident : Number` and
+    // `space_semicolons` a space before a `;` — both of which they rewrite, so the layout's own
+    // output would be a fixpoint of a different pass. Neither is valid C in a `{}` list.
+    for src in ["x = {A\n:0};\n", "x = {A\n;};\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_ternary_arm_in_a_brace_list_still_lays_out() {
+    // The bit-field guard is a `?` earlier in the statement, so a ternary arm ending in a number
+    // is not the shape that refuses.
+    let src = "x = {a ? b : 0, c};\n";
     assert_eq!(format(src), src);
 }

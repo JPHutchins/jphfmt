@@ -14,7 +14,7 @@ use super::tokens::{
     has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break, is_comment,
     is_control_keyword, is_excluded_callee, is_trivia, match_brace, match_bracket,
     match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
-    split_brace_line_comment, split_top_level, statement_end,
+    respaced_when_joined, split_brace_line_comment, split_top_level, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -476,7 +476,7 @@ fn emit_brace(
     let has_comment_or_directive = inner
         .iter()
         .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "#"));
-    if has_comment_or_directive || !is_balanced(inner) {
+    if has_comment_or_directive || !is_balanced(inner) || respaced_when_joined(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
         }
