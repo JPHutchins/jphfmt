@@ -254,27 +254,49 @@ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> 
     None
 }
 
+/// The tokens outside every bracket group, paired with their index — the level a construct's own
+/// separators live at. The brackets themselves are not yielded; a construct is never separated by one.
+fn at_depth_zero<'a, 'src>(
+    toks: &'a [Token<'src>],
+) -> impl Iterator<Item = (usize, &'a Token<'src>)> {
+    let mut depth = 0i32;
+    toks.iter().enumerate().filter(move |(_, t)| {
+        match t.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => depth -= 1,
+            _ => return depth == 0,
+        }
+        false
+    })
+}
+
+/// The spans `cuts` separates: before the first, between each pair, after the last. A cut token
+/// belongs to no span — it is the separator, which the layout re-spells.
+fn segments_at<'a, 'src>(inner: &'a [Token<'src>], cuts: &[usize]) -> Vec<&'a [Token<'src>]> {
+    std::iter::once(0)
+        .chain(cuts.iter().map(|&j| j + 1))
+        .zip(cuts.iter().copied().chain(std::iter::once(inner.len())))
+        .map(|(from, to)| &inner[from..to])
+        .collect()
+}
+
 /// Split `inner` into segments at the depth-zero tokens for which `is_sep` holds.
 pub(super) fn split_top_level<'a, 'src>(
     inner: &'a [Token<'src>],
     is_sep: impl Fn(&Token) -> bool,
 ) -> Vec<&'a [Token<'src>]> {
-    let mut segments = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (j, t) in inner.iter().enumerate() {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            _ if depth == 0 && is_sep(t) => {
-                segments.push(&inner[start..j]);
-                start = j + 1;
-            }
-            _ => {}
-        }
-    }
-    segments.push(&inner[start..]);
-    segments
+    let cuts: Vec<usize> = at_depth_zero(inner)
+        .filter(|(_, t)| is_sep(t))
+        .map(|(j, _)| j)
+        .collect();
+    segments_at(inner, &cuts)
+}
+
+/// The next `;` at bracket depth zero at or after `from`.
+pub(super) fn statement_end(toks: &[Token], from: usize) -> Option<usize> {
+    at_depth_zero(&toks[from..])
+        .find(|(_, t)| t.kind == TokenKind::Punct && t.text == ";")
+        .map(|(j, _)| from + j)
 }
 
 /// Split `inner` on commas at bracket depth zero.
@@ -282,20 +304,99 @@ pub(super) fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [To
     split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
 }
 
-/// The outermost logical operator present at bracket depth zero (`||` outranks `&&`), if any.
-pub(super) fn top_level_logical_op(inner: &[Token]) -> Option<&'static str> {
-    let mut depth = 0i32;
-    let mut has_and = false;
-    for t in inner {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            "||" if depth == 0 && t.kind == TokenKind::Operator => return Some("||"),
-            "&&" if depth == 0 && t.kind == TokenKind::Operator => has_and = true,
-            _ => {}
-        }
+/// Binary operator classes in C precedence order, lowest first — the order a chain breaks in, since
+/// the loosest binding is the one whose operands read as the elements of the container.
+///
+/// `*` is absent, and so is unary `&`: `T * p` and `T ** p` are declarators, and a declaration is
+/// never a chain to break (§6). A `*` chain therefore splits on whatever looser operator it contains,
+/// or stays flat.
+const CHAIN_CLASSES: [&[&str]; 10] = [
+    &["||"],
+    &["&&"],
+    &["|"],
+    &["^"],
+    &["&"],
+    &["==", "!="],
+    &["<", "<=", ">", ">="],
+    &["<<", ">>"],
+    &["+", "-"],
+    &["/", "%"],
+];
+
+/// Whether the operator at `j` binds two operands rather than one: `a - b` splits, `a + -b` and
+/// `&x` do not. A keyword that takes an expression (`return`, `sizeof`) does not end a value.
+fn is_binary_position(inner: &[Token], j: usize) -> bool {
+    prev_nontrivia(inner, j).is_some_and(|k| match inner[k].kind {
+        TokenKind::Ident => !is_excluded_callee(inner[k].text) && !is_type_context(inner[k].text),
+        TokenKind::Number | TokenKind::String | TokenKind::Char => true,
+        TokenKind::Punct => matches!(inner[k].text, ")" | "]"),
+        // A postfix `++`/`--` ends a value as much as its operand does.
+        TokenKind::Operator => matches!(inner[k].text, "++" | "--"),
+        TokenKind::Newline
+        | TokenKind::Whitespace
+        | TokenKind::Unknown
+        | TokenKind::LineComment
+        | TokenKind::BlockComment => false,
+    })
+}
+
+/// Whether the token at `j` is an operator a chain breaks after — so what follows it can land on a
+/// later line, exactly as the contents of a bracket group can.
+pub(super) fn is_chain_break(toks: &[Token], j: usize) -> bool {
+    matches!(toks[j].kind, TokenKind::Operator | TokenKind::Punct)
+        && CHAIN_CLASSES.iter().any(|c| c.contains(&toks[j].text))
+        && is_binary_position(toks, j)
+}
+
+/// The depth-zero indices where the loosest-binding class present binds two operands, in one pass: a
+/// cut in a looser class discards the cuts collected for a tighter one, since only the loosest is the
+/// container this chain breaks as.
+fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
+    use std::cmp::Ordering;
+    at_depth_zero(inner)
+        .filter_map(|(j, t)| {
+            matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
+                .then(|| CHAIN_CLASSES.iter().position(|c| c.contains(&t.text)))
+                .flatten()
+                .filter(|_| is_binary_position(inner, j))
+                .map(|class| (class, j))
+        })
+        .fold(
+            (CHAIN_CLASSES.len(), Vec::new()),
+            |(loosest, mut cuts), (class, j)| match class.cmp(&loosest) {
+                Ordering::Less => (class, vec![j]),
+                Ordering::Equal => {
+                    cuts.push(j);
+                    (loosest, cuts)
+                }
+                Ordering::Greater => (loosest, cuts),
+            },
+        )
+        .1
+}
+
+/// Split `inner` into the operands of its loosest-binding binary operator run at depth zero, paired
+/// with the operator that trails each. `None` when there is no such run, or when a depth-zero `?`/`:`
+/// says the layout is a ternary's (§2.4), a label's or a bit-field's — collapsing a line break past a
+/// `:` would leave `space_bit_fields` a same-line `Ident : Number` to reinterpret on the next pass.
+pub(super) fn split_chain<'a, 'src>(
+    inner: &'a [Token<'src>],
+) -> Option<(Vec<&'a [Token<'src>]>, Vec<&'src str>)> {
+    // A depth-zero `,` is a list, not a chain: its parts are not this operator's operands.
+    if has_top_level(inner, "?") || has_top_level(inner, ":") || has_top_level(inner, ",") {
+        return None;
     }
-    has_and.then_some("&&")
+    let cuts = loosest_cuts(inner);
+    if cuts.is_empty() {
+        return None;
+    }
+    let segments = segments_at(inner, &cuts);
+    // An operator missing an operand is not a chain: rendering the empty segment would leave the
+    // separator stranded, and the space it lands beside is not this pass's to keep.
+    segments
+        .iter()
+        .all(|s| has_non_trivia(s))
+        .then(|| (segments, cuts.iter().map(|&j| inner[j].text).collect()))
 }
 
 pub(super) fn is_trivia(t: &Token) -> bool {
@@ -341,18 +442,14 @@ pub(super) fn is_balanced(toks: &[Token]) -> bool {
     paren == 0 && brack == 0 && brace == 0
 }
 
+/// Whether the punctuator `text` appears at bracket depth zero in `inner`.
+pub(super) fn has_top_level(inner: &[Token], text: &str) -> bool {
+    at_depth_zero(inner).any(|(_, t)| t.kind == TokenKind::Punct && t.text == text)
+}
+
 /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
 pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
-    let mut depth = 0i32;
-    for t in inner {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            "?" if depth == 0 && t.kind == TokenKind::Punct => return true,
-            _ => {}
-        }
-    }
-    false
+    has_top_level(inner, "?")
 }
 
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
@@ -591,37 +688,56 @@ mod tests {
         assert_eq!(split_on_commas(&toks).len(), 3);
     }
 
-    #[test]
-    fn top_level_logical_op_or_outranks_and() {
-        // `||` at depth zero wins even when `&&` is also present.
-        let toks = [
-            tok(TokenKind::Ident, "a"),
-            tok(TokenKind::Operator, "||"),
-            tok(TokenKind::Ident, "b"),
-            tok(TokenKind::Operator, "&&"),
-            tok(TokenKind::Ident, "c"),
-        ];
-        assert_eq!(top_level_logical_op(&toks), Some("||"));
+    fn chain_ops(src: &str) -> Option<Vec<&str>> {
+        split_chain(&crate::lexer::tokenize(src)).map(|(_, ops)| ops)
     }
 
     #[test]
-    fn top_level_logical_op_and_only() {
-        let toks = [
-            tok(TokenKind::Ident, "a"),
-            tok(TokenKind::Operator, "&&"),
-            tok(TokenKind::Ident, "b"),
-        ];
-        assert_eq!(top_level_logical_op(&toks), Some("&&"));
+    fn split_chain_takes_the_loosest_operator() {
+        assert_eq!(chain_ops("a || b && c"), Some(vec!["||"]));
+        assert_eq!(chain_ops("a && b"), Some(vec!["&&"]));
+        assert_eq!(chain_ops("a | b & c"), Some(vec!["|"]));
+        assert_eq!(chain_ops("a + b * c"), Some(vec!["+"]));
     }
 
     #[test]
-    fn top_level_logical_op_none() {
-        let toks = [
-            tok(TokenKind::Ident, "a"),
-            tok(TokenKind::Punct, "+"),
-            tok(TokenKind::Ident, "b"),
-        ];
-        assert_eq!(top_level_logical_op(&toks), None);
+    fn split_chain_mixes_one_class() {
+        assert_eq!(chain_ops("a + b - c"), Some(vec!["+", "-"]));
+    }
+
+    #[test]
+    fn split_chain_ignores_a_nested_operator() {
+        assert_eq!(chain_ops("f(a | b)"), None);
+        assert_eq!(chain_ops("(a | b)"), None);
+    }
+
+    #[test]
+    fn split_chain_needs_two_operands() {
+        // Unary `-`, `&` and `*` bind one operand, and a declarator is never a chain (§6).
+        assert_eq!(chain_ops("-a"), None);
+        assert_eq!(chain_ops("&x"), None);
+        assert_eq!(chain_ops("a + -b"), Some(vec!["+"]));
+        assert_eq!(chain_ops("int * p"), None);
+        assert_eq!(chain_ops("a * b"), None);
+        assert_eq!(chain_ops("return -1"), None);
+    }
+
+    #[test]
+    fn split_chain_defers_to_a_ternary() {
+        assert_eq!(chain_ops("a | b ? c : d"), None);
+    }
+
+    #[test]
+    fn split_chain_segments_span_the_input() {
+        let toks = crate::lexer::tokenize("a | b | c");
+        let (segments, ops) = split_chain(&toks).unwrap();
+        assert_eq!(segments.len(), ops.len() + 1);
+        let rejoined: String = segments
+            .iter()
+            .map(|s| s.iter().map(|t| t.text).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("|");
+        assert_eq!(rejoined, "a | b | c");
     }
 
     #[test]

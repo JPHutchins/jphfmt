@@ -1,0 +1,9 @@
+PyTypeObject T = {
+	.tp_flags = (
+		Py_TPFLAGS_DEFAULT |
+		Py_TPFLAGS_TYPE_SUBCLASS |
+		Py_TPFLAGS_HAVE_GC |
+		Py_TPFLAGS_HAVE_VECTORCALL |
+		Py_TPFLAGS_BASETYPE
+	),
+};

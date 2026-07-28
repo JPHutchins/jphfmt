@@ -11,10 +11,12 @@ fn golden_is_a_fixpoint() {
 }
 
 /// Significant content: everything but whitespace, commas (jphfmt may add a magic trailing comma),
-/// and backslashes (continuations). Formatting must never alter anything else.
+/// backslashes (continuations), and parentheses — a chain or ternary that breaks is bounded by
+/// parentheses jphfmt writes, which is legal exactly because the operands were already an implicit
+/// container. Formatting must never alter anything else.
 fn significant(s: &str) -> String {
     s.chars()
-        .filter(|c| !c.is_whitespace() && *c != ',' && *c != '\\')
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\' | '(' | ')'))
         .collect()
 }
 
@@ -578,6 +580,85 @@ fn statement_expression_in_code_block_indents() {
 }
 
 #[test]
+fn long_binary_chain_explodes_with_trailing_operators() {
+    // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line
+    // with the operator trailing — bounded by parentheses jphfmt adds, since the operands after an
+    // assignment are already an implicit container. Author-written parentheses reach the same form.
+    let broken = "int x = (\n\tAAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDDDD |\n\tEEEEEEEEEEEEEEEE\n);\n";
+    for src in [
+        "int x = AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE;\n",
+        "int x = (AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE);\n",
+        broken,
+    ] {
+        assert_eq!(format(src), broken, "input {src:?}");
+    }
+}
+
+#[test]
+fn a_long_bare_ternary_is_bounded_too() {
+    // The same rule, applied to §2.4: a ternary the author left unparenthesized is still an implicit
+    // container, so it breaks with the `:` trailing rather than overrunning.
+    let bare = "acc = status_code == 0 ? \"ok\" : status_code == 1 ? \"busy\" : status_code == 2 ? \"error\" : status_code < 0 ? \"fault\" : \"unknown\";\n";
+    let broken = "acc = (\n\tstatus_code == 0 ? \"ok\" :\n\tstatus_code == 1 ? \"busy\" :\n\tstatus_code == 2 ? \"error\" :\n\tstatus_code < 0 ? \"fault\" :\n\t\"unknown\"\n);\n";
+    assert_eq!(format(bare), broken);
+    assert_eq!(format(broken), broken);
+}
+
+#[test]
+fn a_container_that_already_bounds_gets_no_parens() {
+    // A call's own parentheses bound its argument, so a chain there needs none of its own — the
+    // parentheses exist to bound operands nothing else does, after an assignment or a `return`.
+    let src = "call_something(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC);\n";
+    let expected = "call_something(\n\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA |\n\tBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\n);\n";
+    assert_eq!(format(src), expected);
+    assert_eq!(format(expected), expected);
+}
+
+#[test]
+fn a_postfix_operand_ends_a_value() {
+    // `i++ | x` splits at the `|`: the `++` ends its operand as much as the identifier does.
+    let src = "int x = counter_value_here++ | BBBBBBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDD;\n";
+    let expected = "int x = (\n\tcounter_value_here++ |\n\tBBBBBBBBBBBBBBBBBBBBBBBBBB |\n\tCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC |\n\tDDDDDDDDDDDDDD\n);\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn a_list_is_never_bounded() {
+    // A depth-zero `,` means the span is a list, not one expression: `(a | b, c)` is not `a | b, c`,
+    // so a second declarator or a comma expression is left overrunning rather than changed.
+    let src = "int aaaaaaaaaaaaaaaaaaaaaaaaaaaa = XXXXXXXXXXXXXXXXXXXXXXXXXXXX | YYYYYYYYYYYYYYYYYYYYYYYYYYYY | ZZZZZZZZZZZZZZZZZZZZZZZZ, b;\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
+fn a_chain_that_fits_stays_flat() {
+    for src in [
+        "int x = A | B | C;\n",
+        "int x = (A | B | C);\n",
+        "flags = a & b;\n",
+        "total = first + second - third;\n",
+    ] {
+        assert_eq!(format(src), src, "must stay flat: {src:?}");
+    }
+}
+
+#[test]
+fn a_chain_splits_on_its_loosest_operator() {
+    let src = "int x = aaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccccc * dddddddddddddddddddddddd;\n";
+    let expected = "int x = (\n\taaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbb +\n\tcccccccccccccccccccccccc * dddddddddddddddddddddddd\n);\n";
+    assert_eq!(format(src), expected);
+}
+
+#[test]
+fn a_declaration_is_never_a_chain() {
+    // §6: `*` is not a chain operator, so a long declarator is left alone rather than broken
+    // between its type and its name.
+    let src =
+        "static struct a_rather_long_type_name_here * const the_pointer_variable_name = nullptr;\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
 fn short_parenthesized_ternary_stays_flat() {
     assert_eq!(format("x = (b != 0 ? b : 1);\n"), "x = (b != 0 ? b : 1);\n");
 }
@@ -722,5 +803,35 @@ fn preprocessor_scope_preserves_define_continuation() {
     // A #define with a \-continuation body: the #define line is at depth 0 (unchanged), and
     // the continuation line (previous line ends in \) is skipped by the scope pass.
     let src = "#define M(a) ((a) + 1) \\\n\t+ 2\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
+fn a_braceless_control_body_is_a_statement_of_its_own() {
+    // The `)` of the header ends the previous statement as much as a `;` does: the chain that
+    // follows it is the loop's whole body, and nothing else would lay it out.
+    let src = "for (;;) aaaaaaaaaaaaa | bbbbbbbbbbbbbbb | ccccccccccccccc | ddddddddddddddd;\n";
+    let once = jphfmt::format_with_width(src, 40);
+    assert!(
+        once.contains("aaaaaaaaaaaaa |\n"),
+        "the body chain must break: {once:?}"
+    );
+    assert_eq!(jphfmt::format_with_width(&once, 40), once);
+    assert_eq!(significant(&once), significant(src));
+}
+
+#[test]
+fn a_comma_operator_after_a_ternary_is_never_bounded() {
+    // `x = (a ? b : c, d)` assigns `d` where `x = a ? b : c, d` assigns the ternary. The operands
+    // are a list, so they are not an implicit container and parentheses would not be free.
+    let src = "xxxxxxxxxxxxxxx = conditionaaaaaaaaaa ? valuebbbbbbbbbbbb : valuecccccccccccc, otherdddddddddd;\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
+fn a_depth_zero_colon_is_never_a_chain_to_split() {
+    // `<` and `>` are the relational class, but `Type<T>::member` is not a comparison — the `:`
+    // says the layout belongs to something else, whatever the operands look like.
+    let src = "using decay_t = typename decay<T>::type;\n";
     assert_eq!(format(src), src);
 }

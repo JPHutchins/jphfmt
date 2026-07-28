@@ -73,18 +73,21 @@ fn is_comment(t: &Token) -> bool {
 
 /// Canonicalize one inter-token gap to a single space, keeping the indentation that follows its last
 /// line break for `retab` and the line breaks themselves for `normalize_endings`. `keep_inline_run`
-/// spares a same-line run that positions a comment (§2.1).
-fn collapse_gap(gap: &str, keep_inline_run: bool) -> String {
+/// spares a same-line run that positions a comment (§2.1). `None` when the gap is already canonical,
+/// which on formatted input is nearly every gap in the file.
+fn collapse_gap(gap: &str, keep_inline_run: bool) -> Option<String> {
     match gap.rfind(['\n', '\r']) {
-        None if keep_inline_run || gap.is_empty() => gap.to_owned(),
-        None => " ".to_owned(),
+        None if keep_inline_run || gap.is_empty() => None,
+        None => (gap != " ").then(|| " ".to_owned()),
         Some(last) => {
             let (breaks, indent) = gap.split_at(last + 1);
-            breaks
-                .chars()
-                .filter(|c| matches!(c, '\n' | '\r'))
-                .chain(indent.chars())
-                .collect()
+            (!breaks.chars().all(|c| matches!(c, '\n' | '\r'))).then(|| {
+                breaks
+                    .chars()
+                    .filter(|c| matches!(c, '\n' | '\r'))
+                    .chain(indent.chars())
+                    .collect()
+            })
         }
     }
 }
@@ -101,7 +104,9 @@ fn collapse_runs(pieces: &mut [Piece]) {
             continue;
         }
         let keep_inline_run = is_comment(&pieces[j].1);
-        pieces[j].0 = collapse_gap(&pieces[j].0, keep_inline_run);
+        if let Some(collapsed) = collapse_gap(&pieces[j].0, keep_inline_run) {
+            pieces[j].0 = collapsed;
+        }
     }
 }
 
@@ -337,7 +342,8 @@ fn ternary_open_before(pieces: &[Piece], j: usize) -> bool {
 }
 
 /// Normalize spacing around a single `=` (assignment, not `==`/`!=`/`<=`/`>=`/`+=` etc. which have
-/// different text): exactly one space before and after, same-line only. No-op on canonical input.
+/// different text): exactly one space before and after, same-line only. Never before a `;`, which
+/// would put the space `space_semicolons` exists to remove. No-op on canonical input.
 fn space_equals(pieces: &mut [Piece]) {
     for j in 0..pieces.len() {
         if pieces[j].1.kind == TokenKind::Punct && pieces[j].1.text == "=" {
@@ -346,6 +352,7 @@ fn space_equals(pieces: &mut [Piece]) {
             }
             if let Some(after) = pieces.get_mut(j + 1)
                 && same_line(&after.0)
+                && after.1.text != ";"
             {
                 after.0 = " ".to_owned();
             }
@@ -530,42 +537,57 @@ mod tests {
         assert_eq!(space_tokens("struct s { int x ; }"), "struct s { int x; }");
     }
 
+    /// The gap the collapse leaves behind: its rewrite, or the original when it declines one.
+    fn collapsed(gap: &str, keep_inline_run: bool) -> String {
+        collapse_gap(gap, keep_inline_run).unwrap_or_else(|| gap.to_owned())
+    }
+
     #[test]
     fn collapse_gap_same_line_run_becomes_one_space() {
-        assert_eq!(collapse_gap("   ", false), " ");
-        assert_eq!(collapse_gap("\t", false), " ");
-        assert_eq!(collapse_gap(" \t ", false), " ");
+        assert_eq!(collapsed("   ", false), " ");
+        assert_eq!(collapsed("\t", false), " ");
+        assert_eq!(collapsed(" \t ", false), " ");
+    }
+
+    #[test]
+    fn collapse_gap_declines_an_already_canonical_gap() {
+        // Formatted input is nearly all canonical gaps; none of them is rewritten.
+        assert_eq!(collapse_gap(" ", false), None);
+        assert_eq!(collapse_gap("", false), None);
+        assert_eq!(collapse_gap("\n\t", false), None);
+        assert_eq!(collapse_gap("\r\n", false), None);
+        assert_eq!(collapse_gap("   ", true), None);
     }
 
     #[test]
     fn collapse_gap_empty_stays_empty() {
-        assert_eq!(collapse_gap("", false), "");
+        assert_eq!(collapsed("", false), "");
     }
 
     #[test]
     fn collapse_gap_keeps_indentation_after_the_last_break() {
         // The run before a break is trailing whitespace and goes; the run after it is
         // indentation, left for `retab`.
-        assert_eq!(collapse_gap("   \n\t\t", false), "\n\t\t");
-        assert_eq!(collapse_gap("\n", false), "\n");
+        assert_eq!(collapsed("   \n\t\t", false), "\n\t\t");
+        assert_eq!(collapsed("\n", false), "\n");
     }
 
     #[test]
     fn collapse_gap_drops_blank_line_padding() {
-        assert_eq!(collapse_gap("  \n  \n\t", false), "\n\n\t");
+        assert_eq!(collapsed("  \n  \n\t", false), "\n\n\t");
     }
 
     #[test]
     fn collapse_gap_preserves_crlf() {
         // Line breaks are copied verbatim so `normalize_endings` still sees `\r\n`.
-        assert_eq!(collapse_gap("  \r\n\t", false), "\r\n\t");
+        assert_eq!(collapsed("  \r\n\t", false), "\r\n\t");
     }
 
     #[test]
     fn collapse_gap_keeps_an_inline_run_before_a_comment() {
-        assert_eq!(collapse_gap("   ", true), "   ");
+        assert_eq!(collapsed("   ", true), "   ");
         // Only the same-line run is sacred; a run that ends a line still goes.
-        assert_eq!(collapse_gap("   \n\t", true), "\n\t");
+        assert_eq!(collapsed("   \n\t", true), "\n\t");
     }
 
     #[test]

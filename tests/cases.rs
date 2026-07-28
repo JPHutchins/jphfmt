@@ -82,10 +82,12 @@ fn read_inputs(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Significant content: everything but whitespace, commas (jphfmt may add a magic trailing comma),
-/// and backslashes (line continuations). Formatting must never alter anything else.
+/// backslashes (line continuations), and parentheses — a chain or ternary that breaks is bounded by
+/// parentheses jphfmt writes, which is legal exactly because the operands were already an implicit
+/// container. Formatting must never alter anything else.
 fn significant(s: &str) -> String {
     s.chars()
-        .filter(|c| !c.is_whitespace() && *c != ',' && *c != '\\')
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\' | '(' | ')'))
         .collect()
 }
 
