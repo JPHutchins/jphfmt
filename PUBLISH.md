@@ -18,16 +18,28 @@ Set these in repo Settings → Secrets and variables → Actions:
 | `VSCE_PAT` | VS Code Marketplace personal access token |
 | `DEEPSEEK_API_KEY` | DeepSeek API key (`sk-...`) |
 
-## First Release
+## Releasing
+
+`Cargo.toml` holds the version; `Cargo.lock`, `editors/vscode/package.json` and its lock follow it.
+One command does the whole release:
 
 ```sh
-# Bump version in Cargo.toml and editors/vscode/package.json
-# Commit, then tag:
-git tag v0.1.0
-git push origin v0.1.0
+camas release                      # bump the patch, ship it
+camas release --VERSION=minor      # or major, or an explicit X.Y.Z
 ```
 
-CI will:
+It checks the metadata, rewrites all four files, commits `release X.Y.Z`, tags `vX.Y.Z`, and pushes
+`main` and the tag — the tag push is what starts CI's publish jobs.
+
+Nothing is written until it is safe to release: it refuses unless you are on `main`, the tree is clean,
+`main` is level with `origin/main`, the tag does not exist, and the new version follows the current one.
+`main` is pushed before the tag, because the default branch has to carry what was published or
+`cargo install --git` reports a version that was never released.
+
+`camas version_check` runs as part of `check`, `all` and CI, so a file left behind fails the build
+rather than surfacing as a wrong `--version` after someone installs from `main`.
+
+From the tag, CI will:
 1. Build and test on push (the `v*` tag triggers release jobs)
 2. Build binaries for linux/macos/windows
 3. Upload binaries and `.vsix` to the GitHub Release
