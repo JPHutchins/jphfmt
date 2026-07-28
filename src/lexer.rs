@@ -125,12 +125,17 @@ mod tests {
     fn lex_number_takes_an_exponent_sign() {
         // C11 §6.4.8: `e+`, `e-`, `p+`, `p-` continue a pp-number. Without them the sign lexes as
         // an operator, and a later pass spaces it into `1e - 5`, which does not compile.
+        // The unsigned forms take the other branch of the alternation, and are the common case.
         for src in [
             "1e-5",
             "1.0e+10",
             "0x1p-1022",
             "0x1.62066151add8bp+10",
             "0x1E-2",
+            "1e5",
+            "1E10",
+            "0x1p10",
+            "1.0e10",
         ] {
             let mut lex = TokenKind::lexer(src);
             assert_eq!(lex.next(), Some(Ok(TokenKind::Number)), "{src}");
@@ -146,5 +151,8 @@ mod tests {
         assert_eq!(lex.slice(), "1");
         assert_eq!(lex.next(), Some(Ok(TokenKind::Punct)));
         assert_eq!(lex.slice(), "-");
+        assert_eq!(lex.next(), Some(Ok(TokenKind::Number)));
+        assert_eq!(lex.slice(), "2");
+        assert_eq!(lex.next(), None);
     }
 }
