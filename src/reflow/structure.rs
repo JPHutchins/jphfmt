@@ -6,16 +6,16 @@
 //! reservation live alongside.
 
 use super::builders::{
-    build_brace_doc, build_call_doc, build_cond_doc, build_expr_doc, build_for_doc,
-    build_ternary_doc,
+    build_brace_doc, build_call_body, build_call_doc, build_cond_doc, build_expr_doc,
+    build_for_doc, build_ternary_doc,
 };
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, has_top_level_question, is_balanced, is_call_head, is_excluded_callee,
-    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
-    prev_nontrivia, split_top_level,
+    has_non_trivia, has_top_level_question, is_backslash, is_balanced, is_call_head,
+    is_excluded_callee, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
+    next_paren, prev_nontrivia, split_top_level,
 };
-use crate::doc::{TAB_WIDTH, display_width, render};
+use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
@@ -209,11 +209,13 @@ fn emit_define(
     width: usize,
 ) -> usize {
     let end = directive_end(toks, start);
-    if let Some((prefix, body)) = split_define(toks, start, end)
-        && let Some(body_str) = format_define_body(&body, display_width(&prefix), width)
+    if let Some(def) = split_define(toks, start, end)
+        && let Some(body_str) = format_define_body(&def.body, display_width(&def.prefix), width)
     {
-        let full = format!("{prefix}{body_str}");
-        let continued = full.replace('\n', " \\\n");
+        let flat = format!("{prefix}{body_str}", prefix = def.prefix);
+        let continued = explode_params(&def, &flat, width)
+            .unwrap_or(flat)
+            .replace('\n', " \\\n");
         emit_str(out, col, &continued);
         emit_str(out, col, "\n");
         return end;
@@ -224,48 +226,114 @@ fn emit_define(
     end
 }
 
+/// A `#define`'s parameter list is a container like any other (§2.2), so it explodes one parameter
+/// per line when the flat form's first line — the parameters *and* however much of the body opens on
+/// it — overruns the width. The body then starts the line after the `)`, indented one level; its own
+/// layout is measured against the width that indent leaves. `None` when the flat form fits, or for an
+/// object-like macro, which has no list to break.
+fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
+    let continuation = usize::from(flat.contains('\n')) * CONTINUATION_WIDTH;
+    if display_width(flat.lines().next().unwrap_or(flat)) + continuation <= width {
+        return None;
+    }
+    let params = def.params.as_deref()?;
+    let continued = width.saturating_sub(CONTINUATION_WIDTH);
+    let body = format_define_body(&def.body, 0, continued.saturating_sub(TAB_WIDTH))?;
+    // A body of more than one line cannot be indented under the `)`: on the next pass its own line
+    // breaks make it a passthrough, so the tab added here would be part of the text and another
+    // would be added on top of it, once per run.
+    if body.contains('\n') {
+        return None;
+    }
+    let params = render(
+        &Doc::ForceBreak(Box::new(build_call_body(params))),
+        continued,
+        display_width(&def.head),
+        0,
+    );
+    Some(format!("{head}{params}\n\t{body}", head = def.head))
+}
+
+/// Columns the ` \` a continued line ends with occupies.
+const CONTINUATION_WIDTH: usize = 2;
+
+/// Join a continued run of tokens onto one line, dropping its `\`s. [`emit_define`] re-adds a
+/// continuation at every newline it is handed, so a newline surviving here would take the `\` beside
+/// it and grow another on each pass. Same-line whitespace is left as written: the `#`-to-keyword gap
+/// that [`super::scope::scope_directives`] rewrites must reach the width measurement unchanged.
+fn flatten_continuations(toks: &[Token]) -> String {
+    let mut out = String::new();
+    let mut broken = false;
+    for t in toks {
+        if is_backslash(t) || t.kind == TokenKind::Newline {
+            while out.ends_with([' ', '\t']) {
+                out.pop();
+            }
+            broken = true;
+        } else if !(broken && t.kind == TokenKind::Whitespace) {
+            if broken {
+                out.push(' ');
+                broken = false;
+            }
+            out.push_str(t.text);
+        }
+    }
+    out
+}
+
 /// Split a `#define` into its `#define NAME(params) ` prefix text and its body tokens (with
 /// continuation backslashes removed and surrounding trivia trimmed). `None` if it has no body.
-fn split_define<'src>(
-    toks: &[Token<'src>],
-    start: usize,
-    end: usize,
-) -> Option<(String, Vec<Token<'src>>)> {
+struct Define<'src> {
+    prefix: String,
+    head: String,
+    params: Option<Vec<Token<'src>>>,
+    body: Vec<Token<'src>>,
+}
+
+/// Drop the continuation `\`s from `toks` — they belong to the input's line breaks, not to the
+/// construct, and are re-added per line by [`emit_define`].
+fn without_continuations<'src>(toks: &[Token<'src>]) -> Vec<Token<'src>> {
+    toks.iter().filter(|t| !is_backslash(t)).copied().collect()
+}
+
+fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<Define<'src>> {
     let define = next_nontrivia_in(toks, start + 1, end)?;
     let name = next_nontrivia_in(toks, define + 1, end)?;
-    let prefix_end = match toks.get(name + 1) {
-        // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is
-        // not closed within it (e.g. a newline ended the directive mid-params), so it is not a
-        // function-like macro we can split — pass through verbatim.
-        Some(n) if n.kind == TokenKind::Punct && n.text == "(" => {
-            let close = match_bracket(toks, name + 1)?;
-            if close >= end {
-                return None;
-            }
-            close + 1
+    let function_like = toks
+        .get(name + 1)
+        .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");
+    // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is not
+    // closed within it (e.g. a newline ended the directive mid-params), so it is not a
+    // function-like macro we can split — pass through verbatim.
+    let close = if function_like {
+        let close = match_bracket(toks, name + 1)?;
+        if close >= end {
+            return None;
         }
-        _ => name + 1,
+        Some(close)
+    } else {
+        None
     };
-    let prefix: String = toks[start..prefix_end]
-        .iter()
-        .map(|t| t.text)
-        .collect::<String>()
-        + " ";
-    let mut body: Vec<Token> = toks[prefix_end..end]
-        .iter()
-        .filter(|t| !(t.kind == TokenKind::Punct && t.text == "\\"))
-        .copied()
-        .collect();
-    while body.first().is_some_and(is_trivia) {
-        body.remove(0);
-    }
-    while body.last().is_some_and(is_trivia) {
-        body.pop();
-    }
+    let prefix_end = close.map_or(name + 1, |close| close + 1);
+    let body = {
+        let mut body = without_continuations(&toks[prefix_end..end]);
+        while body.first().is_some_and(is_trivia) {
+            body.remove(0);
+        }
+        while body.last().is_some_and(is_trivia) {
+            body.pop();
+        }
+        body
+    };
     if body.is_empty() {
         return None;
     }
-    Some((prefix, body))
+    Some(Define {
+        prefix: flatten_continuations(&toks[start..prefix_end]) + " ",
+        head: flatten_continuations(&toks[start..=name]),
+        params: close.map(|close| without_continuations(&toks[name + 2..close])),
+        body,
+    })
 }
 
 /// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
