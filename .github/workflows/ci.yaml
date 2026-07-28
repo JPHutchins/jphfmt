@@ -122,6 +122,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
 
       - if: matrix.target != ''
         uses: actions/download-artifact@v4
@@ -189,10 +191,10 @@ jobs:
       - shell: bash
         run: |
           mkdir assets
-          for dir in binaries/jphfmt-*; do
-            target="${dir##*/jphfmt-}"
-            name="$(ls "$dir")"
-            cp "$dir/$name" "assets/jphfmt-$target${name#jphfmt}"
+          for binary in binaries/jphfmt-*/jphfmt*; do
+            dir="${binary%/*}"
+            name="${binary##*/}"
+            cp "$binary" "assets/jphfmt-${dir##*/jphfmt-}${name#jphfmt}"
           done
           cp packages/*/*.vsix assets/
           ls -l assets

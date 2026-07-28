@@ -16,8 +16,9 @@ let client: LanguageClient | undefined;
 /// A platform-specific package carries `bin/`; the universal one — what a platform with no build
 /// of its own installs — does not, and falls back to `PATH` as every release before this did. The
 /// setting wins either way, because people build their own.
-const formatter = (context: ExtensionContext, configured: string): string => {
-  if (configured) return configured;
+const formatter = (context: ExtensionContext, configured: unknown): string => {
+  // `settings.json` is user-authored, so the declared `string` type is a claim rather than a fact.
+  if (typeof configured === "string" && configured) return configured;
   const bundled = context.asAbsolutePath(
     join("bin", process.platform === "win32" ? "jphfmt.exe" : "jphfmt"),
   );
@@ -37,7 +38,7 @@ export const activate = (context: ExtensionContext): void => {
       { scheme: "untitled", language: "c" },
     ],
     initializationOptions: {
-      path: formatter(context, config.get<string>("path", "")),
+      path: formatter(context, config.get<unknown>("path", "")),
       width: config.get<number>("width", 100),
     },
   };
