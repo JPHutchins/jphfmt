@@ -864,3 +864,11 @@ fn an_operator_with_no_right_operand_is_not_a_chain_cut() {
     let once = jphfmt::format_with_width(src, 1);
     assert_eq!(jphfmt::format_with_width(&once, 1), once);
 }
+
+#[test]
+fn a_floating_exponent_keeps_its_sign() {
+    // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
+    // `1e - 5`, which does not compile — and musl's math sources are full of `0x1p-1022`.
+    let src = "double a = 1e-5;\ndouble y = 0x1p-1022 * 0x1p53;\n";
+    assert_eq!(format(src), src);
+}
