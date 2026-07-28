@@ -5,7 +5,7 @@
 
 use super::tokens::{
     has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident, is_trivia,
-    match_brace, match_bracket, split_chain, split_on_commas, split_top_level,
+    match_brace, match_bracket, split_chain, split_designators, split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -68,7 +68,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     let last = elements.len() - 1;
     let mut items = vec![pad()];
     for (idx, element) in elements.into_iter().enumerate() {
-        items.push(build_element_doc(element));
+        items.push(build_juxtaposed_doc(element));
         if idx < last {
             items.push(Doc::text(","));
             items.push(Doc::Line);
@@ -90,6 +90,23 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     } else {
         Doc::group(body)
     }
+}
+
+/// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
+/// brace-less initializer macro is not joined onto the designator that follows it.
+fn build_juxtaposed_doc(element: &[Token]) -> Doc {
+    let items = split_designators(element);
+    if items.len() < 2 {
+        return build_element_doc(element);
+    }
+    Doc::concat(
+        items
+            .iter()
+            .map(|item| build_element_doc(item))
+            .flat_map(|doc| [Doc::Line, doc])
+            .skip(1)
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Whether the nearest non-trivia token before `open` names a callee ([`is_callee_ident`]). Unlike

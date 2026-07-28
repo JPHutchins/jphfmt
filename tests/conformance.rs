@@ -835,3 +835,22 @@ fn a_depth_zero_colon_is_never_a_chain_to_split() {
     let src = "using decay_t = typename decay<T>::type;\n";
     assert_eq!(format(src), src);
 }
+
+#[test]
+fn a_brace_less_initializer_macro_keeps_its_own_line() {
+    // `PyVarObject_HEAD_INIT(a, b)` expands to initializers that must lead the list, so what
+    // follows it is juxtaposed rather than comma-separated. Every CPython static type is written
+    // this way, and joining the next designator onto it reads as a typo.
+    let src = "static PyTypeObject T = {\n\tPyVarObject_HEAD_INIT(NULL, 0)\n\t.tp_name = \"x\",\n\t.tp_basicsize = 0,\n};\n";
+    assert_eq!(format(src), src);
+}
+
+#[test]
+fn a_designator_tight_against_the_paren_is_left_alone() {
+    // `f().field = v` is a member assignment, token-for-token the shape a juxtaposed designator
+    // has. Only the gap tells them apart, so no gap means no split (§6).
+    assert_eq!(
+        format("int x = {get_ptr().field = 1};\n"),
+        "int x = {get_ptr().field = 1};\n"
+    );
+}

@@ -299,6 +299,34 @@ pub(super) fn statement_end(toks: &[Token], from: usize) -> Option<usize> {
         .map(|(j, _)| from + j)
 }
 
+/// Split one `{}` element at each designator that follows a complete value, so a brace-less
+/// initializer macro keeps its own line: `PyVarObject_HEAD_INIT(a, b) .tp_name = "x"` is two items
+/// juxtaposed without a comma, which is legal only here.
+///
+/// The gap is what says so. `f().field = v` with no gap is a member assignment, token-for-token the
+/// same shape, so a designator written tight against the `)` is left as the author wrote it (§6).
+pub(super) fn split_designators<'a, 'src>(element: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
+    let cuts: Vec<usize> = at_depth_zero(element)
+        .filter(|&(j, t)| {
+            t.kind == TokenKind::Punct
+                && t.text == "."
+                && j > 0
+                && is_trivia(&element[j - 1])
+                && prev_nontrivia(element, j).is_some_and(|k| element[k].text == ")")
+                && next_nontrivia(element, j + 1).is_some_and(|k| {
+                    element[k].kind == TokenKind::Ident
+                        && next_nontrivia(element, k + 1).is_some_and(|eq| element[eq].text == "=")
+                })
+        })
+        .map(|(j, _)| j)
+        .collect();
+    std::iter::once(0)
+        .chain(cuts.iter().copied())
+        .zip(cuts.iter().copied().chain(std::iter::once(element.len())))
+        .map(|(from, to)| &element[from..to])
+        .collect()
+}
+
 /// Split `inner` on commas at bracket depth zero.
 pub(super) fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
     split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
