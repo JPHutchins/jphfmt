@@ -1,3 +1,5 @@
+name: mutants
+
 on:
   schedule:
     - cron: '3 3 * * *'
@@ -28,6 +30,10 @@ jobs:
         with:
           tool: cargo-mutants
 
+      - id: sha
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: echo "short=$(git rev-parse --short HEAD)" >>"$GITHUB_OUTPUT"
+
       - id: mutants
         if: steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -36,6 +42,6 @@ jobs:
       - if: steps.cache.outputs.cache-hit != 'true' && steps.mutants.outcome == 'failure'
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: 'Mutation testing: surviving mutants ${{ github.sha[0:7] }}'
+          title: 'Mutation testing: surviving mutants ${{ steps.sha.outputs.short }}'
           content-filepath: mutants-report.txt
           labels: 'mutation-testing'
