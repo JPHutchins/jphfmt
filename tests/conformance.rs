@@ -854,3 +854,13 @@ fn a_designator_tight_against_the_paren_is_left_alone() {
         "int x = {get_ptr().field = 1};\n"
     );
 }
+
+#[test]
+fn an_operator_with_no_right_operand_is_not_a_chain_cut() {
+    // Bounding a chain moves its operators inside the parentheses, so what is left at depth zero on
+    // the next pass can be an operator that never had a right operand. Splitting there put the `=`
+    // in a segment of its own and the two layouts alternated forever.
+    let src = "={A/ =00aa.|*}AA=0] aa";
+    let once = jphfmt::format_with_width(src, 1);
+    assert_eq!(jphfmt::format_with_width(&once, 1), once);
+}

@@ -7,6 +7,7 @@
 use super::tokens::{
     closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_decl_specifier,
     is_excluded_callee, is_qualifier, is_tag_keyword, is_trivia, is_type_context, is_type_group,
+    is_value_start,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -253,13 +254,6 @@ fn space_pointers(pieces: &mut [Piece]) {
 /// Conservative: the parenthesized group must be type-only and contain a type keyword (so a grouped
 /// expression is never mistaken for one), be in a non-value position, and be followed by an operand.
 fn space_casts(pieces: &mut [Piece]) {
-    let value_start = |t: &Token| {
-        matches!(
-            t.kind,
-            TokenKind::Ident | TokenKind::Number | TokenKind::String | TokenKind::Char
-        ) || (t.kind == TokenKind::Punct
-            && matches!(t.text, "(" | "*" | "&" | "!" | "~" | "-" | "+"))
-    };
     for open in 0..pieces.len() {
         if pieces[open].1.text != "(" {
             continue;
@@ -273,7 +267,7 @@ fn space_casts(pieces: &mut [Piece]) {
                 || matches!(pieces[open - 1].1.text, ")" | "]"));
         let followed_by_operand = pieces
             .get(close + 1)
-            .is_some_and(|after| same_line(&after.0) && value_start(&after.1));
+            .is_some_and(|after| same_line(&after.0) && is_value_start(&after.1));
         if is_type_group(&inner) && !prev_is_value && followed_by_operand {
             // Tighten the `(`: strip a same-line gap after `(` so `( int)` -> `(int)`. No-op on
             // canonical `(int)`. (Stripping the gap before `)` was tried but broke idempotency on
