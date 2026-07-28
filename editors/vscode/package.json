@@ -1,6 +1,6 @@
 {
   "name": "jphfmt",
-  "displayName": "jphfmt — opinionated C formatter",
+  "displayName": "jphfmt \u2014 opinionated C formatter",
   "description": "Format C with jphfmt: one uniform bracket rule, no column alignment.",
   "version": "0.2.0",
   "publisher": "JPH",
@@ -25,8 +25,8 @@
       "properties": {
         "jphfmt.path": {
           "type": "string",
-          "default": "jphfmt",
-          "description": "Path to the jphfmt executable."
+          "default": "",
+          "description": "Path to the jphfmt executable. Empty uses the binary bundled with this extension, or `jphfmt` on PATH when there is none."
         },
         "jphfmt.width": {
           "type": "number",

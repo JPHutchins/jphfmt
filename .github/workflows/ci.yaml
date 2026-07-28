@@ -6,6 +6,10 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Only the `release` job writes to the repository; everything else reads.
+permissions:
+  contents: read
+
 jobs:
   # Validation on every push/PR. camas is the single source of truth: bare `camas` runs its
   # `github_task` (defined in tasks.py's Config — the workflow never names tasks), from inside the
@@ -32,8 +36,6 @@ jobs:
   # Uploaded as CI artifacts (raw binary); promoted to the release page only on v* tags.
   binaries:
     needs: validate
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -79,17 +81,6 @@ jobs:
           name: jphfmt-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ steps.bin.outputs.name }}
 
-      - if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          name="${{ steps.bin.outputs.name }}"
-          cp "target/${{ matrix.target }}/release/$name" "jphfmt-${{ matrix.target }}${name#jphfmt}"
-
-      - uses: softprops/action-gh-release@v3
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          files: jphfmt-${{ matrix.target }}*
-
   crate:
     needs: [binaries, validate]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -102,27 +93,109 @@ jobs:
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         run: cargo publish
 
+  # One package per marketplace platform target, each bundling that platform's binary, plus a
+  # universal one with none. VS Code installs the platform match and falls back to universal, so a
+  # platform with no build of its own keeps the old behavior (`jphfmt` on PATH) rather than seeing
+  # no extension at all. Runs on pull requests too: packaging is the part that breaks silently.
   extension:
     needs: [binaries, validate]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    defaults:
-      run:
-        working-directory: editors/vscode
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `linux-x64` takes the *musl* build rather than gnu. A bundled binary has to run on
+          # whatever distro the user has, and a glibc build inherits the runner image's glibc
+          # floor — static musl has none.
+          - { vsce: linux-x64, target: x86_64-unknown-linux-musl }
+          - { vsce: alpine-x64, target: x86_64-unknown-linux-musl }
+          - { vsce: linux-arm64, target: aarch64-unknown-linux-musl }
+          - { vsce: alpine-arm64, target: aarch64-unknown-linux-musl }
+          - { vsce: darwin-x64, target: x86_64-apple-darwin }
+          - { vsce: darwin-arm64, target: aarch64-apple-darwin }
+          - { vsce: win32-x64, target: x86_64-pc-windows-msvc }
+          - { vsce: win32-arm64, target: aarch64-pc-windows-msvc }
+          - { vsce: universal }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - run: npm ci
-      - run: npm run build
-      - run: npx --yes @vscode/vsce package
-      - uses: softprops/action-gh-release@v3
+
+      - if: matrix.target != ''
+        uses: actions/download-artifact@v4
         with:
-          files: editors/vscode/*.vsix
+          name: jphfmt-${{ matrix.target }}
+          path: editors/vscode/bin
+
+      # The mode may not survive the artifact round-trip, and a binary that is not executable fails
+      # at spawn on the user's machine, where nothing here would catch it.
+      - if: matrix.target != ''
+        run: chmod +x editors/vscode/bin/*
+
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run build
+        working-directory: editors/vscode
+
+      - id: pkg
+        working-directory: editors/vscode
+        shell: bash
+        run: |
+          if [ "${{ matrix.vsce }}" = universal ]; then
+            npx --yes @vscode/vsce package
+          else
+            npx --yes @vscode/vsce package --target "${{ matrix.vsce }}"
+          fi
+          echo "vsix=$(ls *.vsix)" >> "$GITHUB_OUTPUT"
+
+      # Proves the binary is in the package and where the extension looks for it.
+      - if: matrix.target != ''
+        working-directory: editors/vscode
+        shell: bash
+        run: |
+          unzip -l "${{ steps.pkg.outputs.vsix }}" | grep -qE 'extension/bin/jphfmt(\.exe)?$'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.vsce }}
+          path: editors/vscode/${{ steps.pkg.outputs.vsix }}
+
+      # `--packagePath` publishes the package that was just built and verified, rather than building
+      # a second one; the target is read back from its manifest.
       - env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        if: ${{ env.VSCE_PAT != '' }}
-        run: npx --yes @vscode/vsce publish
+        if: ${{ env.VSCE_PAT != '' && startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: editors/vscode
+        run: npx --yes @vscode/vsce publish --packagePath "${{ steps.pkg.outputs.vsix }}"
+
+  # The only job that writes to the repository, and the only one gated on the tag alone.
+  release:
+    needs: [binaries, extension]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jphfmt-*
+          path: binaries
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          path: packages
+      - shell: bash
+        run: |
+          mkdir assets
+          for dir in binaries/jphfmt-*; do
+            target="${dir##*/jphfmt-}"
+            name="$(ls "$dir")"
+            cp "$dir/$name" "assets/jphfmt-$target${name#jphfmt}"
+          done
+          cp packages/*/*.vsix assets/
+          ls -l assets
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: assets/*

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { workspace, type ExtensionContext } from "vscode";
 import {
@@ -8,6 +9,20 @@ import {
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+
+/// The formatter to spawn: the `jphfmt.path` setting when it is set, otherwise the binary this
+/// build bundles, otherwise `jphfmt` on `PATH`.
+///
+/// A platform-specific package carries `bin/`; the universal one — what a platform with no build
+/// of its own installs — does not, and falls back to `PATH` as every release before this did. The
+/// setting wins either way, because people build their own.
+const formatter = (context: ExtensionContext, configured: string): string => {
+  if (configured) return configured;
+  const bundled = context.asAbsolutePath(
+    join("bin", process.platform === "win32" ? "jphfmt.exe" : "jphfmt"),
+  );
+  return existsSync(bundled) ? bundled : "jphfmt";
+};
 
 export const activate = (context: ExtensionContext): void => {
   const module = context.asAbsolutePath(join("out", "server.js"));
@@ -22,7 +37,7 @@ export const activate = (context: ExtensionContext): void => {
       { scheme: "untitled", language: "c" },
     ],
     initializationOptions: {
-      path: config.get<string>("path", "jphfmt"),
+      path: formatter(context, config.get<string>("path", "")),
       width: config.get<number>("width", 100),
     },
   };

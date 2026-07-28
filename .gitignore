@@ -10,3 +10,4 @@ editors/vscode/out
 editors/vscode/*.vsix
 mutants.out*
 __pycache__/
+editors/vscode/bin
