@@ -358,11 +358,11 @@ const CHAIN_CLASSES: [&[&str]; 10] = [
 /// shape a bounded chain leaves behind when its own operators move inside the parentheses — is not
 /// binary however well its left side reads, and splitting there put the `=` in its own segment.
 fn is_binary_position(inner: &[Token], j: usize) -> bool {
-    if !next_nontrivia(inner, j + 1).is_some_and(|k| starts_value(&inner[k])) {
+    if !next_nontrivia(inner, j + 1).is_some_and(|k| is_value_start(&inner[k])) {
         return false;
     }
     prev_nontrivia(inner, j).is_some_and(|k| match inner[k].kind {
-        TokenKind::Ident => !is_excluded_callee(inner[k].text) && !is_type_context(inner[k].text),
+        TokenKind::Ident => is_callee_ident(&inner[k]),
         TokenKind::Number | TokenKind::String | TokenKind::Char => true,
         TokenKind::Punct => matches!(inner[k].text, ")" | "]"),
         // A postfix `++`/`--` ends a value as much as its operand does.
@@ -377,14 +377,16 @@ fn is_binary_position(inner: &[Token], j: usize) -> bool {
 
 /// Whether `t` can begin a value: an operand, an opening bracket, or a unary prefix. An assignment,
 /// a closer and a separator cannot.
-fn starts_value(t: &Token) -> bool {
+pub(super) fn is_value_start(t: &Token) -> bool {
     match t.kind {
         TokenKind::Ident | TokenKind::Number | TokenKind::String | TokenKind::Char => true,
         // C11 §6.5.2-6.5.3: a primary expression or a unary prefix. `[` and `{` open a subscript
-        // and a brace list, neither of which begins a value. A `#` is a directive interleaved into
-        // the expression — the value starts after it.
+        // and a brace list, neither of which begins a value. A `#` stands for a directive
+        // interleaved into the expression, and taking it as a start is what keeps the operator
+        // before it binary.
         TokenKind::Punct => matches!(t.text, "(" | "-" | "+" | "!" | "~" | "*" | "&" | "#"),
-        TokenKind::Operator => matches!(t.text, "++" | "--"),
+        // `&&label` is GNU C's label address, an operand like any other.
+        TokenKind::Operator => matches!(t.text, "++" | "--" | "&&"),
         TokenKind::Newline
         | TokenKind::Whitespace
         | TokenKind::Unknown
@@ -869,5 +871,43 @@ mod tests {
     #[test]
     fn is_callee_ident_non_ident() {
         assert!(!is_callee_ident(&mk_punct("(")));
+    }
+
+    #[test]
+    fn is_value_start_accepts_what_can_begin_a_value() {
+        for (kind, text) in [
+            (TokenKind::Ident, "x"),
+            (TokenKind::Number, "1"),
+            (TokenKind::String, "\"s\""),
+            (TokenKind::Char, "'c'"),
+            (TokenKind::Punct, "("),
+            (TokenKind::Punct, "-"),
+            (TokenKind::Punct, "!"),
+            (TokenKind::Punct, "*"),
+            (TokenKind::Punct, "&"),
+            (TokenKind::Punct, "#"),
+            (TokenKind::Operator, "++"),
+            (TokenKind::Operator, "&&"),
+        ] {
+            assert!(is_value_start(&Token { kind, text }), "{text}");
+        }
+    }
+
+    #[test]
+    fn is_value_start_refuses_what_cannot() {
+        // `[` and `{` open a subscript and a brace list; an assignment, a closer and a separator
+        // end a value rather than begin one.
+        for (kind, text) in [
+            (TokenKind::Punct, "["),
+            (TokenKind::Punct, "{"),
+            (TokenKind::Punct, "="),
+            (TokenKind::Punct, ")"),
+            (TokenKind::Punct, ","),
+            (TokenKind::Punct, ";"),
+            (TokenKind::Operator, "+="),
+            (TokenKind::Whitespace, " "),
+        ] {
+            assert!(!is_value_start(&Token { kind, text }), "{text}");
+        }
     }
 }
