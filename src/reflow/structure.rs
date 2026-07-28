@@ -194,7 +194,12 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) 
         // A statement whose own top level is an operator chain. Nothing else lays a bare statement
         // out, so without this the one construct that cannot be a container is also the one that
         // can overrun the width.
+        // `else` starts no statement of its own: it introduces the one after it, which reaches this
+        // handler on its own token. Beginning the span here instead would put `else` in the chain's
+        // head, and a head renders flat — joining a braceless body onto the `else` line whenever it
+        // happened to hold an operator.
         if !is_trivia(&t)
+            && t.text != "else"
             && starts_statement(toks, i)
             && let Some(semi) = statement_end(toks, i)
             && !contains_comment(&toks[i..semi])
@@ -226,14 +231,14 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) 
 }
 
 /// Whether the token at `i` opens a statement: nothing precedes it, or what does ended the previous
-/// one — a `;`, either brace, or the `)` of a braceless `if`/`for`/`while`/`switch` header. A property
-/// of the token stream, not of what has been emitted so far: any other `)` is inside the statement,
-/// which some handler has already claimed from its first token.
+/// one — a `;`, either brace, an `else`, or the `)` of a braceless `if`/`for`/`while`/`switch` header.
+/// A property of the token stream, not of what has been emitted so far: any other `)` is inside the
+/// statement, which some handler has already claimed from its first token.
 fn starts_statement(toks: &[Token], i: usize) -> bool {
     let Some(k) = prev_nontrivia(toks, i) else {
         return true;
     };
-    matches!(toks[k].text, ";" | "{" | "}")
+    matches!(toks[k].text, ";" | "{" | "}" | "else")
         || (toks[k].text == ")"
             && match_open_paren(toks, k)
                 .and_then(|open| prev_nontrivia(toks, open))
