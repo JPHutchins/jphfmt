@@ -187,17 +187,126 @@ fn control_keyword_gets_one_space_before_paren() {
 #[test]
 fn pointers_are_middle_spaced_after_type_keywords() {
     assert_eq!(format("int*p;\n"), "int * p;\n");
-    assert_eq!(format("int **p;\n"), "int ** p;\n");
     assert_eq!(format("char const*const q;\n"), "char const * const q;\n");
     assert_eq!(format("void*f(void);\n"), "void * f(void);\n");
 }
 
 #[test]
+fn pointer_declarator_stars_never_cluster() {
+    // §2.5: only the dereference operator clusters with its operand, so each `*` in a declarator
+    // stands alone.
+    assert_eq!(format("int **p;\n"), "int * * p;\n");
+    assert_eq!(format("int***q;\n"), "int * * * q;\n");
+    assert_eq!(
+        format("void py_release(PyObject ** const r);\n"),
+        "void py_release(PyObject * * const r);\n"
+    );
+    assert_eq!(format("PyObject *const s;\n"), "PyObject * const s;\n");
+    assert_eq!(format("PyObject **t;\n"), "PyObject * * t;\n");
+    // A multiply keeps its own spacing: no declaration position, no declarator.
+    assert_eq!(format("z = a ** b;\n"), "z = a ** b;\n");
+}
+
+#[test]
+fn typedef_pointer_declarators_are_middle_spaced() {
+    // A typedef name in declaration position is a type, so its `*` is a declarator (§6 only bars
+    // the runs an expression could also produce).
+    for src in [
+        "uint32_t *p;\n",
+        "size_t *p;\n",
+        "FILE *p;\n",
+        "PyObject *p;\n",
+    ] {
+        assert_eq!(format(src), src.replace('*', "* "));
+    }
+    assert_eq!(format("mytype*p;\n"), "mytype * p;\n");
+    assert_eq!(
+        format("static PyObject *probe(PyObject *self);\n"),
+        "static PyObject * probe(PyObject * self);\n"
+    );
+    assert_eq!(
+        format("void f(int a, PyObject *b);\n"),
+        "void f(int a, PyObject * b);\n"
+    );
+    assert_eq!(
+        format("typedef PyObject *ptr_t;\n"),
+        "typedef PyObject * ptr_t;\n"
+    );
+}
+
+#[test]
+fn a_specifier_keyword_is_not_a_callee() {
+    // `_Noreturn` introduces a declaration; it never takes an argument list, so its `(` must not be
+    // tightened the way a call's is.
+    assert_eq!(format("_Noreturn (void) f;\n"), "_Noreturn (void) f;\n");
+    assert_eq!(
+        format("_Noreturn void die(void);\n"),
+        "_Noreturn void die(void);\n"
+    );
+}
+
+#[test]
+fn comma_separated_declarators_are_all_spaced() {
+    // The second declarator's type is back past the comma, so its `*` is a declarator too.
+    assert_eq!(format("int *p, *q, *r;\n"), "int * p, * q, * r;\n");
+    assert_eq!(format("PyObject *x, *y;\n"), "PyObject * x, * y;\n");
+    assert_eq!(format("struct foo *a, *b;\n"), "struct foo * a, * b;\n");
+}
+
+#[test]
+fn a_multiply_inside_braces_is_left_alone() {
+    // An initializer element is an expression, whichever brace holds it — `=`, a compound literal
+    // in `return` or in an argument, or a nested list.
+    for src in [
+        "int v[] = {a*b};\n",
+        "int m[] = {{a*b}, {c*d}};\n",
+        "f((struct Foo){a*b});\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+    assert_eq!(
+        format("return (struct Foo){a*b};\n"),
+        "return (struct Foo){a*b};\n"
+    );
+}
+
+#[test]
+fn a_declaration_after_a_brace_is_spaced() {
+    // The `{` and `}` statement boundaries, not just `;` and start-of-input.
+    assert_eq!(format("{ PyObject *p; }\n"), "{ PyObject * p; }\n");
+    assert_eq!(
+        format("void f(void) {}\nPyObject *p;\n"),
+        "void f(void) {}\nPyObject * p;\n"
+    );
+}
+
+#[test]
+fn multiply_is_not_a_declarator() {
+    // Every `Ident * Ident` an expression can produce must pass through (§6): the two are
+    // token-level identical, so only declaration position tells them apart.
+    for src in [
+        "z = a*b;\n",
+        "int n = f(a*b);\n",
+        "x = arr[n*m];\n",
+        "q = obj->fn(a*b);\n",
+        "v = n*3;\n",
+        "w = sizeof(int)*n;\n",
+        "y = a * *p;\n",
+        "foo(bar, baz*qux);\n",
+    ] {
+        assert_eq!(format(src), src, "expression must pass through: {src:?}");
+    }
+    assert_eq!(format("return f(a*b);\n"), "return f(a*b);\n");
+    // Accepted §6 trade-off: an expression statement whose result is discarded is
+    // token-indistinguishable from a declaration, so it is spaced as one.
+    assert_eq!(format("a*b;\n"), "a * b;\n");
+}
+
+#[test]
 fn ambiguous_star_is_left_alone() {
-    // multiply and user-typedef pointers can't be told apart at the token level (§6)
+    // a multiply in expression position keeps whatever spacing it was written with (§6)
     assert_eq!(format("z = a*b;\n"), "z = a*b;\n");
     assert_eq!(format("z = a * b;\n"), "z = a * b;\n");
-    assert_eq!(format("mytype*p;\n"), "mytype*p;\n");
 }
 
 #[test]

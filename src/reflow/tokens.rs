@@ -28,7 +28,7 @@ pub(super) fn heads_body(t: &Token) -> bool {
 /// `(noreturn)`, or a parameter list is never mistaken for one.
 pub(super) fn is_type_group(inner: &[Token]) -> bool {
     let significant = || inner.iter().filter(|t| !is_trivia(t));
-    significant().any(|t| is_type_context(t.text) || matches!(t.text, "struct" | "union" | "enum"))
+    significant().any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
         && significant().all(|t| {
             // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
             // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
@@ -51,24 +51,52 @@ pub(super) fn is_call_head(toks: &[Token], i: usize) -> bool {
 /// not a multiply, and after which `(` opens a declarator group, not a call's argument list. User
 /// typedefs (idents) are excluded, so ambiguous `a*b`/`foo*p`/`foo(x)` pass through (§6).
 pub(super) fn is_type_context(text: &str) -> bool {
-    matches!(
-        text,
-        "void"
-            | "char"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "signed"
-            | "unsigned"
-            | "_Bool"
-            | "bool"
-            | "const"
-            | "volatile"
-            | "_Atomic"
-            | "restrict"
-    )
+    is_qualifier(text)
+        || matches!(
+            text,
+            "void"
+                | "char"
+                | "short"
+                | "int"
+                | "long"
+                | "float"
+                | "double"
+                | "signed"
+                | "unsigned"
+                | "_Bool"
+                | "bool"
+        )
+}
+
+/// A type qualifier — a keyword that may follow a declarator's `*` but never a multiply's.
+pub(super) fn is_qualifier(text: &str) -> bool {
+    matches!(text, "const" | "volatile" | "restrict" | "_Atomic")
+}
+
+/// A keyword that introduces a `struct`/`union`/`enum` tag, after which an identifier names a type.
+pub(super) fn is_tag_keyword(text: &str) -> bool {
+    matches!(text, "struct" | "union" | "enum")
+}
+
+/// A keyword that can only introduce a declaration, so an `Ident *` after one is a declarator
+/// rather than a multiply — the disambiguation `is_type_context` cannot make for a typedef name.
+pub(super) fn is_decl_specifier(text: &str) -> bool {
+    is_type_context(text)
+        || is_tag_keyword(text)
+        || matches!(
+            text,
+            "static"
+                | "extern"
+                | "register"
+                | "inline"
+                | "typedef"
+                | "thread_local"
+                | "_Thread_local"
+                | "constexpr"
+                | "_Noreturn"
+                | "_Alignas"
+                | "alignas"
+        )
 }
 
 /// Keywords that take a `(` but are not calls whose arguments split on commas. `_Generic` is not
@@ -94,6 +122,7 @@ pub(super) fn is_excluded_callee(name: &str) -> bool {
             | "_Static_assert"
             | "__attribute__"
             | "_Pragma"
+            | "_Noreturn"
             | "asm"
             | "__asm__"
             | "__asm"
