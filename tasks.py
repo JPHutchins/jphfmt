@@ -7,13 +7,12 @@
 The Rust formatter crate lives here; the TypeScript LSP and VS Code client are a
 child project (``vscode = Project("editors/vscode")``), mounted for dotted
 dispatch (``camas vscode``, ``camas vscode.lint``) and composed into this file's
-``Config``. A ``Project`` binding contributes one node per ``Config`` slot — the
-child's own default, github, fix and check — so the entry points that span both
-ecosystems are the unnamed ones: bare ``camas`` fixes then checks everything,
+``Config``. A reference composes the child's *matching* field, so each slot below
+is that slot across both ecosystems: bare ``camas`` fixes then checks everything,
 bare ``camas`` under GitHub Actions runs the read-only pass plus the audit, and
-the agent gate gets the fast variants. The named tasks here carry their scope:
-``check`` is the crate and the cross-cutting checkers, ``camas vscode.check`` is
-the TypeScript side.
+the agent gate gets the fast variants. The named tasks here carry their own
+scope — ``check`` is the crate and the cross-cutting checkers — and compose with
+the child's across the namespace: ``camas '{check, vscode.check}'``.
 
 camas runs from inside ``nix develop``. The Rust leaves invoke the flake's
 ``nix run .#<target>`` apps (crane-backed, cached, sandboxed) rather than raw
