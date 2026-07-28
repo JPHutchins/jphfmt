@@ -20,6 +20,7 @@ from typing import Any, NamedTuple
 
 ENCODING = "utf-8"
 ROOT = Path(__file__).parent
+SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
 
 # The files a release rewrites, repo-relative — `tasks.py` scopes `version_check` to these.
 TRACKED = (
@@ -43,10 +44,14 @@ type Json = dict[str, Any]
 
 
 def loaded(path: Path) -> Json:
-	"""`path` as JSON, or an empty mapping — a malformed file is drift to report, not a traceback."""
+	"""`path` as JSON, or an empty mapping — a malformed file is drift to report, not a traceback.
+
+	Read as bytes, like `toml_loaded`: a stray non-UTF-8 byte is malformed too, and `read`'s decode
+	would raise a `UnicodeDecodeError` past the reach of this guard.
+	"""
 	try:
-		value = json.loads(read(path))
-	except (OSError, json.JSONDecodeError):
+		value = json.loads(path.read_bytes())
+	except (OSError, ValueError):
 		return {}
 	return value if isinstance(value, dict) else {}
 
@@ -88,7 +93,7 @@ def cargo_lock_version() -> str | None:
 	if not isinstance(packages, list):
 		return None
 	for package in packages:
-		if package.get("name") == CRATE:
+		if isinstance(package, dict) and package.get("name") == CRATE:
 			version = package.get("version")
 			return version if isinstance(version, str) else None
 	return None
@@ -165,15 +170,16 @@ def rewrites(version: str) -> tuple[Rewrite, ...]:
 
 
 def sync(version: str, guarded: bool = True) -> int:
-	if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
+	if not SEMVER.fullmatch(version):
 		raise SystemExit(f"not a semver version: {version!r}")
 	# Called on its own this rewrites four tracked files; `ship` has already cleared the tree.
 	if guarded:
 		refuse_unless_clean()
 	# Every pattern is applied in memory first, so one that no longer matches leaves the tree as it
 	# was rather than half rewritten.
-	patched = {path: read(path) for path in {rewrite.path for rewrite in rewrites(version)}}
-	for rewrite in rewrites(version):
+	edits = rewrites(version)
+	patched = {path: read(path) for path in {rewrite.path for rewrite in edits}}
+	for rewrite in edits:
 		text, count = re.subn(
 			rewrite.pattern,
 			rewrite.replacement,
@@ -188,41 +194,29 @@ def sync(version: str, guarded: bool = True) -> int:
 			)
 		patched[rewrite.path] = text
 	for path, text in patched.items():
-		path.write_text(text)
+		path.write_text(text, encoding=ENCODING)
 	return check()
 
 
-def git(*args: str) -> str:
-	"""Run git and return its stdout. A warning on stderr is not output — `git status --porcelain`
-	is read for emptiness — but a failure reports both streams, since `push` explains itself there."""
+def git(*args: str, reports_on_stderr: bool = False) -> str:
+	"""Run git and return its stdout, or exit with what it said.
+
+	`push` writes its report to stderr, so `reports_on_stderr` folds that in; every other caller
+	keeps the streams apart, because a warning on stderr is not output and `git status --porcelain`
+	is read for emptiness.
+	"""
 	done = subprocess.run(
 		("git", *args),
 		cwd=ROOT,
 		stdout=subprocess.PIPE,
-		stderr=subprocess.PIPE,
+		stderr=subprocess.STDOUT if reports_on_stderr else subprocess.PIPE,
 		text=True,
 		encoding=ENCODING,
 		check=False,
 	)
 	if done.returncode != 0:
-		said = "\n".join(part for part in (done.stdout.strip(), done.stderr.strip()) if part)
+		said = "\n".join(part for part in (done.stdout.strip(), (done.stderr or "").strip()) if part)
 		raise SystemExit(f"git {' '.join(args)} failed:\n{said}")
-	return done.stdout.strip()
-
-
-def git_reporting(*args: str) -> str:
-	"""`git` for a command whose report is on stderr, like `push`."""
-	done = subprocess.run(
-		("git", *args),
-		cwd=ROOT,
-		stdout=subprocess.PIPE,
-		stderr=subprocess.STDOUT,
-		text=True,
-		encoding=ENCODING,
-		check=False,
-	)
-	if done.returncode != 0:
-		raise SystemExit(f"git {' '.join(args)} failed:\n{done.stdout.strip()}")
 	return done.stdout.strip()
 
 
@@ -248,7 +242,7 @@ def resolve(spec: str) -> str:
 	current = cargo_version()
 	if spec in ("major", "minor", "patch"):
 		return bumped(current, spec)
-	if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", spec):
+	if not SEMVER.fullmatch(spec):
 		raise SystemExit(f"expected major, minor, patch, or X.Y.Z — got {spec!r}")
 	if ordered(spec) <= ordered(current):
 		raise SystemExit(f"{spec} does not follow {current}")
@@ -274,20 +268,36 @@ def refuse_unless_releasable(tag: str) -> None:
 		raise SystemExit(f"{tag} already exists on origin")
 
 
+def pushed(before: str, tag: str) -> str:
+	"""Push `main` and `tag` together, or leave the repository as `before` found it.
+
+	The atomic push is what makes the two land as one. What it cannot undo is the local commit and
+	tag it never sent: both would outlive the attempt, and the tag alone is enough to make
+	`refuse_unless_releasable` reject the retry. Winding back to `before` is what makes a second
+	`camas release` a fresh first one — the commit stays in the reflog either way.
+	"""
+	try:
+		return git("push", "--atomic", "origin", "main", tag, reports_on_stderr=True)
+	except SystemExit:
+		git("tag", "--delete", tag)
+		git("reset", "--hard", before)
+		raise
+
+
 def ship(spec: str) -> int:
 	if check() != 0:
 		return 1
 	version = resolve(spec)
 	tag = f"v{version}"
 	refuse_unless_releasable(tag)
+	before = git("rev-parse", "HEAD")
 	if sync(version, guarded=False) != 0:
 		return 1
 	print(git("commit", "--all", "--message", f"release {version}"))
 	print(git("tag", "--annotate", tag, "--message", tag))
-	# One push, and main is named before the tag: a published version whose commit is not on the
-	# default branch is how this metadata drifted, and `cargo install --git` builds that branch.
-	# Together they succeed or fail as one, leaving no tag pointing at an unpushed commit.
-	print(git_reporting("push", "--atomic", "origin", "main", tag))
+	# `main` is named before the tag: a published version whose commit is not on the default branch
+	# is how this metadata drifted, and `cargo install --git` builds that branch.
+	print(pushed(before, tag))
 	print(f"shipped {tag}: CI publishes the crate and the extension from the tag")
 	return 0
 
