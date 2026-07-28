@@ -173,6 +173,11 @@ jobs:
         run: npx --yes @vscode/vsce publish --packagePath "${{ steps.pkg.outputs.vsix }}"
 
   # The only job that writes to the repository, and the only one gated on the tag alone.
+  #
+  # All or nothing, deliberately: one failed platform skips this job, so no release appears rather
+  # than one whose missing platform is invisible to whoever came to download it. Adding
+  # `!cancelled()` here would publish the rest and hide the gap. `fail-fast: false` on `binaries`
+  # still attempts every target, so one run names every platform that broke.
   release:
     needs: [binaries, extension]
     if: startsWith(github.ref, 'refs/tags/v')
