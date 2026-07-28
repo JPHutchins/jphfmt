@@ -7,7 +7,7 @@
 use super::tokens::{
     closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_decl_specifier,
     is_excluded_callee, is_qualifier, is_tag_keyword, is_trivia, is_type_context, is_type_group,
-    is_value_start,
+    is_value_start, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -308,6 +308,9 @@ fn space_braces(pieces: &mut [Piece]) {
 /// it follows an identifier, precedes an integer literal, and no `?` opened a ternary earlier in
 /// the statement (which would make it a ternary colon, not a bit-field).
 fn space_bit_fields(pieces: &mut [Piece]) {
+    // Projected once, not per `:`: the backward scan is over the whole prefix, so building it inside
+    // the loop made a struct of many bit-fields quadratic.
+    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len().saturating_sub(1) {
         let is_bit_field = pieces[j].1.text == ":"
             && pieces[j].1.kind == TokenKind::Punct
@@ -315,24 +318,12 @@ fn space_bit_fields(pieces: &mut [Piece]) {
             && pieces[j + 1].1.kind == TokenKind::Number
             && same_line(&pieces[j].0)
             && same_line(&pieces[j + 1].0)
-            && !ternary_open_before(pieces, j);
+            && !ternary_open_before(&toks, j);
         if is_bit_field {
             pieces[j].0.clear();
             pieces[j + 1].0 = " ".to_owned();
         }
     }
-}
-
-/// Whether an unmatched `?` precedes index `j` within the current statement (back to `;`/`{`/`}`).
-fn ternary_open_before(pieces: &[Piece], j: usize) -> bool {
-    for p in pieces[..j].iter().rev() {
-        match p.1.text {
-            "?" => return true,
-            ";" | "{" | "}" => return false,
-            _ => {}
-        }
-    }
-    false
 }
 
 /// Normalize spacing around a single `=` (assignment, not `==`/`!=`/`<=`/`>=`/`+=` etc. which have
@@ -448,70 +439,6 @@ mod tests {
     fn is_type_context_not_keyword() {
         assert!(!is_type_context("foo"));
         assert!(!is_type_context("size_t"));
-    }
-
-    #[test]
-    fn ternary_open_before_stops_at_semicolon() {
-        // A `?` before a `;` is in a different statement, so no ternary is open at `j`.
-        let pieces: [Piece; 4] = [
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Punct,
-                    text: "?",
-                },
-            ),
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Punct,
-                    text: ";",
-                },
-            ),
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Ident,
-                    text: "x",
-                },
-            ),
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Punct,
-                    text: ":",
-                },
-            ),
-        ];
-        assert!(!ternary_open_before(&pieces, 3));
-    }
-
-    #[test]
-    fn ternary_open_before_unmatched_question() {
-        let pieces: [Piece; 3] = [
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Punct,
-                    text: "?",
-                },
-            ),
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Ident,
-                    text: "x",
-                },
-            ),
-            (
-                String::new(),
-                Token {
-                    kind: TokenKind::Punct,
-                    text: ":",
-                },
-            ),
-        ];
-        assert!(ternary_open_before(&pieces, 2));
     }
 
     #[test]

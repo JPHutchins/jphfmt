@@ -870,6 +870,7 @@ fn a_floating_exponent_keeps_its_sign() {
     // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
     // `1e - 5`, which does not compile — and musl's math sources are full of `0x1p-1022`.
     let src = "double a = 1e-5;\ndouble y = 0x1p-1022 * 0x1p53;\n";
+    assert_eq!(format(src), src);
 }
 
 #[test]
