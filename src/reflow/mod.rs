@@ -18,7 +18,10 @@ mod spacing;
 mod structure;
 mod tokens;
 
-use crate::doc::TAB_WIDTH;
+use std::borrow::Cow;
+
+use self::tokens::is_comment;
+use crate::doc::{TAB_WIDTH, display_width};
 use crate::lexer::{TokenKind, tokenize};
 
 /// Default column limit (§8.5).
@@ -47,7 +50,34 @@ pub fn format_with_width(src: &str, width: usize) -> String {
     let spaced = spacing::space_tokens(src);
     let structured = structure::structure(&tokenize(&spaced), 0, width);
     let scoped = scope::scope_directives(&structured);
-    normalize_endings(&collapse_blank_lines(&retab(&scoped)))
+    normalize_endings(&collapse_blank_lines(&trim_comment_lines(&retab(&scoped))))
+}
+
+/// Strip trailing whitespace from every line of a comment (§2.1). Everywhere else it is already gone:
+/// the gap before a newline is dropped by [`spacing::space_tokens`], and a whitespace-only line is
+/// emitted as empty by [`collapse_blank_lines`]. A comment is one token, so its own line ends are the
+/// only ones those two never reach.
+///
+/// Only comments. A string or character literal continued with `\` keeps the spaces before it, which
+/// are part of its value, and an unterminated literal is not this pass's to edit.
+fn trim_comment_lines(s: &str) -> String {
+    tokenize(s)
+        .into_iter()
+        .map(|t| {
+            // Borrowed unless there is something to trim, so the pass that reads its own output —
+            // every run after the first — allocates nothing.
+            if is_comment(&t) && t.text.split('\n').any(|l| l != l.trim_end()) {
+                return Cow::Owned(
+                    t.text
+                        .split('\n')
+                        .map(str::trim_end)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            Cow::Borrowed(t.text)
+        })
+        .collect()
 }
 
 /// Collapse runs of two or more blank lines to a single blank line everywhere (file scope and
@@ -109,11 +139,7 @@ fn retab(s: &str) -> String {
         let pure_indent =
             t.kind == TokenKind::Whitespace && t.text.bytes().all(|b| b == b' ' || b == b'\t');
         if at_line_start && pure_indent {
-            let cols: usize = t
-                .text
-                .chars()
-                .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
-                .sum();
+            let cols = display_width(t.text);
             for _ in 0..cols / TAB_WIDTH {
                 out.push('\t');
             }

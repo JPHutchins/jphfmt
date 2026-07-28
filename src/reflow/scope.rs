@@ -63,16 +63,34 @@ fn parse_directive(line: &str) -> Option<DirectiveLine<'_>> {
     })
 }
 
-fn scope_open(kw: &str) -> bool {
-    matches!(kw, "if" | "ifdef" | "ifndef")
+/// The depth a directive is emitted at, and the one it leaves behind.
+pub(super) struct Scoped {
+    pub at: usize,
+    pub after: usize,
 }
 
-fn scope_close(kw: &str) -> bool {
-    kw == "endif"
-}
-
-fn scope_alt(kw: &str) -> bool {
-    matches!(kw, "else" | "elif")
+/// Apply the nesting rule to `keyword` met at `depth`. Shared with
+/// [`super::structure::emit_define`], which measures a `#define`'s prefix at the depth this pass
+/// will indent it to — so the rule lives here, once.
+pub(super) fn scoped(keyword: &str, depth: usize) -> Scoped {
+    match keyword {
+        "if" | "ifdef" | "ifndef" => Scoped {
+            at: depth,
+            after: depth + 1,
+        },
+        "endif" => {
+            let at = depth.saturating_sub(1);
+            Scoped { at, after: at }
+        }
+        "else" | "elif" => Scoped {
+            at: depth.saturating_sub(1),
+            after: depth,
+        },
+        _ => Scoped {
+            at: depth,
+            after: depth,
+        },
+    }
 }
 
 /// True when `prev_line`, after trimming trailing whitespace, ends with a single `\`
@@ -96,17 +114,9 @@ pub(super) fn scope_directives(s: &str) -> String {
         }
 
         if let Some(d) = parse_directive(line) {
-            if scope_open(d.keyword) {
-                d.emit(&mut out, depth);
-                depth += 1;
-            } else if scope_close(d.keyword) {
-                depth = depth.saturating_sub(1);
-                d.emit(&mut out, depth);
-            } else if scope_alt(d.keyword) {
-                d.emit(&mut out, depth.saturating_sub(1));
-            } else {
-                d.emit(&mut out, depth);
-            }
+            let scope = scoped(d.keyword, depth);
+            d.emit(&mut out, scope.at);
+            depth = scope.after;
         } else {
             out.push_str(line);
         }
@@ -251,29 +261,35 @@ mod tests {
         assert!(parse_directive("#").is_none());
     }
 
-    #[test]
-    fn scope_open_keywords() {
-        assert!(scope_open("if"));
-        assert!(scope_open("ifdef"));
-        assert!(scope_open("ifndef"));
-        assert!(!scope_open("endif"));
-        assert!(!scope_open("else"));
-        assert!(!scope_open("define"));
+    fn at_after(keyword: &str, depth: usize) -> (usize, usize) {
+        let scope = scoped(keyword, depth);
+        (scope.at, scope.after)
     }
 
     #[test]
-    fn scope_close_keywords() {
-        assert!(scope_close("endif"));
-        assert!(!scope_close("if"));
-        assert!(!scope_close("else"));
+    fn scoped_opens_a_level_below_itself() {
+        assert_eq!(at_after("if", 1), (1, 2));
+        assert_eq!(at_after("ifdef", 1), (1, 2));
+        assert_eq!(at_after("ifndef", 1), (1, 2));
     }
 
     #[test]
-    fn scope_alt_keywords() {
-        assert!(scope_alt("else"));
-        assert!(scope_alt("elif"));
-        assert!(!scope_alt("if"));
-        assert!(!scope_alt("endif"));
+    fn scoped_closes_at_the_level_it_leaves() {
+        assert_eq!(at_after("endif", 2), (1, 1));
+        assert_eq!(at_after("endif", 0), (0, 0));
+    }
+
+    #[test]
+    fn scoped_alternative_keeps_the_level_open() {
+        assert_eq!(at_after("else", 2), (1, 2));
+        assert_eq!(at_after("elif", 2), (1, 2));
+        assert_eq!(at_after("else", 0), (0, 0));
+    }
+
+    #[test]
+    fn scoped_plain_directive_changes_nothing() {
+        assert_eq!(at_after("define", 1), (1, 1));
+        assert_eq!(at_after("include", 0), (0, 0));
     }
 
     #[test]

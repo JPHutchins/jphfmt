@@ -12,3 +12,6 @@ cc 8fd73011ff6dc407f039510a6cb2a0a20bbd2bc1b99bed759fb7d2c925f38e8f # shrinks to
 cc 7cf277bee819c4eaf3ac65ac2658b241e1a85ddc98f389d2c3e5f49786b9f1bb # shrinks to s = "' .A0a\"a\t\t\t_00.0]&'&0a00>;", width = 12
 cc 74ba848ce1a4b699a0d829088be55a4d9f59cb9a1776a1e9484372eb512dce2d # shrinks to s = "=\"\"{a0_<A\t0}\t_)=\t", width = 22
 cc a1da2a5bdb602c801ae19fc3eaa8e28cb4c43031667d1c05a7999c52e82a637d # shrinks to s = "\"\"={A\n*A\"\"}", width = 1
+cc e5b6121fb73a240c7406e1b1b85e7a0f0aba65fb8e2456e9bdcacdaca76d0057 # shrinks to s = "a*\n_\"\"<a;"
+cc adf388e347e274b5b85645ea88e4f99a70892643db24a8971706ff4c6378fb72 # shrinks to s = "A0\tA a\t__aA]0& Aa.00(#\ta\ta'a0\"0Aa_(_Aa0aA0_AA.A\"\t\"a]Aa]A\na0\tA0\n\"a]a.aa(00\"(0a.\n]A'AA/Aa/Aa)\t"
+cc 888b26ec4167c607aa8494815acf56a021e4101d8c85f1dd68f1d540dd4c1d3c # shrinks to s = "''\"\"a({=,})", width = 1

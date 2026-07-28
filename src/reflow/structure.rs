@@ -9,6 +9,7 @@ use super::builders::{
     build_brace_doc, build_call_body, build_call_doc, build_chain_doc, build_cond_doc,
     build_expr_doc, build_for_doc, build_paren_group,
 };
+use super::scope::scoped;
 use super::tokens::{
     closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
     has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break, is_comment,
@@ -24,13 +25,15 @@ use crate::lexer::{Token, TokenKind};
 pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
     let mut out = String::new();
     let mut col = start_col;
-    emit_tokens(toks, &mut out, &mut col, width);
+    let mut depth = 0usize;
+    emit_tokens(toks, &mut out, &mut col, &mut depth, width);
     out
 }
 
 /// Walk `toks`, appending to `out` so an enclosing construct's indentation is already in view when a
-/// nested one measures its own base level.
-fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) {
+/// nested one measures its own base level. `depth` is the `#if` nesting the walk has reached, carried
+/// through nested bodies because a scope opened in one can close outside it.
+fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut usize, width: usize) {
     let mut i = 0usize;
     let mut paren_depth = 0i32;
     let mut in_init = false;
@@ -42,9 +45,9 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) 
             let is_define = next_nontrivia(toks, i + 1)
                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
             i = if is_define {
-                emit_define(toks, i, out, col, width)
+                emit_define(toks, i, out, col, *depth, width)
             } else {
-                emit_directive(toks, i, out, col)
+                emit_directive(toks, i, out, col, depth)
             };
             continue;
         }
@@ -134,7 +137,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, width: usize) 
         // with one statement per line, body indented, `}` at the definition's own indent level.
         if t.kind == TokenKind::Punct && t.text == "{" && pending_func_def {
             pending_func_def = false;
-            i = emit_func_body(toks, i, out, col, width);
+            i = emit_func_body(toks, i, out, col, depth, width);
             continue;
         }
 
@@ -253,16 +256,29 @@ fn emit_define(
     start: usize,
     out: &mut String,
     col: &mut usize,
+    depth: usize,
     width: usize,
 ) -> usize {
     let end = directive_end(toks, start);
+    // The columns [`super::scope::scope_directives`] will put between `#` and `define` for the `#if`
+    // nesting this line sits at. Measuring the gap as written instead is what made a `#define` at
+    // exactly the limit inside an `#if` alternate forever: the first run has no gap to count, and
+    // every run after it counts the tab the previous one grew.
+    let scoped_col = depth * TAB_WIDTH;
     if let Some(def) = split_define(toks, start, end)
-        && let Some(body_str) = format_define_body(&def.body, display_width(&def.prefix), width)
+        && let Some(body_str) =
+            format_define_body(&def.body, scoped_col + display_width(&def.prefix), width)
     {
         let flat = format!("{prefix}{body_str}", prefix = def.prefix);
-        let continued = explode_params(&def, &flat, width)
+        // Each line is trimmed before its ` \` is added: a body that passed through verbatim carries
+        // the whitespace the *previous* run put before its `\`, and adding another would widen every
+        // continued line by one column per run.
+        let continued = explode_params(&def, &flat, scoped_col, width)
             .unwrap_or(flat)
-            .replace('\n', " \\\n");
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join(" \\\n");
         emit_str(out, col, &continued);
         emit_str(out, col, "\n");
         return end;
@@ -278,9 +294,9 @@ fn emit_define(
 /// it — overruns the width. The body then starts the line after the `)`, indented one level; its own
 /// layout is measured against the width that indent leaves. `None` when the flat form fits, or for an
 /// object-like macro, which has no list to break.
-fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
+fn explode_params(def: &Define, flat: &str, scoped_col: usize, width: usize) -> Option<String> {
     let continuation = usize::from(flat.contains('\n')) * CONTINUATION_WIDTH;
-    if display_width(flat.lines().next().unwrap_or(flat)) + continuation <= width {
+    if scoped_col + display_width(flat.lines().next().unwrap_or(flat)) + continuation <= width {
         return None;
     }
     let params = def.params.as_deref()?;
@@ -295,7 +311,7 @@ fn explode_params(def: &Define, flat: &str, width: usize) -> Option<String> {
     let params = render(
         &Doc::ForceBreak(Box::new(build_call_body(params))),
         continued,
-        display_width(&def.head),
+        scoped_col + display_width(&def.head),
         0,
     );
     Some(format!("{head}{params}\n\t{body}", head = def.head))
@@ -375,9 +391,18 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
     if body.is_empty() {
         return None;
     }
+    // `#` then the keyword, with nothing between: the gap belongs to
+    // [`super::scope::scope_directives`], which rewrites it to the nesting depth's tabs.
+    let from_hash = |to: usize| {
+        format!(
+            "{hash}{rest}",
+            hash = toks[start].text,
+            rest = flatten_continuations(&toks[define..to])
+        )
+    };
     Some(Define {
-        prefix: flatten_continuations(&toks[start..prefix_end]) + " ",
-        head: flatten_continuations(&toks[start..=name]),
+        prefix: from_hash(prefix_end) + " ",
+        head: from_hash(name + 1),
         params: close.map(|close| without_continuations(&toks[name + 2..close])),
         body,
     })
@@ -499,6 +524,7 @@ fn emit_func_body(
     open: usize,
     out: &mut String,
     col: &mut usize,
+    depth: &mut usize,
     width: usize,
 ) -> usize {
     let Some(close) = match_brace(toks, open) else {
@@ -542,7 +568,7 @@ fn emit_func_body(
     if body[0].text != "#" {
         emit_str(out, col, &inner_indent);
     }
-    emit_tokens(body, out, col, width);
+    emit_tokens(body, out, col, depth, width);
     // A directive carries its own line break, so the one before `}` is already there.
     if !out.ends_with('\n') {
         emit_str(out, col, "\n");
@@ -616,7 +642,7 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
         // follows can land on a later line, so its flat width is not this construct's to reserve —
         // and once it has broken, the next pass measures a shorter run and decides differently.
         if is_chain_break(toks, j) {
-            return width + pending + col_width(t.text);
+            return width + pending + display_width(t.text);
         }
         let counted = match t.kind {
             TokenKind::Newline => break,
@@ -624,38 +650,39 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             // Nothing past a bracket or a `;` shares this construct's fate: anything past the
             // bracket can break onto a later line, and the `;` ends the statement.
             TokenKind::Punct if matches!(t.text, "(" | "[" | "{" | ";") => {
-                return width + pending + col_width(t.text);
+                return width + pending + display_width(t.text);
             }
             // Stop at the first newline embedded in any token (not just Newline tokens),
             // so Unknown tokens containing multiple lines don't inflate the reserve.
             _ => match t.text.find('\n') {
-                Some(nl) => return width + pending + col_width(t.text[..nl].trim_end()),
+                Some(nl) => return width + pending + display_width(t.text[..nl].trim_end()),
                 None => t.text,
             },
         };
         if counted.trim().is_empty() {
-            pending += col_width(counted);
+            pending += display_width(counted);
         } else {
-            width += pending + col_width(counted);
+            width += pending + display_width(counted);
             pending = 0;
         }
     }
     width
 }
 
-/// Column width of raw token text, counting a tab as [`TAB_WIDTH`] (unlike [`display_width`], which
-/// assumes tab-free text). Used where the measured slice may contain a mid-line whitespace tab, so
-/// the reserve matches the cursor's own tab accounting and formatting stays idempotent.
-fn col_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
-        .sum()
-}
-
 /// Emit a preprocessor directive verbatim, following `\` line continuations; returns the index
-/// just past it.
-fn emit_directive(toks: &[Token], start: usize, out: &mut String, col: &mut usize) -> usize {
+/// just past it. Advances `depth` by the same rule [`super::scope::scope_directives`] applies, so a
+/// `#define` further on is measured at the nesting it will be indented to.
+fn emit_directive(
+    toks: &[Token],
+    start: usize,
+    out: &mut String,
+    col: &mut usize,
+    depth: &mut usize,
+) -> usize {
     let end = directive_end(toks, start);
+    if let Some(keyword) = next_nontrivia_in(toks, start + 1, end) {
+        *depth = scoped(toks[keyword].text, *depth).after;
+    }
     for tok in &toks[start..end] {
         emit_str(out, col, tok.text);
     }
@@ -722,14 +749,9 @@ mod tests {
     }
 
     #[test]
-    fn col_width_plain() {
-        assert_eq!(col_width("abc"), 3);
-    }
-
-    #[test]
-    fn col_width_tab_counts_as_tab_width() {
-        // `a` (1) + tab (TAB_WIDTH=4) + `b` (1) = 6
-        assert_eq!(col_width("a\tb"), 1 + TAB_WIDTH + 1);
+    fn trailing_reserved_counts_a_tab_as_tab_width() {
+        let toks = [tok(TokenKind::Unknown, "a\tb"), tok(TokenKind::Punct, ";")];
+        assert_eq!(trailing_reserved(&toks, 0), 1 + TAB_WIDTH + 1 + 1);
     }
 
     #[test]

@@ -209,12 +209,12 @@ fn space_pointers(pieces: &mut [Piece]) {
     let is_star = |t: &Token| t.kind == TokenKind::Punct && t.text == "*";
     let mut j = 0;
     while j < pieces.len() {
-        if !(is_star(&pieces[j].1) && same_line(&pieces[j].0) && j > 0) {
+        if !(is_star(&pieces[j].1) && j > 0) {
             j += 1;
             continue;
         }
         let mut k = j;
-        while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) && same_line(&pieces[k + 1].0) {
+        while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) {
             k += 1;
         }
         let prev_is_type = is_type_context(pieces[j - 1].1.text)
@@ -223,17 +223,21 @@ fn space_pointers(pieces: &mut [Piece]) {
                 && is_tag_keyword(pieces[j - 2].1.text));
         // `int *p, *q` — the second declarator's type is back past the comma.
         let continues_declarator = pieces[j - 1].1.text == "," && declares_head(pieces, j - 1);
-        let after_run = pieces
-            .get(k + 1)
-            .filter(|after| same_line(&after.0))
-            .map(|after| (is_qualifier(after.1.text), after.1.kind == TokenKind::Ident));
-        let (next_is_qualifier, next_names_declarator) = after_run.unwrap_or((false, false));
+        // What follows the run settles the verdict wherever it sits. Reading only a same-line
+        // neighbour would make the verdict depend on where the breaks are, and the layout closes
+        // breaks: a run that joined `a *` onto its name would hand the next pass a declarator this
+        // one never saw, and that pass would respace it. Only the rewrite below is same-line — a
+        // newline gap is not this pass's to close.
+        let (next_is_qualifier, next_names_declarator) =
+            pieces.get(k + 1).map_or((false, false), |after| {
+                (is_qualifier(after.1.text), after.1.kind == TokenKind::Ident)
+            });
         let typedef_declarator = pieces[j - 1].1.kind == TokenKind::Ident
             && !is_excluded_callee(pieces[j - 1].1.text)
             && next_names_declarator
             && declares_pointer(pieces, &toks, j - 1);
         if prev_is_type || next_is_qualifier || typedef_declarator || continues_declarator {
-            for piece in &mut pieces[j..=k] {
+            for piece in pieces[j..=k].iter_mut().filter(|p| same_line(&p.0)) {
                 piece.0 = " ".to_owned();
             }
             if let Some(after) = pieces.get_mut(k + 1)
@@ -327,8 +331,9 @@ fn space_bit_fields(pieces: &mut [Piece]) {
 }
 
 /// Normalize spacing around a single `=` (assignment, not `==`/`!=`/`<=`/`>=`/`+=` etc. which have
-/// different text): exactly one space before and after, same-line only. Never before a `;`, which
-/// would put the space `space_semicolons` exists to remove. No-op on canonical input.
+/// different text): exactly one space before and after, same-line only. Never before a `;` or a `,`,
+/// which are separators every layout writes tight — the space `space_semicolons` exists to remove, and
+/// the one a `{}` list would drop on the next pass. No-op on canonical input.
 fn space_equals(pieces: &mut [Piece]) {
     for j in 0..pieces.len() {
         if pieces[j].1.kind == TokenKind::Punct && pieces[j].1.text == "=" {
@@ -337,7 +342,7 @@ fn space_equals(pieces: &mut [Piece]) {
             }
             if let Some(after) = pieces.get_mut(j + 1)
                 && same_line(&after.0)
-                && after.1.text != ";"
+                && !matches!(after.1.text, ";" | ",")
             {
                 after.0 = " ".to_owned();
             }
