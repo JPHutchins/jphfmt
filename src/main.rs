@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
 use jphfmt::{DEFAULT_WIDTH, format_with_width};
 
 /// What to do with each input's formatted result.
@@ -12,57 +13,42 @@ enum Mode {
     InPlace,
     /// Report (via exit code) whether any input is not already formatted; write nothing.
     Check,
-    /// Print the version and exit.
-    Version,
-    /// Print usage and exit.
-    Help,
 }
 
-const USAGE: &str = "usage: jphfmt [-i | --in-place | --check] [--width N] [FILE...]";
-
+#[derive(Debug, Parser)]
+#[command(version, about)]
 struct Args {
-    mode: Mode,
+    /// Rewrite each named file in place when formatting changes it
+    #[arg(short = 'i', long, conflicts_with = "check", requires = "files")]
+    in_place: bool,
+
+    /// Exit non-zero if any input is not already formatted; write nothing
+    #[arg(long)]
+    check: bool,
+
+    /// Column limit; tab width is 4
+    #[arg(long, default_value_t = DEFAULT_WIDTH, value_name = "N")]
     width: usize,
+
+    /// Files to format; none reads stdin
+    #[arg(value_name = "FILE")]
     files: Vec<String>,
 }
 
-fn parse_args(argv: &[String]) -> Result<Args, String> {
-    let mut mode = Mode::Stdout;
-    let mut width = DEFAULT_WIDTH;
-    let mut files = Vec::new();
-    let mut rest = argv.iter();
-    while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "-i" | "--in-place" => mode = Mode::InPlace,
-            "--check" => mode = Mode::Check,
-            "-V" | "--version" => mode = Mode::Version,
-            "-h" | "--help" => mode = Mode::Help,
-            "--width" => {
-                let value = rest.next().ok_or("--width requires a value")?;
-                width = value
-                    .parse()
-                    .map_err(|_| format!("invalid --width: {value}"))?;
-            }
-            flag if flag.starts_with("--width=") => {
-                let value = &flag["--width=".len()..];
-                width = value
-                    .parse()
-                    .map_err(|_| format!("invalid --width: {value}"))?;
-            }
-            flag if flag.starts_with('-') && flag != "-" => {
-                return Err(format!("unknown flag: {flag}"));
-            }
-            _ => files.push(arg.clone()),
+impl Args {
+    /// `--check` and `-i` cannot both be set, so their order here decides nothing.
+    fn mode(&self) -> Mode {
+        match (self.in_place, self.check) {
+            (true, _) => Mode::InPlace,
+            (false, true) => Mode::Check,
+            (false, false) => Mode::Stdout,
         }
     }
-    if mode == Mode::InPlace && files.is_empty() {
-        return Err("-i requires at least one FILE".to_owned());
-    }
-    Ok(Args { mode, width, files })
 }
 
 /// Returns `true` if any input differed from its formatted form.
 fn run(args: &Args) -> std::io::Result<bool> {
+    let mode = args.mode();
     if args.files.is_empty() {
         let src = {
             let mut buf = String::new();
@@ -70,7 +56,7 @@ fn run(args: &Args) -> std::io::Result<bool> {
             buf
         };
         let out = format_with_width(&src, args.width);
-        if args.mode != Mode::Check {
+        if mode != Mode::Check {
             std::io::stdout().write_all(out.as_bytes())?;
         }
         return Ok(out != src);
@@ -81,38 +67,81 @@ fn run(args: &Args) -> std::io::Result<bool> {
         let out = format_with_width(&src, args.width);
         let changed = out != src;
         any_changed |= changed;
-        match args.mode {
+        match mode {
             Mode::Stdout => std::io::stdout().write_all(out.as_bytes())?,
             Mode::InPlace if changed => std::fs::write(path, out)?,
-            Mode::InPlace | Mode::Check | Mode::Version | Mode::Help => {}
+            Mode::InPlace | Mode::Check => {}
         }
     }
     Ok(any_changed)
 }
 
 fn main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    let args = match parse_args(&argv) {
-        Ok(args) => args,
-        Err(msg) => {
-            eprintln!("jphfmt: {msg}");
-            return ExitCode::FAILURE;
-        }
-    };
-    if args.mode == Mode::Version {
-        println!("jphfmt {}", env!("CARGO_PKG_VERSION"));
-        return ExitCode::SUCCESS;
-    }
-    if args.mode == Mode::Help {
-        println!("{USAGE}");
-        return ExitCode::SUCCESS;
-    }
+    let args = Args::parse();
     match run(&args) {
-        Ok(changed) if args.mode == Mode::Check && changed => ExitCode::FAILURE,
+        Ok(changed) if args.mode() == Mode::Check && changed => ExitCode::FAILURE,
         Ok(_) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("jphfmt: {err}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Args, Mode};
+    use clap::Parser;
+    use jphfmt::DEFAULT_WIDTH;
+
+    fn parsed(argv: &[&str]) -> Result<Args, clap::Error> {
+        Args::try_parse_from(std::iter::once("jphfmt").chain(argv.iter().copied()))
+    }
+
+    #[test]
+    fn no_arguments_formats_stdin_at_the_default_width() {
+        let args = parsed(&[]).unwrap();
+        assert_eq!(args.mode(), Mode::Stdout);
+        assert_eq!(args.width, DEFAULT_WIDTH);
+        assert!(args.files.is_empty());
+    }
+
+    #[test]
+    fn width_takes_a_value_either_way() {
+        assert_eq!(parsed(&["--width", "80"]).unwrap().width, 80);
+        assert_eq!(parsed(&["--width=80"]).unwrap().width, 80);
+        assert!(parsed(&["--width"]).is_err());
+        assert!(parsed(&["--width", "wide"]).is_err());
+    }
+
+    #[test]
+    fn in_place_requires_a_file() {
+        assert!(parsed(&["-i"]).is_err());
+        assert_eq!(parsed(&["-i", "a.c"]).unwrap().mode(), Mode::InPlace);
+        assert_eq!(
+            parsed(&["--in-place", "a.c"]).unwrap().mode(),
+            Mode::InPlace
+        );
+    }
+
+    #[test]
+    fn in_place_and_check_are_exclusive() {
+        assert!(parsed(&["-i", "--check", "a.c"]).is_err());
+        assert_eq!(parsed(&["--check", "a.c"]).unwrap().mode(), Mode::Check);
+    }
+
+    /// A lone `-` is a file name rather than a flag, which the hand-rolled parser special-cased.
+    #[test]
+    fn a_lone_hyphen_is_a_file() {
+        assert_eq!(parsed(&["-"]).unwrap().files, ["-"]);
+        assert!(parsed(&["-x"]).is_err());
+    }
+
+    #[test]
+    fn every_file_is_kept_in_order() {
+        assert_eq!(
+            parsed(&["b.c", "a.c", "b.c"]).unwrap().files,
+            ["b.c", "a.c", "b.c"]
+        );
     }
 }
