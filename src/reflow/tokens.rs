@@ -27,15 +27,23 @@ pub(super) fn heads_body(t: &Token) -> bool {
 /// compound literal. A type keyword or tag must appear, so a grouped expression `(x)`, an attribute's
 /// `(noreturn)`, or a parameter list is never mistaken for one.
 pub(super) fn is_type_group(inner: &[Token]) -> bool {
-    let significant = || inner.iter().filter(|t| !is_trivia(t));
-    significant().any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
-        && significant().all(|t| {
-            // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
-            // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
-            (t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
-                || t.kind == TokenKind::Number
-                || matches!(t.text, "*" | "[" | "]" | "(" | ")")
-        })
+    spells_only_type_tokens(inner)
+        && inner
+            .iter()
+            .filter(|t| !is_trivia(t))
+            .any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
+}
+
+/// Whether every token in `inner` can appear in a type, without requiring one to prove it — the
+/// shared half of [`is_type_group`] and [`closes_type_paren`].
+fn spells_only_type_tokens(inner: &[Token]) -> bool {
+    inner.iter().filter(|t| !is_trivia(t)).all(|t| {
+        // `(` and `)` for a declarator inside the type — `(int (*)[10])` — but no keyword that
+        // takes its own argument list, so `sizeof(int)` and an attribute stay expressions.
+        (t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
+            || t.kind == TokenKind::Number
+            || matches!(t.text, "*" | "[" | "]" | "(" | ")")
+    })
 }
 
 /// A callee identifier ([`is_callee_ident`]) immediately followed by `(` (no intervening
@@ -179,6 +187,30 @@ pub(super) fn prev_significant(toks: &[Token], before: usize) -> Option<usize> {
 pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
     match_open_paren(toks, close).is_some_and(|open| {
         is_type_group(&toks[open + 1..close])
+            && prev_significant(toks, open).is_none_or(|before| {
+                !heads_body(&toks[before]) && !matches!(toks[before].text, ")" | "]")
+            })
+    })
+}
+
+/// Whether the `)` at `close` closes a parenthesized *type* — a cast, or a compound literal's type —
+/// so it ends no value and an operator after it takes one operand, not two.
+///
+/// Provable cases only. `(A) & b` cannot be told apart from a cast without knowing whether `A` names
+/// a type, so the group must either spell a type keyword or tag ([`is_type_group`]) or end in a `*`,
+/// which no expression can end with. `(count) & mask`, where the parentheses are merely redundant,
+/// keeps its binary reading.
+pub(super) fn closes_type_paren(toks: &[Token], close: usize) -> bool {
+    match_open_paren(toks, close).is_some_and(|open| {
+        let inner = &toks[open + 1..close];
+        let ends_in_star = || {
+            inner
+                .iter()
+                .rfind(|t| !is_trivia(t))
+                .is_some_and(|t| t.text == "*")
+        };
+        spells_only_type_tokens(inner)
+            && (is_type_group(inner) || ends_in_star())
             && prev_significant(toks, open).is_none_or(|before| {
                 !heads_body(&toks[before]) && !matches!(toks[before].text, ")" | "]")
             })
@@ -432,7 +464,13 @@ fn is_binary_position(inner: &[Token], j: usize) -> bool {
     prev_nontrivia(inner, j).is_some_and(|k| match inner[k].kind {
         TokenKind::Ident => is_callee_ident(&inner[k]),
         TokenKind::Number | TokenKind::String | TokenKind::Char => true,
-        TokenKind::Punct => matches!(inner[k].text, ")" | "]"),
+        // A `)` that closes a *type* ends no value: `(PyObject *) &x` is an address-of, not a
+        // bitwise-and, and the same holds for the `-`/`+` a cast can precede.
+        TokenKind::Punct => match inner[k].text {
+            ")" => !closes_type_paren(inner, k),
+            "]" => true,
+            _ => false,
+        },
         // A postfix `++`/`--` ends a value as much as its operand does.
         TokenKind::Operator => matches!(inner[k].text, "++" | "--"),
         TokenKind::Newline
