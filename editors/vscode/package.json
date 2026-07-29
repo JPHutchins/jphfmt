@@ -2,7 +2,7 @@
   "name": "jphfmt",
   "displayName": "jphfmt \u2014 opinionated C formatter",
   "description": "Format C with jphfmt: one uniform bracket rule, no column alignment.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "JPH",
   "license": "Apache-2.0",
   "repository": {
