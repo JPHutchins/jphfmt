@@ -51,8 +51,7 @@ doc = Task("nix run .#doc", when=RUST)
 audit = Task("nix run .#audit")
 mutants = Task("cargo mutants --jobs 8")
 
-# Raw cargo against the dev shell's warm target/: incremental, single-toolchain, and about a second
-# per leaf cheaper than the crane app it mirrors, which is what the agent gate wants.
+# Raw cargo, ~1s/leaf cheaper than the crane app it mirrors: the agent gate's inner loop.
 rust_fmt_check_fast = Task("cargo fmt --check -- {paths}", paths=RS)
 clippy_fast = Task("cargo clippy --all-targets --all-features -- -D warnings", when=RUST)
 test_fast = Task("cargo nextest run --all-features", when=RUST)
@@ -81,8 +80,7 @@ release = Sequential(
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
 py_types = Task("uvx ty check {paths}", paths="release.py")
-# Not `camas --check`: ty cannot resolve camas from the flake's store path (JPHutchins/camas#277).
-# The PEP 723 header above is what makes this one work, and its only purpose.
+# Not `camas --check` (JPHutchins/camas#277); the header above exists only to make this work.
 task_types = Task("uv run tasks.py --check", when="tasks.py")
 
 rust_check = Parallel(rust_fmt_check, clippy, test, doc)

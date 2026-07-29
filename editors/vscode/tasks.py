@@ -13,7 +13,7 @@ lint_fix = Task("npm run lint:fix", mutates=True)
 typecheck = Task("npm run typecheck")
 build = Task("npm run build")
 knip = Task("npx --yes knip")
-# Not `camas --check`: ty cannot resolve camas from the flake's store path (JPHutchins/camas#277).
+# Not `camas --check` (JPHutchins/camas#277).
 types = Task("uv run tasks.py --check", when="tasks.py")
 
 check = Parallel(fmt_check, lint, typecheck, build, knip, types)
