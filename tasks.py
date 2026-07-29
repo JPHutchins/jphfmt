@@ -1,30 +1,8 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["camas[mcp,check]==0.1.29"]
+# dependencies = ["camas[mcp]==0.1.29"]
 # ///
-"""Project tasks — the single source of truth for validation, run with ``camas``.
-
-The Rust formatter crate lives here; the TypeScript LSP and VS Code client are a
-child project (``vscode = Project("editors/vscode")``), mounted for dotted
-dispatch (``camas vscode``, ``camas vscode.lint``) and composed into this file's
-``Config``. A reference composes the child's *matching* field, so each slot below
-is that slot across both ecosystems: bare ``camas`` fixes then checks everything,
-bare ``camas`` under GitHub Actions runs the read-only pass plus the audit, and
-the agent gate gets the fast variants. The named tasks here carry their own
-scope — ``check`` is the crate and the cross-cutting checkers — and compose with
-the child's across the namespace: ``camas '{check, vscode.check}'``.
-
-camas runs from inside ``nix develop``. The Rust leaves invoke the flake's
-``nix run .#<target>`` apps (crane-backed, cached, sandboxed) rather than raw
-cargo, so the toolchain and the +stable/+MSRV matrix are pinned by the flake
-(``.#test`` and ``.#test-msrv``) — no rustup. The MSRV lives in Cargo.toml, read
-by the flake.
-
-Scoping is positive throughout: a leaf declares the paths it reads (``when``) or
-the files it takes (``{paths}``), so a scoped gate run prunes what the change
-cannot have affected, and a full run — which never consults ``when`` — still
-covers everything.
-"""
+"""Project tasks — run with ``camas``. The TypeScript half is a child project."""
 
 import runpy
 from pathlib import Path
@@ -42,45 +20,38 @@ from camas import (
 )
 
 ROOT = Path(__file__).parent
-VSCODE_DIR = "editors/vscode"
 
-# Every path a Rust check reads, as a positive scope rather than a "not the extension" negation:
-# the negation dragged clippy and the whole test suite into a README edit, and the gate fires on
-# every batch of edits, so that was the common case.
 RUST = ("src", "tests", "Cargo.toml", "Cargo.lock", ".cargo", "flake.nix", "flake.lock")
 
-# rustfmt takes files, not directories, so the full-run fallback has to name the crate's sources.
-# camas re-executes this file on every invocation, so the glob cannot go stale.
-RUST_SOURCES = tuple(
-	sorted(
-		path.relative_to(ROOT).as_posix()
-		for prefix in ("src", "tests")
-		for path in ROOT.glob(f"{prefix}/**/*.rs")
-	)
+# rustfmt takes files, not directories, so a full run has to name them.
+RS = by_suffix(
+	(".rs",),
+	default=tuple(
+		sorted(
+			path.relative_to(ROOT).as_posix()
+			for prefix in ("src", "tests")
+			for path in ROOT.glob(f"{prefix}/**/*.rs")
+		)
+	),
 )
-RS = by_suffix((".rs",), default=RUST_SOURCES)
 
 
 def nix_files(changed: tuple[str, ...]) -> bool:
 	return any(c.endswith(".nix") for c in changed)
 
 
-vscode = Project(VSCODE_DIR)
+vscode = Project("editors/vscode")
 
-# ---- Rust: the jphfmt crate ----
+# The crane apps pin the toolchain and the +stable/+MSRV matrix in the flake, so there is no rustup.
 rust_fmt_check = Task("nix run .#fmt", when=RUST)
 clippy = Task("nix run .#lint", when=RUST)
 rust_fix = Task("nix run .#fix", mutates=True, when=RUST)
-test = Parallel(
-	Task("nix run .#test"),
-	Task("nix run .#test-msrv"),
-	when=RUST,
-)
+test = Parallel(Task("nix run .#test"), Task("nix run .#test-msrv"), when=RUST)
 doc = Task("nix run .#doc", when=RUST)
+audit = Task("nix run .#audit")
+mutants = Task("cargo mutants --jobs 8")
 
-# Tight inner-loop Rust checks: raw cargo against the dev shell's warm target/, incremental and
-# single-toolchain (no crane sandbox rebuild, no MSRV double-build). Same commands the crane apps
-# wrap, so the signal matches; the agent gate drives these while `check`/CI keep the crane path.
+# Raw cargo, ~1s/leaf cheaper than the crane app it mirrors: the agent gate's inner loop.
 rust_fmt_check_fast = Task("cargo fmt --check -- {paths}", paths=RS)
 clippy_fast = Task("cargo clippy --all-targets --all-features -- -D warnings", when=RUST)
 test_fast = Task("cargo nextest run --all-features", when=RUST)
@@ -89,82 +60,45 @@ doc_fast = Task(
 	env={"RUSTDOCFLAGS": "-D warnings"},
 	when=RUST,
 )
-
-# Tight inner-loop Rust fixer: raw cargo, mirroring the flake's `.#fix` app (fmt then clippy --fix)
-# without the `nix run` wrapper. rustfmt takes the changed files — a formatter's own repository
-# cannot afford `--all` rewriting sources the change never touched.
 rust_fmt_fix = Task("cargo fmt -- {paths}", mutates=True, paths=RS)
 clippy_fix_fast = Task(
 	"cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features",
 	mutates=True,
 	when=RUST,
 )
-rust_fix_fast = Sequential(rust_fmt_fix, clippy_fix_fast)
 
-# ---- Release: one version across four files, and the tag that ships it ----
-# `release` is manual and outward-facing, so it stays out of the composed defaults; `version_check`
-# joins them, because the drift it catches is invisible until someone installs from the wrong place.
-# `TRACKED` comes from release.py itself, so the list is maintained once: runpy rather than import,
-# because camas evaluates this file without its own directory on sys.path, and because re-execution
-# cannot serve the stale value an import cache would.
+# runpy rather than import: camas evaluates this file without its own directory on sys.path.
 RELEASE_FILES = (*runpy.run_path(str(ROOT / "release.py"))["TRACKED"], "release.py")
 
 version_check = Task("uv run release.py check", when=RELEASE_FILES)
-# One command does the whole release — check, rewrite the four files, commit, tag, push main and the
-# tag. `--VERSION` takes major/minor/patch or an explicit X.Y.Z; bare `camas release` bumps the patch.
 release = Sequential(
 	Task("uv run release.py ship {VERSION}", mutates=True),
 	matrix={"VERSION": ("patch",)},
 	help="camas release [--VERSION=major|minor|patch|X.Y.Z]",
 )
 
-# ---- Cross-cutting checkers ----
-# typos runs reproducibly via uvx (no install) and covers the whole tree, narrowing to the changed
-# files on a scoped run; sarif is native, so the gate reads diagnostics instead of prose.
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
 py_types = Task("uvx ty check {paths}", paths="release.py")
-# camas checks its own task file — the `check` extra in the PEP 723 header above puts ty in the same
-# environment as camas, which is what lets ty resolve the import. This also loads the child, so its
-# breakage surfaces here; the child type-checks itself the same way. tasks.py is the one file whose
-# failure takes every other task with it, and until now nothing checked it.
-task_types = Task("uv run tasks.py --check", when=("tasks.py", f"{VSCODE_DIR}/tasks.py"))
-# audit folds into CI, not `check`; mutants (proves the tests bite) is nightly, its own workflow.
-audit = Task("nix run .#audit")
-mutants = Task("cargo mutants --jobs 8")
+# Not `camas --check` (JPHutchins/camas#277); the header above exists only to make this work.
+task_types = Task("uv run tasks.py --check", when="tasks.py")
 
-# ---- Composition ----
 rust_check = Parallel(rust_fmt_check, clippy, test, doc)
-rust_check_fast = Parallel(
-	rust_fmt_check_fast,
-	clippy_fast,
-	test_fast,
-	doc_fast,
-)
+rust_check_fast = Parallel(rust_fmt_check_fast, clippy_fast, test_fast, doc_fast)
+rust_fix_fast = Sequential(rust_fmt_fix, clippy_fix_fast)
+fix_fast = Parallel(rust_fix_fast, vscode)
 rust = Sequential(rust_fix, rust_check)
 cross = Parallel(nix_fmt_check, typos, version_check, py_types, task_types)
 
-# Read-only, the crate plus the cross-cutting checkers. `check_fast` is the same set with the raw
-# cargo leaves, which is what the agent gate validates a scoped change against.
-check = Parallel(rust_check, cross)
-check_fast = Parallel(rust_check_fast, cross)
+check = Parallel(rust_check, cross, vscode)
+check_fast = Parallel(rust_check_fast, cross, vscode)
 ci = Parallel(check, audit)
-
-# `camas all` fixes then checks: a binding resolves by context, and for this name every context is
-# right — the child contributes its own fix-then-check. `ci` deliberately holds no child reference,
-# so it stays read-only under a name that promises it; CI composes the two below, and a human wanting
-# read-only across both writes `camas '{ci, vscode.check}'`.
 all = Parallel(rust, cross, vscode)
 
-# Each slot pulls the child's matching slot, so the extension is fixed when this file fixes and
-# checked when it checks — never the wrong one because a name resolved in the wrong context.
 _ = Config(
 	default_task=all,
-	github_task=Parallel(ci, vscode, name="validate"),
-	agent=Claude(
-		fix=Parallel(rust_fix_fast, vscode, name="fix"),
-		check=Parallel(check_fast, vscode, name="check_all"),
-	),
+	github_task=ci,
+	agent=Claude(fix=fix_fast, check=check_fast),
 )
 
 if __name__ == "__main__":
