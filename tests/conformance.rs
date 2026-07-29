@@ -370,6 +370,43 @@ fn casts_get_a_trailing_space() {
 }
 
 #[test]
+fn a_prefix_operator_after_a_cast_stays_tight() {
+    // A cast is not a value, so the operator after it takes one operand: `&x` is an address-of,
+    // not a bitwise-and. `(T *)` proves itself a type by its trailing `*`, which no expression
+    // can end with, so a typedef name needs no keyword.
+    assert_eq!(
+        format("g((PyObject *) &SomeType);\n"),
+        "g((PyObject *) &SomeType);\n"
+    );
+    assert_eq!(format("a = (int) -x;\n"), "a = (int) -x;\n");
+    assert_eq!(format("b = (int) +y;\n"), "b = (int) +y;\n");
+    assert_eq!(format("c = (int) *p;\n"), "c = (int) *p;\n");
+    // A `)` that closes anything else still ends a value, so a real binary stays spaced.
+    assert_eq!(format("i = q & r;\n"), "i = q & r;\n");
+    assert_eq!(format("j = (a + b) & mask;\n"), "j = (a + b) & mask;\n");
+    assert_eq!(format("k = f(x) & mask;\n"), "k = f(x) & mask;\n");
+    // Redundant parentheses around a lone name are indistinguishable from a cast without knowing
+    // whether the name is a type, so that reading is left alone.
+    assert_eq!(format("m = (count) & mask;\n"), "m = (count) & mask;\n");
+    // `sizeof(int)` and friends take a parenthesized type and yield a *value*, so the operator
+    // after them binds two operands and stays a chain cut.
+    assert_eq!(
+        format("x = sizeof(int) & mask;\n"),
+        "x = sizeof(int) & mask;\n"
+    );
+    assert_eq!(
+        format("z = _Alignof(int) - 1;\n"),
+        "z = _Alignof(int) - 1;\n"
+    );
+    let long = "unsigned long value_with_a_long_name = sizeof(struct some_fairly_long_structure_name) & mask_with_a_long_name;\n";
+    assert_eq!(
+        format(long),
+        "unsigned long value_with_a_long_name = (\n\tsizeof(struct some_fairly_long_structure_name) &\n\tmask_with_a_long_name\n);\n",
+        "a value-yielding keyword group must still offer the chain a cut"
+    );
+}
+
+#[test]
 fn brace_attaches_for_functions_and_control() {
     assert_eq!(format("void f(void){}\n"), "void f(void) {}\n");
     assert_eq!(format("if(x){}\n"), "if (x) {}\n");
