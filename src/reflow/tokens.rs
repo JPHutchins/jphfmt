@@ -27,11 +27,11 @@ pub(super) fn heads_body(t: &Token) -> bool {
 /// compound literal. A type keyword or tag must appear, so a grouped expression `(x)`, an attribute's
 /// `(noreturn)`, or a parameter list is never mistaken for one.
 pub(super) fn is_type_group(inner: &[Token]) -> bool {
-    spells_only_type_tokens(inner)
-        && inner
-            .iter()
-            .filter(|t| !is_trivia(t))
-            .any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
+    inner
+        .iter()
+        .filter(|t| !is_trivia(t))
+        .any(|t| is_type_context(t.text) || is_tag_keyword(t.text))
+        && spells_only_type_tokens(inner)
 }
 
 /// Whether every token in `inner` can appear in a type, without requiring one to prove it — the
@@ -212,7 +212,11 @@ pub(super) fn closes_type_paren(toks: &[Token], close: usize) -> bool {
         spells_only_type_tokens(inner)
             && (is_type_group(inner) || ends_in_star())
             && prev_significant(toks, open).is_none_or(|before| {
-                !heads_body(&toks[before]) && !matches!(toks[before].text, ")" | "]")
+                let t = &toks[before];
+                // Only an operator, a bracket or `return` can precede a cast. An identifier before
+                // the `(` makes it an argument list — a call, or `sizeof`/`alignof`/`typeof`, which
+                // take a parenthesized type and yield a *value*: `sizeof(int) & mask` is binary.
+                !matches!(t.text, ")" | "]") && (t.kind != TokenKind::Ident || t.text == "return")
             })
     })
 }

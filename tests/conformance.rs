@@ -388,6 +388,22 @@ fn a_prefix_operator_after_a_cast_stays_tight() {
     // Redundant parentheses around a lone name are indistinguishable from a cast without knowing
     // whether the name is a type, so that reading is left alone.
     assert_eq!(format("m = (count) & mask;\n"), "m = (count) & mask;\n");
+    // `sizeof(int)` and friends take a parenthesized type and yield a *value*, so the operator
+    // after them binds two operands and stays a chain cut.
+    assert_eq!(
+        format("x = sizeof(int) & mask;\n"),
+        "x = sizeof(int) & mask;\n"
+    );
+    assert_eq!(
+        format("z = _Alignof(int) - 1;\n"),
+        "z = _Alignof(int) - 1;\n"
+    );
+    let long = "unsigned long value_with_a_long_name = sizeof(struct some_fairly_long_structure_name) & mask_with_a_long_name;\n";
+    assert_eq!(
+        format(long),
+        "unsigned long value_with_a_long_name = (\n\tsizeof(struct some_fairly_long_structure_name) &\n\tmask_with_a_long_name\n);\n",
+        "a value-yielding keyword group must still offer the chain a cut"
+    );
 }
 
 #[test]
