@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["camas[mcp]==0.1.29"]
+# dependencies = ["camas[mcp,check]==0.1.29"]
 # ///
 """Project tasks — the single source of truth for validation, run with ``camas``.
 
@@ -27,10 +27,8 @@ covers everything.
 """
 
 import runpy
-import shlex
 from pathlib import Path
 
-import camas
 from camas import (
 	AgentFormat,
 	Claude,
@@ -59,10 +57,6 @@ RUST_SOURCES = tuple(
 	for path in ROOT.glob(f"{prefix}/**/*.rs")
 )
 RS = by_suffix((".rs",), default=RUST_SOURCES)
-
-# `ty` needs camas importable to check this file. Point it at the interpreter that is already
-# running it, so what type-checks tasks.py is the camas that executes it — no second pin to drift.
-CAMAS_SITE = shlex.quote(str(Path(camas.__file__).parent.parent))
 
 
 def nix_files(changed: tuple[str, ...]) -> bool:
@@ -127,12 +121,12 @@ release = Sequential(
 # files on a scoped run; sarif is native, so the gate reads diagnostics instead of prose.
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
-# Both task files as well as the release script: tasks.py is the one file whose breakage takes every
-# other task with it.
-py_types = Task(
-	f"uvx ty check --extra-search-path {CAMAS_SITE} {{paths}}",
-	paths=by_suffix((".py",), default=("release.py", "tasks.py", f"{VSCODE_DIR}/tasks.py")),
-)
+py_types = Task("uvx ty check {paths}", paths="release.py")
+# camas checks its own task file — the `check` extra in the PEP 723 header above puts ty in the same
+# environment as camas, which is what lets ty resolve the import. This also loads the child, so its
+# breakage surfaces here; the child type-checks itself the same way. tasks.py is the one file whose
+# failure takes every other task with it, and until now nothing checked it.
+task_types = Task("uv run tasks.py --check", when=("tasks.py", f"{VSCODE_DIR}/tasks.py"))
 # audit folds into CI, not `check`; mutants (proves the tests bite) is nightly, its own workflow.
 audit = Task("nix run .#audit")
 mutants = Task("cargo mutants --jobs 8")
@@ -146,7 +140,7 @@ rust_check_fast = Parallel(
 	doc_fast,
 )
 rust = Sequential(rust_fix, rust_check)
-cross = Parallel(nix_fmt_check, typos, version_check, py_types)
+cross = Parallel(nix_fmt_check, typos, version_check, py_types, task_types)
 
 # Read-only, the crate plus the cross-cutting checkers. `check_fast` is the same set with the raw
 # cargo leaves, which is what the agent gate validates a scoped change against.

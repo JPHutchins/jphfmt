@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.14"
+# dependencies = ["camas[mcp,check]==0.1.29"]
+# ///
 """The VS Code extension's tasks — jphfmt's TypeScript half, run with ``camas``.
 
 Mounted by the root ``tasks.py`` as ``Project("editors/vscode")``: every node's
@@ -13,7 +17,7 @@ gate — ESLint 9 moved its ``junit`` formatter out of core — so no leaf here 
 ``agent_format``.
 """
 
-from camas import Claude, Config, Parallel, Sequential, Task
+from camas import Claude, Config, Parallel, Sequential, Task, run_cli
 
 fmt = Task("npm run format", mutates=True)
 fmt_check = Task("npm run format:check")
@@ -22,11 +26,17 @@ lint_fix = Task("npm run lint:fix", mutates=True)
 typecheck = Task("npm run typecheck")
 build = Task("npm run build")
 knip = Task("npx --yes knip")
+# This file checks itself, which the root's own `--check` does not reach: the `check` extra above
+# puts ty in the same environment as camas, so the import resolves.
+types = Task("uv run tasks.py --check", when="tasks.py")
 
 # Compile-validation is `tsc --noEmit` plus the real bundle — what the marketplace package ships.
-check = Parallel(fmt_check, lint, typecheck, build, knip)
+check = Parallel(fmt_check, lint, typecheck, build, knip, types)
 # lint-fix first so prettier has the last word.
 fix = Sequential(lint_fix, fmt)
 all = Sequential(fix, check)
 
 _ = Config(default_task=all, github_task=check, agent=Claude(fix=fix, check=check))
+
+if __name__ == "__main__":
+	run_cli(globals())
