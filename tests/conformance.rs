@@ -760,6 +760,25 @@ fn a_colon_that_is_not_a_ternary_arm_forces_nothing() {
     );
 }
 
+/// A chain's arms are bounded even where no head precedes them. Unbounded, a `{}` element's arms
+/// read as elements of the list, a call argument's as sibling arguments, and a statement's are not
+/// indented at all.
+#[test]
+fn a_chain_with_no_head_is_still_bounded() {
+    assert_eq!(
+        format("int f[] = {a ? b : c ? d : e, 1};\n"),
+        "int f[] = {\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n\t1,\n};\n"
+    );
+    assert_eq!(
+        format("h(x, a ? b : c ? d : e, y);\n"),
+        "h(\n\tx,\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n\ty\n);\n"
+    );
+    assert_eq!(
+        format("a ? b() : c ? d() : e();\n"),
+        "(\n\ta ? b() :\n\tc ? d() :\n\te()\n);\n"
+    );
+}
+
 #[test]
 fn nested_ternary_condition_breaks_at_its_arms() {
     // The same span in the same parentheses as `x = (a ? b : c ? d : e)`, so it lays out the same.

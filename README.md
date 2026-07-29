@@ -50,7 +50,8 @@ ternary — never any other token.
 
 That last one is the only case where `jphfmt` writes a token you did not. It is
 allowed because it bounds a container that was already there implicitly: the
-operands after an assignment or a `return` are one expression, and parenthesizing
+operands after an assignment or a `return`, and the ternary arms of a `{}` element,
+a call argument or an expression statement, are one expression, and parenthesizing
 one expression changes nothing but the layout. A span holding a depth-zero `,` is a
 list rather than an expression — a second declarator, a comma expression — so it is
 left alone, overrunning the width, rather than changed.
