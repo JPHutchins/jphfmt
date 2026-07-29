@@ -1,21 +1,8 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["camas[mcp,check]==0.1.29"]
+# dependencies = ["camas[mcp]==0.1.29"]
 # ///
-"""The VS Code extension's tasks — jphfmt's TypeScript half, run with ``camas``.
-
-Mounted by the root ``tasks.py`` as ``Project("editors/vscode")``: every node's
-``cwd`` and change-scope rebase to this directory, so camas runs these from here
-and a change touching nothing under it prunes them all. ``node_modules`` comes
-from the flake dev shell (``importNpmLock``), so there is no install step.
-
-The npm scripts stay the entry point rather than ``{paths}``-scoped tool calls:
-prettier's and eslint's file sets are declared in ``package.json``, and this
-directory is small enough that narrowing them would cost more in duplication
-than it saves in time. Neither has a structured output format to hand the agent
-gate — ESLint 9 moved its ``junit`` formatter out of core — so no leaf here sets
-``agent_format``.
-"""
+"""The VS Code extension's tasks — run with ``camas``, or from the root as ``camas vscode``."""
 
 from camas import Claude, Config, Parallel, Sequential, Task, run_cli
 
@@ -26,13 +13,10 @@ lint_fix = Task("npm run lint:fix", mutates=True)
 typecheck = Task("npm run typecheck")
 build = Task("npm run build")
 knip = Task("npx --yes knip")
-# This file checks itself, which the root's own `--check` does not reach: the `check` extra above
-# puts ty in the same environment as camas, so the import resolves.
+# Not `camas --check`: ty cannot resolve camas from the flake's store path (JPHutchins/camas#277).
 types = Task("uv run tasks.py --check", when="tasks.py")
 
-# Compile-validation is `tsc --noEmit` plus the real bundle — what the marketplace package ships.
 check = Parallel(fmt_check, lint, typecheck, build, knip, types)
-# lint-fix first so prettier has the last word.
 fix = Sequential(lint_fix, fmt)
 all = Sequential(fix, check)
 
