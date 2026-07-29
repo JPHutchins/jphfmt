@@ -189,7 +189,7 @@
 
         devShells.default = craneLib.devShell {
           packages = [
-            camas.packages.${system}.default
+            camas.packages.${system}.with-mcp
             nodejs
             pkgs.uv
             pkgs.cargo-audit
