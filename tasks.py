@@ -52,9 +52,11 @@ RUST = ("src", "tests", "Cargo.toml", "Cargo.lock", ".cargo", "flake.nix", "flak
 # rustfmt takes files, not directories, so the full-run fallback has to name the crate's sources.
 # camas re-executes this file on every invocation, so the glob cannot go stale.
 RUST_SOURCES = tuple(
-	path.relative_to(ROOT).as_posix()
-	for prefix in ("src", "tests")
-	for path in ROOT.glob(f"{prefix}/**/*.rs")
+	sorted(
+		path.relative_to(ROOT).as_posix()
+		for prefix in ("src", "tests")
+		for path in ROOT.glob(f"{prefix}/**/*.rs")
+	)
 )
 RS = by_suffix((".rs",), default=RUST_SOURCES)
 
@@ -146,12 +148,19 @@ cross = Parallel(nix_fmt_check, typos, version_check, py_types, task_types)
 # cargo leaves, which is what the agent gate validates a scoped change against.
 check = Parallel(rust_check, cross)
 check_fast = Parallel(rust_check_fast, cross)
+ci = Parallel(check, audit)
+
+# `camas all` fixes then checks: a binding resolves by context, and for this name every context is
+# right — the child contributes its own fix-then-check. `ci` deliberately holds no child reference,
+# so it stays read-only under a name that promises it; CI composes the two below, and a human wanting
+# read-only across both writes `camas '{ci, vscode.check}'`.
+all = Parallel(rust, cross, vscode)
 
 # Each slot pulls the child's matching slot, so the extension is fixed when this file fixes and
 # checked when it checks — never the wrong one because a name resolved in the wrong context.
 _ = Config(
-	default_task=Parallel(rust, cross, vscode, name="all"),
-	github_task=Parallel(check, audit, vscode, name="validate"),
+	default_task=all,
+	github_task=Parallel(ci, vscode, name="validate"),
 	agent=Claude(
 		fix=Parallel(rust_fix_fast, vscode, name="fix"),
 		check=Parallel(check_fast, vscode, name="check_all"),
