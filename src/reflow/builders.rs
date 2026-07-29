@@ -401,14 +401,16 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         return None;
     }
     let head = render_segment(&toks[..start]);
+    // A head means these operands are only part of their container's span, so they are bounded
+    // whatever they are; with no head it is the position that decides, and it decides the same for a
+    // ternary and for a binary chain — unbounded operands read as elements of whatever list encloses
+    // them either way (#59, #63).
+    let bound = if head.is_empty() {
+        headless
+    } else {
+        Bound::Parens
+    };
     if let Some((segments, ops)) = split_chain(operands) {
-        // A head means these operands are only part of their container's span, so they are bounded;
-        // without one they *are* the span, and the container's brackets bound them already.
-        let bound = if head.is_empty() {
-            Bound::Enclosing
-        } else {
-            Bound::Parens
-        };
         return Some(build_bounded_doc(
             &head,
             segment_docs(&segments),
@@ -417,16 +419,9 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
             bound,
         ));
     }
-    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized. With a head
-    // the arms are always bounded; with none it is the position that decides, since unbounded arms
-    // read as elements of whatever list encloses them (#59).
+    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
     let arms = ternary_arms(operands)?;
     let seps = vec![" :".to_owned(); arms.len() - 1];
-    let bound = if head.is_empty() {
-        headless
-    } else {
-        Bound::Parens
-    };
     Some(build_bounded_doc(
         &head,
         segment_docs(&arms),

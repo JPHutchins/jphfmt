@@ -779,6 +779,18 @@ fn a_chain_with_no_head_is_still_bounded() {
     );
 }
 
+/// #63: the bound is the position's, not the operator's — a binary chain in a head-less element is
+/// bounded exactly as a ternary's arms are.
+#[test]
+fn a_head_less_binary_chain_is_bounded_like_a_ternary() {
+    let src = "struct s v = {AAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCC | \
+               DDDDDDDDDDDDDDDD | EEEEEEEEEEEEEEEE | FFFFFFFFFFFFFFFF, 1};\n";
+    let expected = "struct s v = {\n\t(\n\t\tAAAAAAAAAAAAAAAA |\n\t\tBBBBBBBBBBBBBBBB |\n\
+                    \t\tCCCCCCCCCCCCCCCC |\n\t\tDDDDDDDDDDDDDDDD |\n\t\tEEEEEEEEEEEEEEEE |\n\
+                    \t\tFFFFFFFFFFFFFFFF\n\t),\n\t1,\n};\n";
+    assert_eq!(format(src), expected);
+}
+
 /// A sole argument's span is the call's own parentheses, so it is already bounded. A sole `{}`
 /// element is not: its list writes a trailing comma on the break, which is what made unbounded arms
 /// read as elements in the first place.
