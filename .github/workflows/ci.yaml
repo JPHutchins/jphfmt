@@ -16,7 +16,9 @@ jobs:
   # Nix dev shell that provides node, uv, nix, and the extension's node_modules (built hermetically
   # from package-lock.json by importNpmLock — no npm ci). That task is the full parallel validation:
   # the Rust checks are crane-backed `nix run` apps (fmt, clippy -D warnings, test on stable + MSRV,
-  # doc, RUSTSEC audit); plus prettier, eslint, tsc, knip, typos, and nixfmt.
+  # doc, RUSTSEC audit); the extension's own tasks.py contributes prettier, eslint, tsc, knip; plus
+  # typos, nixfmt, and ty over the task files and the release script. `github_task` composes the
+  # child project's read-only field, so nothing here mutates the checkout.
   validate:
     runs-on: ubuntu-latest
     steps:

@@ -19,7 +19,7 @@
     };
 
     camas = {
-      url = "github:JPHutchins/camas/0.1.25";
+      url = "github:JPHutchins/camas/0.1.29";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -189,7 +189,7 @@
 
         devShells.default = craneLib.devShell {
           packages = [
-            camas.packages.${system}.default
+            camas.packages.${system}.with-mcp
             nodejs
             pkgs.uv
             pkgs.cargo-audit
