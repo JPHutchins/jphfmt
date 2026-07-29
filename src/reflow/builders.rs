@@ -36,9 +36,17 @@ pub(super) fn build_call_body(inner: &[Token]) -> Doc {
         return Doc::text("()");
     }
     let last = args.len() - 1;
+    // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
+    // no pair of its own; with siblings, unbounded arms read as further arguments. A `{}` element is
+    // bounded either way, because its list writes a trailing comma on the break (#59).
+    let bound = if args.len() == 1 {
+        Bound::Enclosing
+    } else {
+        Bound::Parens
+    };
     let mut items = vec![Doc::SoftLine];
     for (idx, arg) in args.into_iter().enumerate() {
-        items.push(build_element_doc(arg));
+        items.push(build_element_doc(arg, bound));
         if idx < last {
             items.push(Doc::text(","));
             items.push(Doc::Line);
@@ -98,12 +106,12 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
 fn build_juxtaposed_doc(element: &[Token]) -> Doc {
     let items = split_designators(element);
     if items.len() < 2 {
-        return build_element_doc(element);
+        return build_element_doc(element, Bound::Parens);
     }
     Doc::concat(
         items
             .iter()
-            .map(|item| build_element_doc(item))
+            .map(|item| build_element_doc(item, Bound::Parens))
             .flat_map(|doc| [Doc::Line, doc])
             .skip(1)
             .collect::<Vec<_>>(),
@@ -138,9 +146,9 @@ fn call_head_before(toks: &[Token], open: usize) -> bool {
 /// parentheses when it breaks, because nothing else bounds it. Its operands go through
 /// [`build_expr_doc`], which never adds a token — a bounded operand would gain another pair as its
 /// indent deepened, one per pass.
-pub(super) fn build_element_doc(toks: &[Token]) -> Doc {
+pub(super) fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
     if is_balanced(toks)
-        && let Some(bounded) = build_chain_doc(toks)
+        && let Some(bounded) = build_chain_doc(toks, headless)
     {
         return bounded;
     }
@@ -339,7 +347,7 @@ impl Fit {
 
 /// What bounds a run of operands once it breaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Bound {
+pub(super) enum Bound {
     /// The parentheses this pass writes on the break — the only tokens jphfmt adds, legal because the
     /// operands are already an implicit container: bounding one changes the layout and nothing else.
     Parens,
@@ -386,7 +394,7 @@ fn build_bounded_doc(
 
 /// An operator chain or ternary with no parentheses of its own: flat, or one operand per line with the
 /// operator trailing, bounded by parentheses [`build_bounded_doc`] adds on the break.
-pub(super) fn build_chain_doc(toks: &[Token]) -> Option<Doc> {
+pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     let start = operand_span(toks);
     let operands = &toks[start..];
     if !is_boundable(toks, operands) {
@@ -409,17 +417,22 @@ pub(super) fn build_chain_doc(toks: &[Token]) -> Option<Doc> {
             bound,
         ));
     }
-    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized. Its arms
-    // are bounded even with no head: a `{}` element's siblings are commas apart, and unbounded arms
-    // read as elements of the list rather than as the one element they are (#59).
+    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized. With a head
+    // the arms are always bounded; with none it is the position that decides, since unbounded arms
+    // read as elements of whatever list encloses them (#59).
     let arms = ternary_arms(operands)?;
     let seps = vec![" :".to_owned(); arms.len() - 1];
+    let bound = if head.is_empty() {
+        headless
+    } else {
+        Bound::Parens
+    };
     Some(build_bounded_doc(
         &head,
         segment_docs(&arms),
         seps,
         Fit::of_ternary(operands),
-        Bound::Parens,
+        bound,
     ))
 }
 

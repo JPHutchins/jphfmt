@@ -779,6 +779,21 @@ fn a_chain_with_no_head_is_still_bounded() {
     );
 }
 
+/// A sole argument's span is the call's own parentheses, so it is already bounded. A sole `{}`
+/// element is not: its list writes a trailing comma on the break, which is what made unbounded arms
+/// read as elements in the first place.
+#[test]
+fn a_sole_call_argument_is_not_bounded_twice() {
+    assert_eq!(
+        format("h(a ? b : c ? d : e);\n"),
+        "h(\n\ta ? b :\n\tc ? d :\n\te\n);\n"
+    );
+    assert_eq!(
+        format("struct s w = {a ? b : c ? d : e};\n"),
+        "struct s w = {\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n};\n"
+    );
+}
+
 #[test]
 fn nested_ternary_condition_breaks_at_its_arms() {
     // The same span in the same parentheses as `x = (a ? b : c ? d : e)`, so it lays out the same.
