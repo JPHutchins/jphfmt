@@ -22,7 +22,8 @@ This is the Wadler/Prettier `group` combinator (fits-flat **or** fully-broken),
 without Prettier's `fill` mode. A trailing comma before `}` is "magic": it forces
 the list to explode (`{}` lists only). Binary operators and the ternary `:`
 **trail** the line, and a chain that breaks is bounded by parentheses (added if the
-author left them out). Comments are sacred — never reflowed, moved, or re-aligned.
+author left them out). A ternary *chain* — more than one `?` — breaks however short
+it is, so it reads as the map of conditions it is rather than as one line. Comments are sacred — never reflowed, moved, or re-aligned.
 
 ## Usage
 

@@ -733,11 +733,39 @@ fn short_parenthesized_ternary_stays_flat() {
 }
 
 #[test]
-fn unparenthesized_ternary_is_left_alone() {
-    // §8.2: jphfmt does not insert parens; a bare ternary passes through
+fn short_unparenthesized_ternary_is_left_alone() {
+    assert_eq!(format("acc = a > b ? a : b;\n"), "acc = a > b ? a : b;\n");
+}
+
+#[test]
+fn nested_ternary_reads_as_a_map_however_short_it_is() {
+    // #59: two arms are one conditional and fit on a line; more are a `cond -> value` map, which
+    // reads as one only broken — so the width does not decide, and the parens come with the break.
     assert_eq!(
         format("acc = a > b ? a : a < b ? b : 0;\n"),
-        "acc = a > b ? a : a < b ? b : 0;\n"
+        "acc = (\n\ta > b ? a :\n\ta < b ? b :\n\t0\n);\n"
+    );
+}
+
+/// A depth-zero `:` that opens no arm gives a *single* conditional a third arm. Counting `?` rather
+/// than arms is what keeps these two on their line.
+#[test]
+fn a_colon_that_is_not_a_ternary_arm_forces_nothing() {
+    let bit_field = "struct s {\n\tint f : cond ? 1 : 2;\n};\n";
+    assert_eq!(format(bit_field), bit_field);
+    let labeled = "void f(void) {\ndone: p ? x() : y();\n}\n";
+    assert_eq!(
+        format(labeled),
+        "void f(void) {\n\tdone : p ? x() : y();\n}\n"
+    );
+}
+
+#[test]
+fn nested_ternary_condition_breaks_at_its_arms() {
+    // The same span in the same parentheses as `x = (a ? b : c ? d : e)`, so it lays out the same.
+    assert_eq!(
+        format("if (a ? b : c ? d : e) {\n\tf();\n}\n"),
+        "if (\n\ta ? b :\n\tc ? d :\n\te\n) {\n\tf();\n}\n"
     );
 }
 
