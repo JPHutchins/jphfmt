@@ -16,7 +16,7 @@ enum Mode {
 }
 
 #[derive(Debug, Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about)]
 struct Args {
     /// Rewrite each named file in place when formatting changes it
     #[arg(short = 'i', long, conflicts_with = "check", requires = "files")]
