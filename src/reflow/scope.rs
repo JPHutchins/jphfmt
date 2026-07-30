@@ -70,7 +70,7 @@ pub(super) struct Scoped {
 }
 
 /// Apply the nesting rule to `keyword` met at `depth`. Shared with
-/// [`super::structure::emit_define`], which measures a `#define`'s prefix at the depth this pass
+/// `structure::emit_define`, which measures a `#define`'s prefix at the depth this pass
 /// will indent it to — so the rule lives here, once.
 pub(super) fn scoped(keyword: &str, depth: usize) -> Scoped {
     match keyword {
