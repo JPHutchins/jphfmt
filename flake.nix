@@ -134,7 +134,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoDocExtraArgs = "--no-deps --all-features";
+              cargoDocExtraArgs = "--no-deps --all-features --document-private-items";
               env.RUSTDOCFLAGS = "-D warnings";
             }
           );

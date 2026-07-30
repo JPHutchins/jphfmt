@@ -56,7 +56,7 @@ rust_fmt_check_fast = Task("cargo fmt --check -- {paths}", paths=RS)
 clippy_fast = Task("cargo clippy --all-targets --all-features -- -D warnings", when=RUST)
 test_fast = Task("cargo nextest run --all-features", when=RUST)
 doc_fast = Task(
-	"cargo doc --no-deps --all-features",
+	"cargo doc --no-deps --all-features --document-private-items",
 	env={"RUSTDOCFLAGS": "-D warnings"},
 	when=RUST,
 )
