@@ -732,6 +732,32 @@ fn short_parenthesized_ternary_stays_flat() {
     assert_eq!(format("x = (b != 0 ? b : 1);\n"), "x = (b != 0 ? b : 1);\n");
 }
 
+/// #64: the lexer has no keyword kind, so `return` is an `Ident` and `space_casts` read it as a
+/// value, leaving the cast after it tight. The layout's own bounding parenthesis then replaced
+/// `return` as the preceding token, so the second pass spaced what the first had not.
+#[test]
+fn a_cast_after_return_is_spaced_on_the_first_pass() {
+    assert_eq!(
+        format("return (float)x + (float)y;\n"),
+        "return (float) x + (float) y;\n"
+    );
+    let long = "return (float)d->c00 + xxxxxxxxxxxxxxxxxxxx * (float)d->c10 + \
+                yyyyyyyyyyyyyyyyyyyy * (float)d->c01;\n";
+    let once = format(long);
+    assert_eq!(format(&once), once, "\n--- once ---\n{once}");
+    assert!(
+        once.contains("\t(float) d->c00 +"),
+        "\n--- once ---\n{once}"
+    );
+}
+
+/// A typedef name spells no type keyword, so `(size_t)` is not confidently a cast and is left alone
+/// (§6) — the same residual #55 recorded, unchanged by the `return` carve-out.
+#[test]
+fn a_cast_through_a_typedef_is_still_left_alone() {
+    assert_eq!(format("return (size_t)n;\n"), "return (size_t)n;\n");
+}
+
 #[test]
 fn short_unparenthesized_ternary_is_left_alone() {
     assert_eq!(format("acc = a > b ? a : b;\n"), "acc = a > b ? a : b;\n");

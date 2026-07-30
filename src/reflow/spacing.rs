@@ -266,9 +266,14 @@ fn space_casts(pieces: &mut [Piece]) {
             continue;
         };
         let inner: Vec<Token> = pieces[open + 1..close].iter().map(|p| p.1).collect();
-        let prev_is_value = open > 0
-            && (pieces[open - 1].1.kind == TokenKind::Ident
-                || matches!(pieces[open - 1].1.text, ")" | "]"));
+        // The lexer has no keyword kind, so `return` is an `Ident` and read as a value — the same
+        // carve-out `is_castish` carries (#64). Without it a cast is spaced only once this pass's
+        // own bounding parenthesis has replaced `return` as the token before it, which is a verdict
+        // that changes between runs.
+        let prev = open.checked_sub(1).map(|before| pieces[before].1);
+        let prev_is_value = prev.is_some_and(|t| {
+            (t.kind == TokenKind::Ident && t.text != "return") || matches!(t.text, ")" | "]")
+        });
         let followed_by_operand = pieces
             .get(close + 1)
             .is_some_and(|after| same_line(&after.0) && is_value_start(&after.1));
