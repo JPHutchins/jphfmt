@@ -49,6 +49,15 @@ fn dropped(before: &str, after: &str) -> Option<(char, usize, usize)> {
     })
 }
 
+/// The author's characters in order, dropping the ones a relayout may *write* as well as discard:
+/// a `;` terminating a statement expression's last statement, and the `()` that bound a broken chain.
+/// Counting alone would accept `a + b` becoming `b + a`; this would not.
+fn ordered(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | ';' | '\\' | '(' | ')'))
+        .collect()
+}
+
 proptest! {
     #[test]
     fn format_is_idempotent(s in c_ish()) {
@@ -67,15 +76,19 @@ proptest! {
         prop_assert_eq!(format_with_width(&once, width), once);
     }
 
-    /// Formatting is a relayout, so it may add a separator the layout owns but must never discard
-    /// what the author wrote. A handler that reports more tokens consumed than it renders deletes
-    /// source silently, which no idempotency check catches: the truncated output is a fixpoint.
+    /// Formatting is a relayout, so it may add a separator the layout owns but must never discard or
+    /// reorder what the author wrote. A handler that reports more tokens consumed than it renders
+    /// deletes source silently, which no idempotency check catches: the truncated output is a fixpoint.
+    ///
+    /// Both halves are needed. [`dropped`] counts `;` so a lost one fails, but counting cannot see a
+    /// reordering; [`ordered`] sees order but must excuse the `;` a statement expression writes.
     #[test]
     fn formatting_never_drops_what_the_author_wrote(s in prop_oneof![c_ish(), pieced()]) {
         let once = format(&s);
         if let Some((c, had, has)) = dropped(&s, &once) {
             prop_assert!(false, "{c:?} appears {had}x in input, {has}x in output: {s:?} -> {once:?}");
         }
+        prop_assert_eq!(ordered(&s), ordered(&once), "reordered: {:?} -> {:?}", s, once);
     }
 
     #[test]
