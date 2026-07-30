@@ -17,7 +17,7 @@ exclude = [
     ".camas",
     ".mcp.json",
     "tasks.py",
-
+    "release.py",
 ]
 
 [lib]
