@@ -1,9 +1,10 @@
 //! Wadler/Leijen `Doc` builders. Every construct jphfmt breaks is one container — an argument list, a
-//! `{}` or `enum` body, a `for` header, a condition, an operator chain, a ternary's arms, a macro's
-//! parameters — laid out by [`build_container`] under §2.2's fits-flat-or-fully-broken rule. Because
-//! the comma trails in an argument list, the operator trails in a chain and the ternary `:` trails its
-//! arm: one rule, and per-construct values for how it is bracketed, what separates it, whether a
-//! separator follows the last element on the break, and whether the width decides at all (#71).
+//! `{}` or `enum` body, a `[…]` index, a `for` header, a condition, an operator chain, a ternary's
+//! arms, a macro's parameters — laid out by [`build_container`] under §2.2's fits-flat-or-fully-broken
+//! rule. Because the comma trails in an argument list, the operator trails in a chain and the ternary
+//! `:` trails its arm: one rule, and per-construct values for how it is bracketed, what separates it,
+//! whether a separator follows the last element on the break, and whether the width decides at all
+//! (#71).
 //!
 //! Each builder turns a token slice into a [`Doc`] that [`crate::doc::render`] later flattens or fully
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
@@ -174,6 +175,20 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             parts.push(build_call_body(&toks[j + 1..close], Fit::Measured));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
+            && t.text == "["
+            && let Some(close) = match_bracket(toks, j)
+            && let Some(group) = build_index_group(&toks[j + 1..close])
+        {
+            if pending_space && !text.is_empty() {
+                text.push(' ');
+            }
+            pending_space = false;
+            if !text.is_empty() {
+                parts.push(Doc::Text(std::mem::take(&mut text)));
+            }
+            parts.push(group);
+            j = close + 1;
+        } else if t.kind == TokenKind::Punct
             && t.text == "("
             && let Some(close) = match_bracket(toks, j)
             && let Some(group) = build_paren_group(&toks[j + 1..close])
@@ -262,9 +277,9 @@ enum Bracketing<'a> {
 /// *trailing* its element, `trailing` after the last one only when broken (§2.3's magic comma), all of
 /// it bracketed per `bracketing` and flat-or-broken per `fit`.
 ///
-/// An argument list, a `{}` or `enum` body, a `for` header, a condition, an operator chain, a
-/// ternary's arms and a macro's parameters are the same construct: because the comma trails, the
-/// operator trails and the ternary `:` trails. What differs between them is the four values passed
+/// An argument list, a `{}` or `enum` body, a `[…]` index, a `for` header, a condition, an operator
+/// chain, a ternary's arms and a macro's parameters are the same construct: because the comma trails,
+/// the operator trails and the ternary `:` trails. What differs between them is the four values passed
 /// here, not the shape they are laid out in (#71).
 fn build_container(
     bracketing: &Bracketing,
@@ -313,6 +328,13 @@ fn build_container(
 const PARENS: Bracketing<'static> = Bracketing::Written {
     open: "(",
     close: ")",
+    pad: Pad::Tight,
+};
+
+/// The author's `[…]` around an index.
+const BRACKETS: Bracketing<'static> = Bracketing::Written {
+    open: "[",
+    close: "]",
     pad: Pad::Tight,
 };
 
@@ -520,15 +542,16 @@ fn render_segment(toks: &[Token]) -> String {
     s
 }
 
-/// A parenthesized chain or ternary as its own container. A ternary belongs here as much as a chain
-/// does: [`build_chain_doc`] bounds a bare one with parentheses, and this is the same content on the
-/// next pass, so both must reach the same layout or neither is a fixpoint.
-/// A chain or a ternary inside the author's parentheses — what a parenthesized group and an
-/// `if`/`while`/`switch` condition both are, since they are the same span in the same brackets.
-fn build_clause_contents(inner: &[Token]) -> Option<Doc> {
+/// A chain or a ternary inside brackets the author wrote — what a parenthesized group, an
+/// `if`/`while`/`switch` condition and a `[…]` index all are, differing only in `bracketing`.
+///
+/// A ternary belongs here as much as a chain does: [`build_chain_doc`] bounds a bare one with
+/// parentheses, and this is the same content on the next pass, so both must reach the same layout or
+/// neither is a fixpoint.
+fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
         return Some(build_container(
-            &PARENS,
+            bracketing,
             segment_docs(&segments),
             chain_seps(&ops),
             None,
@@ -536,7 +559,7 @@ fn build_clause_contents(inner: &[Token]) -> Option<Doc> {
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_container(&PARENS, arms, seps, None, fit))
+    Some(build_container(bracketing, arms, seps, None, fit))
 }
 
 pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
@@ -546,7 +569,17 @@ pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
     if spans_lines(inner) {
         return None;
     }
-    build_clause_contents(inner)
+    build_clause_contents(inner, &PARENS)
+}
+
+/// A `[…]` index's contents. The subscript is the same container an argument list is, in the pair the
+/// author already wrote, so `arr[a ? b : c]` needs no bound of its own and breaks on the same rule
+/// (#77).
+pub(super) fn build_index_group(inner: &[Token]) -> Option<Doc> {
+    if spans_lines(inner) {
+        return None;
+    }
+    build_clause_contents(inner, &BRACKETS)
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -565,7 +598,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    build_clause_contents(inner).unwrap_or_else(|| build_clause_doc(inner, |_| false, ""))
+    build_clause_contents(inner, &PARENS).unwrap_or_else(|| build_clause_doc(inner, |_| false, ""))
 }
 
 #[cfg(test)]

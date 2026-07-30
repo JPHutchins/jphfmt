@@ -7,7 +7,7 @@
 
 use super::builders::{
     Bound, Fit, build_brace_doc, build_call_body, build_chain_doc, build_cond_doc, build_expr_doc,
-    build_for_doc, build_paren_group,
+    build_for_doc, build_index_group, build_paren_group,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -185,6 +185,24 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
                 && toks[i - 1].kind == TokenKind::Ident
                 && !is_excluded_callee(toks[i - 1].text))
             && let Some(doc) = build_paren_group(&toks[i + 1..close])
+        {
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+            let reserved = trailing_reserved(toks, close + 1);
+            let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
+            emit_str(out, col, &rendered);
+            i = close + 1;
+            continue;
+        }
+
+        // An index, which is that same container in the author's other pair of brackets (#77). A
+        // statement whose only breakable container is its subscript reaches no other handler: the
+        // chain handler below needs a chain at the statement's own top level, and `arr[…]` has none.
+        if t.kind == TokenKind::Punct
+            && t.text == "["
+            && let Some(close) = match_bracket(toks, i)
+            && !contains_comment(&toks[i + 1..close])
+            && is_balanced(&toks[i + 1..close])
+            && let Some(doc) = build_index_group(&toks[i + 1..close])
         {
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             let reserved = trailing_reserved(toks, close + 1);
