@@ -6,8 +6,8 @@
 //! reservation live alongside.
 
 use super::builders::{
-    Bound, build_brace_doc, build_call_body, build_call_doc, build_chain_doc, build_cond_doc,
-    build_expr_doc, build_for_doc, build_paren_group,
+    Bound, Fit, build_brace_doc, build_call_body, build_chain_doc, build_cond_doc, build_expr_doc,
+    build_for_doc, build_paren_group,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -17,7 +17,7 @@ use super::tokens::{
     match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
     respaced_when_joined, split_brace_line_comment, split_top_level, statement_end,
 };
-use crate::doc::{Doc, TAB_WIDTH, display_width, render};
+use crate::doc::{TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
@@ -93,7 +93,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             let inner = &toks[i + 2..close];
             if !contains_comment(inner) && is_balanced(inner) && !has_middle_newline(inner) {
                 emit_str(out, col, t.text);
-                let doc = build_call_doc(inner);
+                let doc = build_call_body(inner, Fit::Measured);
                 let base_level = current_line_indent_cols(out) / TAB_WIDTH;
                 let reserved = trailing_reserved(toks, close + 1);
                 let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
@@ -309,7 +309,7 @@ fn explode_params(def: &Define, flat: &str, scoped_col: usize, width: usize) -> 
         return None;
     }
     let params = render(
-        &Doc::ForceBreak(Box::new(build_call_body(params))),
+        &build_call_body(params, Fit::Forced),
         continued,
         scoped_col + display_width(&def.head),
         0,

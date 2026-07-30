@@ -1,7 +1,12 @@
-//! Wadler/Leijen `Doc` builders for the constructs jphfmt lays out: call argument lists, `{}` and
-//! `enum` bodies, `for`/condition clause groups, and parenthesized ternary chains. Each builder
-//! turns a token slice into a [`Doc`] that [`crate::doc::render`] later flattens or fully breaks per
-//! §2.2. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
+//! Wadler/Leijen `Doc` builders. Every construct jphfmt breaks is one container — an argument list, a
+//! `{}` or `enum` body, a `for` header, a condition, an operator chain, a ternary's arms, a macro's
+//! parameters — laid out by [`build_container`] under §2.2's fits-flat-or-fully-broken rule. Because
+//! the comma trails in an argument list, the operator trails in a chain and the ternary `:` trails its
+//! arm: one rule, and per-construct values for how it is bracketed, what separates it, whether a
+//! separator follows the last element on the break, and whether the width decides at all (#71).
+//!
+//! Each builder turns a token slice into a [`Doc`] that [`crate::doc::render`] later flattens or fully
+//! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
     has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident,
@@ -11,20 +16,10 @@ use super::tokens::{
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
 
-/// Build the §2.2 document for a call's argument list, including the surrounding parens. Each
-/// argument is built recursively (via [`build_expr_doc`]), so a nested `{...}` or a nested call
-/// is its own group that can collapse or explode independently.
-pub(super) fn build_call_doc(inner: &[Token]) -> Doc {
-    match build_call_body(inner) {
-        Doc::Text(flat) => Doc::Text(flat),
-        body => Doc::group(body),
-    }
-}
-
-/// [`build_call_doc`]'s document without its enclosing group, so a caller that has already decided to
-/// break — a `#define`'s parameter list, whose line the body overflows — can wrap it in a
-/// [`Doc::ForceBreak`] instead of leaving the group to re-measure and stay flat.
-pub(super) fn build_call_body(inner: &[Token]) -> Doc {
+/// A call's argument list, brackets included: the elements are `,`-separated and the flat form is
+/// tight (§2.5). `fit` is the caller's, because a `#define` whose body overflows has already decided
+/// to break its parameters before this is built.
+pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
@@ -35,7 +30,6 @@ pub(super) fn build_call_body(inner: &[Token]) -> Doc {
     if args.is_empty() {
         return Doc::text("()");
     }
-    let last = args.len() - 1;
     // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
     // no pair of its own; with siblings, unbounded arms read as further arguments. A `{}` element is
     // bounded either way, because its list writes a trailing comma on the break (#59).
@@ -44,25 +38,17 @@ pub(super) fn build_call_body(inner: &[Token]) -> Doc {
     } else {
         Bound::Parens
     };
-    let mut items = vec![Doc::SoftLine];
-    for (idx, arg) in args.into_iter().enumerate() {
-        items.push(build_element_doc(arg, bound));
-        if idx < last {
-            items.push(Doc::text(","));
-            items.push(Doc::Line);
-        }
-    }
-    Doc::concat([
-        Doc::text("("),
-        Doc::nest(Doc::concat(items)),
-        Doc::SoftLine,
-        Doc::text(")"),
-    ])
+    let seps = vec![",".to_owned(); args.len() - 1];
+    let elements = args
+        .into_iter()
+        .map(|a| build_element_doc(a, bound))
+        .collect();
+    build_container(&PARENS, elements, seps, None, fit)
 }
 
-/// Build the document for a `{}` list: comma-separated elements, a trailing comma when broken, and
-/// the §2.3 magic comma (a trailing comma in the source forces explosion). `padded` adds an inner
-/// space in the flat form (`enum { A, B }`) versus the tight initializer form (`{1, 2}`).
+/// A `{}` or `enum` body: `,`-separated elements, a trailing comma when broken, and §2.3's magic
+/// comma — a trailing comma in the source — which is the same forced fit a ternary chain takes.
+/// `padded` is the flat form's inner space, `enum { A, B }` against `{1, 2}`.
 pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("{{{}}}", render_segment(inner)));
@@ -73,32 +59,15 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     if elements.is_empty() {
         return Doc::text("{}");
     }
-    let pad = || if padded { Doc::Line } else { Doc::SoftLine };
-    let last = elements.len() - 1;
-    let mut items = vec![pad()];
-    for (idx, element) in elements.into_iter().enumerate() {
-        items.push(build_juxtaposed_doc(element));
-        if idx < last {
-            items.push(Doc::text(","));
-            items.push(Doc::Line);
-        } else {
-            items.push(Doc::IfBreak {
-                broken: ",".to_owned(),
-                flat: String::new(),
-            });
-        }
-    }
-    let body = Doc::concat([
-        Doc::text("{"),
-        Doc::nest(Doc::concat(items)),
-        pad(),
-        Doc::text("}"),
-    ]);
-    if magic {
-        Doc::ForceBreak(Box::new(body))
-    } else {
-        Doc::group(body)
-    }
+    let bracketing = Bracketing::Written {
+        open: "{",
+        close: "}",
+        pad: if padded { Pad::Spaced } else { Pad::Tight },
+    };
+    let seps = vec![",".to_owned(); elements.len() - 1];
+    let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
+    let fit = if magic { Fit::Forced } else { Fit::Measured };
+    build_container(&bracketing, docs, seps, Some(","), fit)
 }
 
 /// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
@@ -159,11 +128,13 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
     {
-        // Hanging, not bounded: an operand adds no parentheses of its own.
-        return Doc::group(Doc::nest(Doc::concat(trailing_items(
+        return build_container(
+            &Bracketing::Hanging,
             segment_docs(&segments),
             chain_seps(&ops),
-        ))));
+            None,
+            Fit::Measured,
+        );
     }
     let mut parts: Vec<Doc> = Vec::new();
     let mut text = String::new();
@@ -201,7 +172,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             if !text.is_empty() {
                 parts.push(Doc::Text(std::mem::take(&mut text)));
             }
-            parts.push(build_call_doc(&toks[j + 1..close]));
+            parts.push(build_call_body(&toks[j + 1..close], Fit::Measured));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
             && t.text == "("
@@ -251,20 +222,112 @@ fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
     items
 }
 
+/// A bracket's inner space in the flat form: `{1, 2}` and `f(a, b)` against `enum { A, B }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pad {
+    Tight,
+    Spaced,
+}
+
+impl Pad {
+    fn doc(self) -> Doc {
+        match self {
+            Self::Tight => Doc::SoftLine,
+            Self::Spaced => Doc::Line,
+        }
+    }
+}
+
+/// How a container is bracketed — the only thing that differs between one construct and another,
+/// beyond its separators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Bracketing {
+    /// The enclosing container's brackets: elements that are its whole span add nothing of their own,
+    /// and take no indent of their own either, because that container already indented them.
+    Enclosing,
+    /// Nothing but a hanging indent. An operand inside a larger expression adds no parentheses — it
+    /// has no claim on the span — but its continuation lines still sit one level in.
+    Hanging,
+    /// Brackets the author wrote, which this pass lays the elements out inside.
+    Written {
+        open: &'static str,
+        close: &'static str,
+        pad: Pad,
+    },
+    /// Brackets that appear only on the break, after `head` when there is one — the only tokens
+    /// jphfmt writes, legal because the elements are already an implicit container.
+    OnBreak { head: String },
+}
+
+/// The one layout every container in the language gets (§2.2): the elements in order, each `seps[i]`
+/// *trailing* its element, `trailing` after the last one only when broken (§2.3's magic comma), all of
+/// it bounded per `bounds` and flat-or-broken per `fit`.
+///
+/// An argument list, a `{}` or `enum` body, a `for` header, a condition, an operator chain, a
+/// ternary's arms and a macro's parameters are the same construct: because the comma trails, the
+/// operator trails and the ternary `:` trails. What differs between them is the four values passed
+/// here, not the shape they are laid out in (#71).
+fn build_container(
+    bracketing: &Bracketing,
+    elements: Vec<Doc>,
+    seps: Vec<String>,
+    trailing: Option<&str>,
+    fit: Fit,
+) -> Doc {
+    let mut items = trailing_items(elements, seps);
+    items.extend(trailing.map(|text| Doc::IfBreak {
+        broken: text.to_owned(),
+        flat: String::new(),
+    }));
+    let nested = |lead: Doc, items: Vec<Doc>| {
+        Doc::nest(Doc::concat(
+            std::iter::once(lead).chain(items).collect::<Vec<_>>(),
+        ))
+    };
+    match bracketing {
+        Bracketing::Enclosing => fit.wrap(Doc::concat(items)),
+        Bracketing::Hanging => fit.wrap(Doc::nest(Doc::concat(items))),
+        Bracketing::Written { open, close, pad } => fit.wrap(Doc::concat([
+            Doc::text(*open),
+            nested(pad.doc(), items),
+            pad.doc(),
+            Doc::text(*close),
+        ])),
+        Bracketing::OnBreak { head } => fit.wrap(Doc::concat(
+            (!head.is_empty())
+                .then(|| Doc::Text(format!("{head} ")))
+                .into_iter()
+                .chain([
+                    Doc::IfBreak {
+                        broken: "(".to_owned(),
+                        flat: String::new(),
+                    },
+                    nested(Doc::SoftLine, items),
+                    Doc::SoftLine,
+                    Doc::IfBreak {
+                        broken: ")".to_owned(),
+                        flat: String::new(),
+                    },
+                ])
+                .collect::<Vec<_>>(),
+        )),
+    }
+}
+
+/// The author's `(…)` around a clause run: a `for` header, a condition, a parenthesized chain.
+const PARENS: Bracketing = Bracketing::Written {
+    open: "(",
+    close: ")",
+    pad: Pad::Tight,
+};
+
 /// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with each `seps[i]`
 /// trailing its element (`;` for a `for` header, ` &&` for a condition, ` |` for a bit chain).
 fn build_clause_group(segments: Vec<Doc>, seps: Vec<String>, fit: Fit) -> Doc {
     if segments.is_empty() {
         return Doc::text("()");
     }
-    let mut items = vec![Doc::SoftLine];
-    items.extend(trailing_items(segments, seps));
-    fit.wrap(Doc::concat([
-        Doc::text("("),
-        Doc::nest(Doc::concat(items)),
-        Doc::SoftLine,
-        Doc::text(")"),
-    ]))
+    build_container(&PARENS, segments, seps, None, fit)
 }
 
 /// An assignment operator: `=` and the compound forms, but not a comparison.
@@ -317,7 +380,7 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
 
 /// Whether a construct's layout is still the width's to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Fit {
+pub(super) enum Fit {
     /// Flat if it fits, broken if it does not — §2.2's group.
     Measured,
     /// Broken whatever the width says, and reported as not fitting so its parents break too.
@@ -364,8 +427,7 @@ fn build_bounded_doc(
     fit: Fit,
     bound: Bound,
 ) -> Doc {
-    let items = trailing_items(segments, seps);
-    match bound {
+    let bracketing = match bound {
         Bound::Enclosing => {
             // The enclosing bracket bounds the operands, which is only true when they are its whole
             // span — a head would mean they are not, and would be dropped silently here.
@@ -373,31 +435,13 @@ fn build_bounded_doc(
                 head.is_empty(),
                 "a head is bounded, never enclosed: {head:?}"
             );
-            fit.wrap(Doc::concat(items))
+            Bracketing::Enclosing
         }
-        Bound::Parens => fit.wrap(Doc::concat(
-            (!head.is_empty())
-                .then(|| Doc::Text(format!("{head} ")))
-                .into_iter()
-                .chain([
-                    Doc::IfBreak {
-                        broken: "(".to_owned(),
-                        flat: String::new(),
-                    },
-                    Doc::nest(Doc::concat(
-                        std::iter::once(Doc::SoftLine)
-                            .chain(items)
-                            .collect::<Vec<_>>(),
-                    )),
-                    Doc::SoftLine,
-                    Doc::IfBreak {
-                        broken: ")".to_owned(),
-                        flat: String::new(),
-                    },
-                ])
-                .collect::<Vec<_>>(),
-        )),
-    }
+        Bound::Parens => Bracketing::OnBreak {
+            head: head.to_owned(),
+        },
+    };
+    build_container(&bracketing, segments, seps, None, fit)
 }
 
 /// An operator chain or ternary with no parentheses of its own: flat, or one operand per line with the
@@ -635,7 +679,7 @@ mod tests {
         let toks = tokenize(
             "first_argument, inner_function_with_a_very_long_name(nested_argument_one, nested_argument_two, nested_argument_three)",
         );
-        let doc = build_call_doc(&toks);
+        let doc = build_call_body(&toks, Fit::Measured);
         let rendered = crate::doc::render(&doc, 40, 0, 0);
         assert_eq!(
             rendered,
