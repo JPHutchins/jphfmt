@@ -366,7 +366,15 @@ fn build_bounded_doc(
 ) -> Doc {
     let items = trailing_items(segments, seps);
     match bound {
-        Bound::Enclosing => fit.wrap(Doc::concat(items)),
+        Bound::Enclosing => {
+            // The enclosing bracket bounds the operands, which is only true when they are its whole
+            // span — a head would mean they are not, and would be dropped silently here.
+            debug_assert!(
+                head.is_empty(),
+                "a head is bounded, never enclosed: {head:?}"
+            );
+            fit.wrap(Doc::concat(items))
+        }
         Bound::Parens => fit.wrap(Doc::concat(
             (!head.is_empty())
                 .then(|| Doc::Text(format!("{head} ")))
@@ -401,14 +409,16 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         return None;
     }
     let head = render_segment(&toks[..start]);
+    // A head means these operands are only part of their container's span, so they are bounded
+    // whatever they are; with no head it is the position that decides, and it decides the same for a
+    // ternary and for a binary chain — unbounded operands read as elements of whatever list encloses
+    // them either way (#59, #63).
+    let bound = if head.is_empty() {
+        headless
+    } else {
+        Bound::Parens
+    };
     if let Some((segments, ops)) = split_chain(operands) {
-        // A head means these operands are only part of their container's span, so they are bounded;
-        // without one they *are* the span, and the container's brackets bound them already.
-        let bound = if head.is_empty() {
-            Bound::Enclosing
-        } else {
-            Bound::Parens
-        };
         return Some(build_bounded_doc(
             &head,
             segment_docs(&segments),
@@ -417,28 +427,22 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
             bound,
         ));
     }
-    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized. With a head
-    // the arms are always bounded; with none it is the position that decides, since unbounded arms
-    // read as elements of whatever list encloses them (#59).
-    let arms = ternary_arms(operands)?;
-    let seps = vec![" :".to_owned(); arms.len() - 1];
-    let bound = if head.is_empty() {
-        headless
-    } else {
-        Bound::Parens
-    };
-    Some(build_bounded_doc(
-        &head,
-        segment_docs(&arms),
-        seps,
-        Fit::of_ternary(operands),
-        bound,
-    ))
+    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
+    let (arms, seps, fit) = ternary_layout(operands)?;
+    Some(build_bounded_doc(&head, arms, seps, fit, bound))
 }
 
 /// The trailing separators for an operator chain: ` |`, ` &&`, and so on.
 fn chain_seps(ops: &[&str]) -> Vec<String> {
     ops.iter().map(|op| format!(" {op}")).collect()
+}
+
+/// A ternary's arms as documents with the ` :` that trails each, and whether the width decides —
+/// the whole of what the three places a ternary can appear need from one.
+fn ternary_layout(inner: &[Token]) -> Option<(Vec<Doc>, Vec<String>, Fit)> {
+    let arms = ternary_arms(inner)?;
+    let seps = vec![" :".to_owned(); arms.len() - 1];
+    Some((segment_docs(&arms), seps, Fit::of_ternary(inner)))
 }
 
 /// The `:`-separated arms of a ternary, or `None` if any arm is missing its operand — a stranded
@@ -505,13 +509,8 @@ pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
             Fit::Measured,
         ));
     }
-    let arms = ternary_arms(inner)?;
-    let seps = vec![" :".to_owned(); arms.len() - 1];
-    Some(build_clause_group(
-        segment_docs(&arms),
-        seps,
-        Fit::of_ternary(inner),
-    ))
+    let (arms, seps, fit) = ternary_layout(inner)?;
+    Some(build_clause_group(arms, seps, fit))
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -533,9 +532,8 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if let Some((segments, ops)) = split_chain(inner) {
         return build_clause_group(segment_docs(&segments), chain_seps(&ops), Fit::Measured);
     }
-    if let Some(arms) = ternary_arms(inner) {
-        let seps = vec![" :".to_owned(); arms.len() - 1];
-        return build_clause_group(segment_docs(&arms), seps, Fit::of_ternary(inner));
+    if let Some((arms, seps, fit)) = ternary_layout(inner) {
+        return build_clause_group(arms, seps, fit);
     }
     build_clause_doc(inner, |_| false, "")
 }
