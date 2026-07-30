@@ -5,6 +5,10 @@ on:
     - cron: '3 3 * * *'
   workflow_dispatch:
 
+# Serializes runs: the rolling issue is found by a query, so two runs at once could both miss it and
+# both create one. Queues rather than cancels — a 30-minute analysis is not worth restarting.
+concurrency: mutation-testing-report
+
 jobs:
   mutants:
     runs-on: ubuntu-latest
@@ -45,15 +49,14 @@ jobs:
       - id: report
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          uv run .github/workflows/mutants_report.py body mutants.out/outcomes.json "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
-            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > mutants-report.md
-          {
-            echo "missed=$(uv run .github/workflows/mutants_report.py missed mutants.out/outcomes.json)"
-            echo "title=$(uv run .github/workflows/mutants_report.py title mutants.out/outcomes.json "$GITHUB_SHA")"
-          } >>"$GITHUB_OUTPUT"
+          uv run .github/workflows/mutants_report.py report mutants.out/outcomes.json \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            mutants-report.md >>"$GITHUB_OUTPUT"
 
-      # Every survivor's log and diff, for the ones the issue body has no room to spell out.
-      - if: steps.cache.outputs.cache-hit != 'true'
+      # Every survivor's log and diff, for the ones the issue body has no room to spell out. Kept
+      # even when the report step failed, since that is when they are worth reading.
+      - if: (success() || failure()) && steps.cache.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mutants-out

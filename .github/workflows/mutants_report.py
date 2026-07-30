@@ -43,6 +43,15 @@ class Survivor(NamedTuple):
 	change: str
 
 
+def integer(value: object) -> int | None:
+	"""`bool` subclasses `int`, and a JSON `true` must not become line 1.
+
+	>>> integer(3), integer(True), integer("3")
+	(3, None, None)
+	"""
+	return value if type(value) is int else None
+
+
 def loaded(path: Path) -> Json:
 	try:
 		value = json.loads(path.read_bytes())
@@ -55,8 +64,7 @@ def loaded(path: Path) -> Json:
 
 def counts(outcomes: Json) -> Counts:
 	def tally(field: str) -> int:
-		value = outcomes.get(field)
-		return value if isinstance(value, int) else 0
+		return integer(outcomes.get(field)) or 0
 
 	return Counts(
 		tested=tally("total_mutants"),
@@ -96,8 +104,8 @@ def survivor(mutant: Json, name: str) -> Survivor | None:
 	start = span.get("start") if isinstance(span, dict) else None
 	if not isinstance(start, dict) or not isinstance(file, str) or not isinstance(name, str):
 		return None
-	line, column = start.get("line"), start.get("column")
-	if not isinstance(line, int) or not isinstance(column, int):
+	line, column = integer(start.get("line")), integer(start.get("column"))
+	if line is None or column is None:
 		return None
 	named = function.get("function_name") if isinstance(function, dict) else None
 	fn = named if isinstance(named, str) else "(no function)"
@@ -221,30 +229,41 @@ def body(outcomes: Json, repo: str, sha: str, run: str) -> str:
 		"<sub>Logs and a per-mutant diff for every one of these are in the `mutants-out` artifact "
 		f"of [the run]({run}).</sub>\n"
 	)
+	note = (
+		f"<sub>{{}} further survivors are omitted to fit GitHub's issue body limit; the artifact "
+		f"has all {len(found)}.</sub>\n"
+	)
+	# Budget the scaffold as rendered, separators included, and the note at its longest — dropping
+	# every survivor — so what `fitted` is told is spare really is.
+	scaffold = len("\n".join((*preamble, "", note.format(len(found)), footer)))
 	shown, dropped = fitted(
-		ordered(found),
-		f"https://github.com/{repo}/blob/{sha}",
-		BODY_LIMIT - len("\n".join(preamble)) - len(footer),
+		ordered(found), f"https://github.com/{repo}/blob/{sha}", BODY_LIMIT - scaffold
 	)
-	omitted = (
-		f"<sub>{dropped} further survivors are omitted to fit GitHub's issue body limit; the "
-		f"artifact has all {len(found)}.</sub>\n",
-	)
-	return "\n".join((*preamble, shown, *(omitted if dropped else ()), footer))
+	omitted = (note.format(dropped),) if dropped else ()
+	return "\n".join((*preamble, shown, *omitted, footer))
+
+
+def tested(path: Path) -> Json:
+	"""A run that tested nothing is a format change or an aborted run, not a clean sweep."""
+	data = loaded(path)
+	if not counts(data).tested:
+		raise SystemExit(f"{path}: reports no mutants tested")
+	return data
 
 
 def main(argv: tuple[str, ...]) -> int:
 	match argv:
 		case ("body", outcomes, repo, sha, run):
-			print(body(loaded(Path(outcomes)), repo, sha, run), end="")
-		case ("title", outcomes, sha):
-			print(title(counts(loaded(Path(outcomes))), sha))
-		case ("missed", outcomes):
-			print(counts(loaded(Path(outcomes))).missed)
+			print(body(tested(Path(outcomes)), repo, sha, run), end="")
+		case ("report", outcomes, repo, sha, run, out):
+			data = tested(Path(outcomes))
+			Path(out).write_text(body(data, repo, sha, run), encoding="utf-8")
+			print(f"missed={counts(data).missed}")
+			print(f"title={title(counts(data), sha)}")
 		case _:
 			print(__doc__)
-			print("usage: mutants_report.py body OUTCOMES REPO SHA RUN_URL | title OUTCOMES SHA")
-			print("       mutants_report.py missed OUTCOMES")
+			print("usage: mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE")
+			print("       mutants_report.py body OUTCOMES REPO SHA RUN_URL")
 			return 2
 	return 0
 
