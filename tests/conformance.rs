@@ -648,34 +648,47 @@ fn statement_expression_in_code_block_indents() {
     assert_eq!(format(src), expected);
 }
 
-/// The statement-expression emitter consumed more than it rendered, in two ways, and each deleted
-/// source outright: it reported everything up to `)` while rendering only as far as `}`, and it wrote
-/// one `;` per surviving statement after dropping the empty ones. Passthrough instead — §6 prefers it
-/// to guessing, and no relayout may lose what the author wrote.
+/// The statement-expression emitter consumed more than it rendered, so source was deleted outright:
+/// it reported everything up to `)` while rendering only as far as `}`. Those spans pass through now —
+/// §6 prefers passthrough to guessing, and no relayout may lose what the author wrote.
 #[test]
-fn a_statement_expression_that_cannot_be_laid_out_keeps_every_token() {
+fn a_statement_expression_the_emitter_cannot_own_passes_through() {
     for src in [
         // Something between `}` and `)`, which the emitter consumed without rendering.
-        "({x}y)",
-        "({\"\"}\"\")",
-        "({ int t = 1; t; }/*c*/)",
+        "({x}y)\n",
+        "({\"\"}\"\")\n",
+        "({ int t = 1; t; }/*c*/)\n",
         // The `}` is outside the `)` — `match_brace` and `match_bracket` disagree about the nesting.
-        "({)}",
-        // An empty statement: two `;` go in, and only one would have come back out.
-        "({;,;})",
-        "({x;;y;})",
-        // Canonical bodies, which must still lay out rather than fall into the passthrough above.
-        "({ int t = 1; t; })",
-        "({x;})",
+        "({)}\n",
+        // No statements at all, so there is no body to lay out.
+        "({})\n",
     ] {
-        let out = format(src);
-        assert_eq!(
-            significant(&out),
-            significant(src),
-            "input {src:?} formatted to {out:?}"
-        );
+        assert_eq!(format(src), src, "must pass through unchanged");
     }
-    assert_eq!(format("({x;})"), "({\n\tx;\n})\n", "a body still lays out");
+}
+
+/// A `;` that opens no statement is still a statement, and the emitter writes exactly one `;` per
+/// statement — so dropping the empty ones lost the `;` that produced them. Every leading segment is
+/// kept for that reason; only a *trailing* empty one is dropped, since that is what a body ending in
+/// `;` splits to and keeping it would write a `;` the author did not.
+///
+/// Asserted as exact output rather than token equality: both are needed, because a passthrough would
+/// satisfy token equality too, and that is what made this indistinguishable before.
+#[test]
+fn every_statement_in_a_statement_expression_keeps_its_semicolon() {
+    for (src, expected) in [
+        ("({;,;})", "({\n\t;\n\t,;\n})\n"),
+        ("({x;;y;})", "({\n\tx;\n\t;\n\ty;\n})\n"),
+        ("({;})", "({\n\t;\n})\n"),
+        // The canonical forms: a trailing `;` splits to an empty last segment, which is dropped, and
+        // an unterminated last statement gains the `;` it needs.
+        ("({ int t = 1; t; })", "({\n\tint t = 1;\n\tt;\n})\n"),
+        ("({x;})", "({\n\tx;\n})\n"),
+        ("({x})", "({\n\tx;\n})\n"),
+    ] {
+        assert_eq!(format(src), expected, "input {src:?}");
+        assert_eq!(format(expected), expected, "must be a fixpoint: {src:?}");
+    }
 }
 
 #[test]
