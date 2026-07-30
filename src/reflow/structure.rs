@@ -443,6 +443,13 @@ fn format_stmt_expr(
 ) -> Option<(String, usize)> {
     let paren_close = match_bracket(toks, open)?;
     let brace_close = match_brace(toks, open + 1)?;
+    // This reports `paren_close + 1` as consumed but renders only as far as `}`, so anything between
+    // the two would be deleted from the output. In a statement-expression the `)` follows the `}`
+    // directly; where it does not — or where the `}` is outside the parentheses entirely, which is
+    // what `({)}` lexes as — the construct is something else and §6 prefers passthrough.
+    if brace_close > paren_close || has_non_trivia(&toks[brace_close + 1..paren_close]) {
+        return None;
+    }
     let inner = &toks[open + 2..brace_close];
     let unformattable = inner
         .iter()
@@ -453,19 +460,24 @@ fn format_stmt_expr(
     let inner_indent = "\t".repeat(base_level + 1);
     let close_indent = "\t".repeat(base_level);
     let stmt_col = (base_level + 1) * TAB_WIDTH;
-    let statements: Vec<String> =
-        split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
-            .into_iter()
-            .filter(|s| has_non_trivia(s))
-            .map(|s| {
-                render(
-                    &build_expr_doc(s),
-                    width.saturating_sub(1),
-                    stmt_col,
-                    base_level + 1,
-                )
-            })
-            .collect();
+    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";");
+    let (trailing, leading) = segments.split_last()?;
+    // Every leading segment becomes a statement, empty or not, because each gets exactly one `;`
+    // written back: dropping an empty one would lose the `;` that produced it. Only the last may be
+    // dropped when empty — that is what a body ending in `;` splits to, which is the canonical form,
+    // and keeping it would write a `;` the author did not.
+    let statements: Vec<String> = leading
+        .iter()
+        .chain(has_non_trivia(trailing).then_some(trailing))
+        .map(|s| {
+            render(
+                &build_expr_doc(s),
+                width.saturating_sub(1),
+                stmt_col,
+                base_level + 1,
+            )
+        })
+        .collect();
     if statements.is_empty() {
         return None;
     }
