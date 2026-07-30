@@ -210,7 +210,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
 /// separator ending each (§2.4, §2.7).
 fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
     let mut seps = seps.into_iter();
-    let mut items = Vec::new();
+    let mut items = Vec::with_capacity(segments.len() * 3);
     for seg in segments {
         items.push(seg);
         if let Some(sep) = seps.next() {
@@ -523,13 +523,9 @@ fn render_segment(toks: &[Token]) -> String {
 /// A parenthesized chain or ternary as its own container. A ternary belongs here as much as a chain
 /// does: [`build_chain_doc`] bounds a bare one with parentheses, and this is the same content on the
 /// next pass, so both must reach the same layout or neither is a fixpoint.
-pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
-    // The author's parentheses do not exempt the span from the width model: a literal running to the
-    // end of the file has no one-line width, so every group holding one passes through, exactly as
-    // `is_boundable` refuses one a chain would have bounded.
-    if spans_lines(inner) {
-        return None;
-    }
+/// A chain or a ternary inside the author's parentheses — what a parenthesized group and an
+/// `if`/`while`/`switch` condition both are, since they are the same span in the same brackets.
+fn build_clause_contents(inner: &[Token]) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
         return Some(build_container(
             &PARENS,
@@ -541,6 +537,16 @@ pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
     Some(build_container(&PARENS, arms, seps, None, fit))
+}
+
+pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
+    // The author's parentheses do not exempt the span from the width model: a literal running to the
+    // end of the file has no one-line width, so every group holding one passes through, exactly as
+    // `is_boundable` refuses one a chain would have bounded.
+    if spans_lines(inner) {
+        return None;
+    }
+    build_clause_contents(inner)
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -559,19 +565,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    if let Some((segments, ops)) = split_chain(inner) {
-        return build_container(
-            &PARENS,
-            segment_docs(&segments),
-            chain_seps(&ops),
-            None,
-            Fit::Measured,
-        );
-    }
-    if let Some((arms, seps, fit)) = ternary_layout(inner) {
-        return build_container(&PARENS, arms, seps, None, fit);
-    }
-    build_clause_doc(inner, |_| false, "")
+    build_clause_contents(inner).unwrap_or_else(|| build_clause_doc(inner, |_| false, ""))
 }
 
 #[cfg(test)]
