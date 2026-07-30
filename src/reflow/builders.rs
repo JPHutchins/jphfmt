@@ -82,8 +82,7 @@ fn build_juxtaposed_doc(element: &[Token]) -> Doc {
             .iter()
             .map(|item| build_element_doc(item, Bound::Parens))
             .flat_map(|doc| [Doc::Line, doc])
-            .skip(1)
-            .collect::<Vec<_>>(),
+            .skip(1),
     )
 }
 
@@ -279,11 +278,8 @@ fn build_container(
         broken: text.to_owned(),
         flat: String::new(),
     }));
-    let nested = |lead: Doc, items: Vec<Doc>| {
-        Doc::nest(Doc::concat(
-            std::iter::once(lead).chain(items).collect::<Vec<_>>(),
-        ))
-    };
+    let nested =
+        |lead: Doc, items: Vec<Doc>| Doc::nest(Doc::concat(std::iter::once(lead).chain(items)));
     match bracketing {
         Bracketing::Enclosing => fit.wrap(Doc::concat(items)),
         Bracketing::Hanging => fit.wrap(Doc::nest(Doc::concat(items))),
@@ -308,8 +304,7 @@ fn build_container(
                         broken: ")".to_owned(),
                         flat: String::new(),
                     },
-                ])
-                .collect::<Vec<_>>(),
+                ]),
         )),
     }
 }
@@ -673,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn build_call_doc_recursively_explodes_nested_call() {
+    fn build_call_body_recursively_explodes_nested_call() {
         // A call whose argument is itself an over-width call: both levels must explode.
         use crate::lexer::tokenize;
         let toks = tokenize(
