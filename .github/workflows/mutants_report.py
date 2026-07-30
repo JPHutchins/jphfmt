@@ -72,8 +72,19 @@ def loaded(path: Path) -> Json:
 
 
 def counts(outcomes: Json) -> Counts:
+	"""An absent count is nought; a count that is present and not a number is a format change.
+
+	>>> counts({"total_mutants": 3})
+	Counts(tested=3, caught=0, missed=0, unviable=0, timeout=0)
+	"""
+
 	def tally(field: str) -> int:
-		return integer(outcomes.get(field)) or 0
+		if field not in outcomes:
+			return 0
+		value = integer(outcomes[field])
+		if value is None:
+			raise SystemExit(f"{field}: expected a whole number, got {outcomes[field]!r}")
+		return value
 
 	return Counts(
 		tested=tally("total_mutants"),
