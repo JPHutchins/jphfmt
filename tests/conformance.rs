@@ -691,6 +691,20 @@ fn every_statement_in_a_statement_expression_keeps_its_semicolon() {
     }
 }
 
+/// A comment-bearing group is never laid out, at any length. The builders take no comment guard of
+/// their own — `emit_tokens` refuses the construct first — and this pins that, because flattening a
+/// `//` comment would put the rest of the group on the comment's line and swallow it.
+#[test]
+fn a_comment_bearing_group_passes_through_however_long() {
+    for src in [
+        "int x = (aaaaaaaaaaaaaaaaaaaaaa /* c */ | bbbbbbbbbbbbbbbbbbbbbb | cccccccccccccccccccccc | dddddddddd);\n",
+        "int y = (aaaaaaaaaaaaaaaaaaaaaa // c\n\t| bbbbbbbbbbbbbbbbbbbbbb | cccccccccccccccccccccc | ddddddddddddddd);\n",
+        "int z = arr[aaaaaaaaaaaaaaaaaaaaaa /* c */ + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccc + ddddd];\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+}
+
 #[test]
 fn long_binary_chain_explodes_with_trailing_operators() {
     // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line
@@ -873,6 +887,39 @@ fn a_sole_call_argument_is_not_bounded_twice() {
         format("struct s w = {a ? b : c ? d : e};\n"),
         "struct s w = {\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n};\n"
     );
+}
+
+/// #77: an index is the same container the author's other brackets hold, so it needs no bound of its
+/// own — `[` and `]` are the bound — and its contents obey every rule a parenthesized span does.
+#[test]
+fn an_index_is_a_container_like_any_other_bracket() {
+    assert_eq!(
+        format("int j = arr[a ? b : c ? d : e];\n"),
+        "int j = arr[\n\ta ? b :\n\tc ? d :\n\te\n];\n"
+    );
+    let chain = "int n = table[AAAAAAAAAAAAAAAAAAAAAAAA + BBBBBBBBBBBBBBBBBBBBBBBB + \
+                 CCCCCCCCCCCCCCCCCCCCCCCC + DDDDDDDDDDDDDDDDDDDDDDDD];\n";
+    let broken = "int n = table[\n\tAAAAAAAAAAAAAAAAAAAAAAAA +\n\tBBBBBBBBBBBBBBBBBBBBBBBB +\n\
+                  \tCCCCCCCCCCCCCCCCCCCCCCCC +\n\tDDDDDDDDDDDDDDDDDDDDDDDD\n];\n";
+    assert_eq!(format(chain), broken);
+    // An operator inside brackets is spaced as one inside parentheses always was — `[…]` was the
+    // only pair this did not reach.
+    assert_eq!(format("int b = arr[i-1];\n"), "int b = arr[i - 1];\n");
+}
+
+/// An index with no operator to break at is text, exactly as it was: a subscript, a declarator's
+/// bound, a designator, and an attribute all pass through untouched.
+#[test]
+fn an_index_with_nothing_to_break_is_left_alone() {
+    for src in [
+        "int d = arr[i];\n",
+        "int e = arr[-1];\n",
+        "int h = m[i][j];\n",
+        "struct s {\n\tint arr[10];\n};\n",
+        "static const int t[] = {\n\t[A] = 1,\n\t[B] = 2,\n};\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
 }
 
 #[test]

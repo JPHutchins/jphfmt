@@ -1,9 +1,10 @@
 //! Wadler/Leijen `Doc` builders. Every construct jphfmt breaks is one container — an argument list, a
-//! `{}` or `enum` body, a `for` header, a condition, an operator chain, a ternary's arms, a macro's
-//! parameters — laid out by [`build_container`] under §2.2's fits-flat-or-fully-broken rule. Because
-//! the comma trails in an argument list, the operator trails in a chain and the ternary `:` trails its
-//! arm: one rule, and per-construct values for how it is bracketed, what separates it, whether a
-//! separator follows the last element on the break, and whether the width decides at all (#71).
+//! `{}` or `enum` body, a `[…]` index, a `for` header, a condition, an operator chain, a ternary's
+//! arms, a macro's parameters — laid out by [`build_container`] under §2.2's fits-flat-or-fully-broken
+//! rule. Because the comma trails in an argument list, the operator trails in a chain and the ternary
+//! `:` trails its arm: one rule, and per-construct values for how it is bracketed, what separates it,
+//! whether a separator follows the last element on the break, and whether the width decides at all
+//! (#71).
 //!
 //! Each builder turns a token slice into a [`Doc`] that [`crate::doc::render`] later flattens or fully
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
@@ -123,6 +124,29 @@ pub(super) fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
     build_expr_doc(toks)
 }
 
+/// The bracketing a `(` or `[` opens when it is a *group* this pass lays out. A call's `(` is matched
+/// before this by [`call_head_before`] and a `{` body is a different container, so neither is here.
+pub(super) fn group_bracketing(t: &Token) -> Option<&'static Bracketing<'static>> {
+    match t.text {
+        "(" => Some(&PARENS),
+        "[" => Some(&BRACKETS),
+        _ => None,
+    }
+}
+
+/// Flush the text accumulated so far into `parts`, so a nested group can be pushed as its own [`Doc`].
+/// `space` is whether a pending gap becomes one: every bracket keeps it except a call's `(`, which §2.5
+/// writes tight against its callee.
+fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, space: bool) {
+    if space && *pending && !text.is_empty() {
+        text.push(' ');
+    }
+    *pending = false;
+    if !text.is_empty() {
+        parts.push(Doc::Text(std::mem::take(text)));
+    }
+}
+
 pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
@@ -150,13 +174,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             && t.text == "{"
             && let Some(close) = match_brace(toks, j)
         {
-            if pending_space && !text.is_empty() {
-                text.push(' ');
-            }
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
+            flush_pending(&mut text, &mut parts, &mut pending_space, true);
             parts.push(build_brace_doc(&toks[j + 1..close], false));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
@@ -167,24 +185,15 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             // The callee is already in `text`; any trivia between it and `(` is dropped rather
             // than collapsed to a space, so this matches `space_call_heads`'s tight-call spacing
             // and stays a fixpoint across passes (§2.5).
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
+            flush_pending(&mut text, &mut parts, &mut pending_space, false);
             parts.push(build_call_body(&toks[j + 1..close], Fit::Measured));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
-            && t.text == "("
+            && let Some(bracketing) = group_bracketing(&t)
             && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_paren_group(&toks[j + 1..close])
+            && let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing)
         {
-            if pending_space && !text.is_empty() {
-                text.push(' ');
-            }
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
+            flush_pending(&mut text, &mut parts, &mut pending_space, true);
             parts.push(group);
             j = close + 1;
         } else {
@@ -223,7 +232,7 @@ fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
 
 /// A bracket's inner space in the flat form: `{1, 2}` and `f(a, b)` against `enum { A, B }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Pad {
+pub(super) enum Pad {
     Tight,
     Spaced,
 }
@@ -240,7 +249,7 @@ impl Pad {
 /// How a container is bracketed — the only thing that differs between one construct and another,
 /// beyond its separators.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Bracketing<'a> {
+pub(super) enum Bracketing<'a> {
     /// The enclosing container's brackets: elements that are its whole span add nothing of their own,
     /// and take no indent of their own either, because that container already indented them.
     Enclosing,
@@ -262,9 +271,9 @@ enum Bracketing<'a> {
 /// *trailing* its element, `trailing` after the last one only when broken (§2.3's magic comma), all of
 /// it bracketed per `bracketing` and flat-or-broken per `fit`.
 ///
-/// An argument list, a `{}` or `enum` body, a `for` header, a condition, an operator chain, a
-/// ternary's arms and a macro's parameters are the same construct: because the comma trails, the
-/// operator trails and the ternary `:` trails. What differs between them is the four values passed
+/// An argument list, a `{}` or `enum` body, a `[…]` index, a `for` header, a condition, an operator
+/// chain, a ternary's arms and a macro's parameters are the same construct: because the comma trails,
+/// the operator trails and the ternary `:` trails. What differs between them is the four values passed
 /// here, not the shape they are laid out in (#71).
 fn build_container(
     bracketing: &Bracketing,
@@ -310,9 +319,16 @@ fn build_container(
 }
 
 /// The author's `(…)` around a clause run: a `for` header, a condition, a parenthesized chain.
-const PARENS: Bracketing<'static> = Bracketing::Written {
+pub(super) const PARENS: Bracketing<'static> = Bracketing::Written {
     open: "(",
     close: ")",
+    pad: Pad::Tight,
+};
+
+/// The author's `[…]` around an index.
+pub(super) const BRACKETS: Bracketing<'static> = Bracketing::Written {
+    open: "[",
+    close: "]",
     pad: Pad::Tight,
 };
 
@@ -520,15 +536,16 @@ fn render_segment(toks: &[Token]) -> String {
     s
 }
 
-/// A parenthesized chain or ternary as its own container. A ternary belongs here as much as a chain
-/// does: [`build_chain_doc`] bounds a bare one with parentheses, and this is the same content on the
-/// next pass, so both must reach the same layout or neither is a fixpoint.
-/// A chain or a ternary inside the author's parentheses — what a parenthesized group and an
-/// `if`/`while`/`switch` condition both are, since they are the same span in the same brackets.
-fn build_clause_contents(inner: &[Token]) -> Option<Doc> {
+/// A chain or a ternary inside brackets the author wrote — what a parenthesized group, an
+/// `if`/`while`/`switch` condition and a `[…]` index all are, differing only in `bracketing`.
+///
+/// A ternary belongs here as much as a chain does: [`build_chain_doc`] bounds a bare one with
+/// parentheses, and this is the same content on the next pass, so both must reach the same layout or
+/// neither is a fixpoint.
+fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
         return Some(build_container(
-            &PARENS,
+            bracketing,
             segment_docs(&segments),
             chain_seps(&ops),
             None,
@@ -536,17 +553,28 @@ fn build_clause_contents(inner: &[Token]) -> Option<Doc> {
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_container(&PARENS, arms, seps, None, fit))
+    Some(build_container(bracketing, arms, seps, None, fit))
 }
 
-pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
-    // The author's parentheses do not exempt the span from the width model: a literal running to the
-    // end of the file has no one-line width, so every group holding one passes through, exactly as
-    // `is_boundable` refuses one a chain would have bounded.
+/// A bracketed group the author wrote — `(…)` around an expression, `[…]` around an index. The
+/// subscript is the same container an argument list is, in a different pair, so `arr[a ? b : c]` needs
+/// no bound of its own and breaks on the same rule (#77).
+///
+/// The author's brackets do not exempt the span from the width model: a literal running to the end of
+/// the file has no one-line width, so every group holding one passes through, exactly as
+/// `is_boundable` refuses one a chain would have bounded. [`build_cond_doc`] deliberately does not
+/// take that refusal — it has a fallback layout to reach instead of a passthrough — which is why the
+/// guard lives here rather than in [`build_clause_contents`].
+///
+/// Takes no comment or balance guard of its own, and needs none: `super::structure::emit_tokens`
+/// refuses a comment-bearing or unbalanced construct before any of this module runs, so a span that
+/// reaches here has neither. That matters because flattening a `//` comment would put whatever
+/// followed it on the comment's line and swallow it — the layout must never see one.
+pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if spans_lines(inner) {
         return None;
     }
-    build_clause_contents(inner)
+    build_clause_contents(inner, bracketing)
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -558,14 +586,14 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
 /// trailing (§2.7), so `a | b | c` breaks on the same rule `&&` does; a condition with no operator at
 /// depth zero explodes as a single indented element.
 ///
-/// A ternary condition is the same span in the same parentheses [`build_paren_group`] would lay out,
-/// so it splits at its arms here too — otherwise `while (a ? b : c ? d : e)` and `x = (a ? b : c ? d
-/// : e)` would disagree about a construct that is bracket-for-bracket identical.
+/// A ternary condition is the same span in the same parentheses [`build_bracketed_group`] would lay
+/// out, so it splits at its arms here too — otherwise `while (a ? b : c ? d : e)` and
+/// `x = (a ? b : c ? d : e)` would disagree about a construct that is bracket-for-bracket identical.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    build_clause_contents(inner).unwrap_or_else(|| build_clause_doc(inner, |_| false, ""))
+    build_clause_contents(inner, &PARENS).unwrap_or_else(|| build_clause_doc(inner, |_| false, ""))
 }
 
 #[cfg(test)]
