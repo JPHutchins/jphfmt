@@ -124,6 +124,29 @@ pub(super) fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
     build_expr_doc(toks)
 }
 
+/// The bracketing a `(` or `[` opens when it is a *group* this pass lays out. A call's `(` is matched
+/// before this by [`call_head_before`] and a `{` body is a different container, so neither is here.
+pub(super) fn group_bracketing(t: &Token) -> Option<&'static Bracketing<'static>> {
+    match t.text {
+        "(" => Some(&PARENS),
+        "[" => Some(&BRACKETS),
+        _ => None,
+    }
+}
+
+/// Flush the text accumulated so far into `parts`, so a nested group can be pushed as its own [`Doc`].
+/// `space` is whether a pending gap becomes one: every bracket keeps it except a call's `(`, which §2.5
+/// writes tight against its callee.
+fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, space: bool) {
+    if space && *pending && !text.is_empty() {
+        text.push(' ');
+    }
+    *pending = false;
+    if !text.is_empty() {
+        parts.push(Doc::Text(std::mem::take(text)));
+    }
+}
+
 pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
@@ -151,13 +174,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             && t.text == "{"
             && let Some(close) = match_brace(toks, j)
         {
-            if pending_space && !text.is_empty() {
-                text.push(' ');
-            }
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
+            flush_pending(&mut text, &mut parts, &mut pending_space, true);
             parts.push(build_brace_doc(&toks[j + 1..close], false));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
@@ -168,38 +185,15 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             // The callee is already in `text`; any trivia between it and `(` is dropped rather
             // than collapsed to a space, so this matches `space_call_heads`'s tight-call spacing
             // and stays a fixpoint across passes (§2.5).
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
+            flush_pending(&mut text, &mut parts, &mut pending_space, false);
             parts.push(build_call_body(&toks[j + 1..close], Fit::Measured));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
-            && t.text == "["
+            && let Some(bracketing) = group_bracketing(&t)
             && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_bracketed_group(&toks[j + 1..close], &BRACKETS)
+            && let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing)
         {
-            if pending_space && !text.is_empty() {
-                text.push(' ');
-            }
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
-            parts.push(group);
-            j = close + 1;
-        } else if t.kind == TokenKind::Punct
-            && t.text == "("
-            && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_bracketed_group(&toks[j + 1..close], &PARENS)
-        {
-            if pending_space && !text.is_empty() {
-                text.push(' ');
-            }
-            pending_space = false;
-            if !text.is_empty() {
-                parts.push(Doc::Text(std::mem::take(&mut text)));
-            }
+            flush_pending(&mut text, &mut parts, &mut pending_space, true);
             parts.push(group);
             j = close + 1;
         } else {

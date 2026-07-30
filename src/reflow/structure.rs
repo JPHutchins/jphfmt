@@ -6,8 +6,8 @@
 //! reservation live alongside.
 
 use super::builders::{
-    BRACKETS, Bound, Fit, PARENS, build_brace_doc, build_bracketed_group, build_call_body,
-    build_chain_doc, build_cond_doc, build_expr_doc, build_for_doc,
+    Bound, Fit, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
+    build_cond_doc, build_expr_doc, build_for_doc, group_bracketing,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -28,6 +28,17 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
     let mut depth = 0usize;
     emit_tokens(toks, &mut out, &mut col, &mut depth, width);
     out
+}
+
+/// Whether the bracket at `open` is a call's `(`. Its argument list belongs to the call handler: a call
+/// whose arguments hold a comment or are unbalanced falls through to per-token verbatim, and laying it
+/// out here instead would collapse that whitespace and lose empty leading arguments. A `[` is never a
+/// call's, so it is never excluded.
+fn heads_call(toks: &[Token], open: usize) -> bool {
+    toks[open].text == "("
+        && open > 0
+        && toks[open - 1].kind == TokenKind::Ident
+        && !is_excluded_callee(toks[open - 1].text)
 }
 
 /// Render `doc` for the line it is landing on and emit it. `reserved` is the width of what must still
@@ -172,37 +183,20 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             continue;
         }
 
-        // A parenthesized operator chain or ternary — a breakable container like any other bracket
-        // group, with the operator trailing each line (§2.7). These parens are the author's; a bare
-        // chain is bounded by `build_chain_doc` instead, which adds its own.
-        // Skip `(` that are part of a function call (`ident(`): a call whose args contain a comment
-        // or are unbalanced falls through to per-token verbatim, so without this guard the handler
-        // would accidentally reformat the call's argument list, collapsing whitespace and losing
-        // empty leading arguments. Let it passthrough instead.
+        // A bracketed group the author wrote — a parenthesized chain or ternary, or an index (#77).
+        // One handler, because they are one construct: the operator trails each line either way
+        // (§2.7), and only the pair differs. These brackets are the author's; a bare chain is bounded
+        // by `build_chain_doc` instead, which adds its own.
+        //
+        // An index reaches nothing else. The chain handler below needs a chain at the statement's own
+        // top level, and `int j = arr[…];` has none, so without this it would overrun at any length.
         if t.kind == TokenKind::Punct
-            && t.text == "("
+            && let Some(bracketing) = group_bracketing(&t)
+            && !heads_call(toks, i)
             && let Some(close) = match_bracket(toks, i)
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
-            && !(i > 0
-                && toks[i - 1].kind == TokenKind::Ident
-                && !is_excluded_callee(toks[i - 1].text))
-            && let Some(doc) = build_bracketed_group(&toks[i + 1..close], &PARENS)
-        {
-            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
-            i = close + 1;
-            continue;
-        }
-
-        // An index, which is that same container in the author's other pair of brackets (#77). A
-        // statement whose only breakable container is its subscript reaches no other handler: the
-        // chain handler below needs a chain at the statement's own top level, and `arr[…]` has none.
-        if t.kind == TokenKind::Punct
-            && t.text == "["
-            && let Some(close) = match_bracket(toks, i)
-            && !contains_comment(&toks[i + 1..close])
-            && is_balanced(&toks[i + 1..close])
-            && let Some(doc) = build_bracketed_group(&toks[i + 1..close], &BRACKETS)
+            && let Some(doc) = build_bracketed_group(&toks[i + 1..close], bracketing)
         {
             emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
             i = close + 1;
