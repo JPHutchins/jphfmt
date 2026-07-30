@@ -11,6 +11,19 @@ pub(super) fn is_callee_ident(t: &Token) -> bool {
     t.kind == TokenKind::Ident && !is_excluded_callee(t.text) && !is_type_context(t.text)
 }
 
+/// Whether `t` can end the value a `[` subscripts: an identifier that names something rather than
+/// introducing a construct, a literal, or the `)`/`]` that closes one. Nothing else can be indexed, so
+/// a `[` after anything else opens something other than a subscript — a `{}` list's designator, or an
+/// attribute.
+pub(super) fn ends_value(t: &Token) -> bool {
+    match t.kind {
+        TokenKind::Ident => is_callee_ident(t),
+        TokenKind::Number | TokenKind::String | TokenKind::Char => true,
+        TokenKind::Punct => matches!(t.text, ")" | "]"),
+        _ => false,
+    }
+}
+
 /// A control keyword whose `(` heads a clause, not an argument list.
 pub(super) fn is_control_keyword(text: &str) -> bool {
     matches!(text, "if" | "for" | "while" | "switch")

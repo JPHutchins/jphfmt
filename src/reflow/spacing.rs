@@ -5,9 +5,9 @@
 //! breaking idempotency).
 
 use super::tokens::{
-    can_precede_cast, closes_literal_type, heads_body, is_callee_ident, is_control_keyword,
-    is_decl_specifier, is_excluded_callee, is_qualifier, is_tag_keyword, is_trivia,
-    is_type_context, is_type_group, is_value_start, ternary_open_before,
+    can_precede_cast, closes_literal_type, ends_value, heads_body, is_callee_ident,
+    is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier, is_tag_keyword,
+    is_trivia, is_type_context, is_type_group, is_value_start, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -58,6 +58,7 @@ pub(super) fn space_tokens(s: &str) -> String {
     space_equals(&mut pieces);
     space_semicolons(&mut pieces);
     space_call_heads(&mut pieces);
+    space_subscripts(&mut pieces);
 
     let mut out = String::with_capacity(s.len());
     for (g, t) in &pieces {
@@ -409,6 +410,24 @@ fn space_call_heads(pieces: &mut [Piece]) {
     }
 }
 
+/// A subscript is tight against what it indexes, exactly as a call is tight against its callee
+/// (§2.5): `arr [i]` is `arr[i]`, which was the one pair of brackets §2.5 did not reach.
+///
+/// Only a `[` that *indexes* qualifies. An attribute's `[[` opens a construct of its own and keeps its
+/// gap — `int x [[deprecated]];` and `int arr[10] [[deprecated]];` are both valid C23 — and a `{}`
+/// list's designator follows a `{` or `,`, which end no value ([`ends_value`]).
+fn space_subscripts(pieces: &mut [Piece]) {
+    for j in 1..pieces.len() {
+        let indexes = pieces[j].1.kind == TokenKind::Punct
+            && pieces[j].1.text == "["
+            && pieces.get(j + 1).is_none_or(|next| next.1.text != "[")
+            && ends_value(&pieces[j - 1].1);
+        if indexes && same_line(&pieces[j].0) {
+            pieces[j].0.clear();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,6 +597,31 @@ mod tests {
     fn space_call_heads_tightens_call() {
         assert_eq!(space_tokens("foo ("), "foo(");
         assert_eq!(space_tokens("foo\t("), "foo(");
+    }
+
+    #[test]
+    fn space_subscripts_tightens_an_index() {
+        assert_eq!(space_tokens("arr ["), "arr[");
+        assert_eq!(space_tokens("arr\t["), "arr[");
+        assert_eq!(space_tokens("m[i] ["), "m[i][");
+        assert_eq!(space_tokens("f() ["), "f()[");
+        assert_eq!(space_tokens("\"abc\" ["), "\"abc\"[");
+    }
+
+    #[test]
+    fn space_subscripts_leaves_an_attribute_alone() {
+        // `int x [[deprecated]];` is valid C23, so the gap before `[[` is not a subscript's.
+        assert_eq!(space_tokens("x [["), "x [[");
+        // A designator follows a `{` or `,`, which end no value.
+        assert_eq!(space_tokens("{ ["), "{ [");
+        assert_eq!(space_tokens(", ["), ", [");
+        // A keyword introduces a construct rather than naming a value.
+        assert_eq!(space_tokens("return ["), "return [");
+    }
+
+    #[test]
+    fn space_subscripts_leaves_a_newline_gap_alone() {
+        assert_eq!(space_tokens("arr\n["), "arr\n[");
     }
 
     #[test]

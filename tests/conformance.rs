@@ -211,6 +211,29 @@ fn call_with_line_comment_passes_through() {
     );
 }
 
+/// §2.5 tightens a call against its callee; a subscript is the same postfix operator on the same
+/// value, so `[` is tight too (#79). `[[` is not a subscript — it opens an attribute, and both
+/// `int x [[deprecated]];` and `int arr[10] [[deprecated]];` are valid C23.
+#[test]
+fn a_subscript_is_tight_against_what_it_indexes() {
+    assert_eq!(format("int a = arr [i];\n"), "int a = arr[i];\n");
+    assert_eq!(format("int b = m[i] [j];\n"), "int b = m[i][j];\n");
+    assert_eq!(format("int c = f() [k];\n"), "int c = f()[k];\n");
+    assert_eq!(format("int d = \"abc\" [1];\n"), "int d = \"abc\"[1];\n");
+    assert_eq!(format("char port [127];\n"), "char port[127];\n");
+    for unchanged in [
+        "int x [[deprecated]];\n",
+        "int arr[10] [[deprecated]];\n",
+        "[[nodiscard]] int f(void);\n",
+    ] {
+        assert_eq!(
+            format(unchanged),
+            unchanged,
+            "an attribute is not a subscript"
+        );
+    }
+}
+
 #[test]
 fn control_keyword_gets_one_space_before_paren() {
     assert_eq!(format("if(x) y;\n"), "if (x) y;\n");
