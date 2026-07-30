@@ -240,7 +240,7 @@ impl Pad {
 /// How a container is bracketed — the only thing that differs between one construct and another,
 /// beyond its separators.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Bracketing {
+enum Bracketing<'a> {
     /// The enclosing container's brackets: elements that are its whole span add nothing of their own,
     /// and take no indent of their own either, because that container already indented them.
     Enclosing,
@@ -255,12 +255,12 @@ enum Bracketing {
     },
     /// Brackets that appear only on the break, after `head` when there is one — the only tokens
     /// jphfmt writes, legal because the elements are already an implicit container.
-    OnBreak { head: String },
+    OnBreak { head: &'a str },
 }
 
 /// The one layout every container in the language gets (§2.2): the elements in order, each `seps[i]`
 /// *trailing* its element, `trailing` after the last one only when broken (§2.3's magic comma), all of
-/// it bounded per `bounds` and flat-or-broken per `fit`.
+/// it bracketed per `bracketing` and flat-or-broken per `fit`.
 ///
 /// An argument list, a `{}` or `enum` body, a `for` header, a condition, an operator chain, a
 /// ternary's arms and a macro's parameters are the same construct: because the comma trails, the
@@ -310,20 +310,11 @@ fn build_container(
 }
 
 /// The author's `(…)` around a clause run: a `for` header, a condition, a parenthesized chain.
-const PARENS: Bracketing = Bracketing::Written {
+const PARENS: Bracketing<'static> = Bracketing::Written {
     open: "(",
     close: ")",
     pad: Pad::Tight,
 };
-
-/// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with each `seps[i]`
-/// trailing its element (`;` for a `for` header, ` &&` for a condition, ` |` for a bit chain).
-fn build_clause_group(segments: Vec<Doc>, seps: Vec<String>, fit: Fit) -> Doc {
-    if segments.is_empty() {
-        return Doc::text("()");
-    }
-    build_container(&PARENS, segments, seps, None, fit)
-}
 
 /// An assignment operator: `=` and the compound forms, but not a comparison.
 fn assigns(t: &Token) -> bool {
@@ -432,9 +423,7 @@ fn build_bounded_doc(
             );
             Bracketing::Enclosing
         }
-        Bound::Parens => Bracketing::OnBreak {
-            head: head.to_owned(),
-        },
+        Bound::Parens => Bracketing::OnBreak { head },
     };
     build_container(&bracketing, segments, seps, None, fit)
 }
@@ -500,15 +489,15 @@ fn segment_docs(segments: &[&[Token]]) -> Vec<Doc> {
 }
 
 /// Split `inner` on the depth-zero separators `is_sep` selects, build each segment as its own
-/// expression [`Doc`], and lay them out as a [`build_clause_group`] with `sep` trailing all but the
-/// last — the shared shape of a ternary chain, a `for` header, and a logical-operator condition.
+/// expression [`Doc`], and lay them out inside the author's parentheses with `sep` trailing all but
+/// the last — the shared shape of a ternary chain, a `for` header, and a logical-operator condition.
 fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
     let segments: Vec<&[Token]> = split_top_level(inner, is_sep);
     let seps = vec![sep.to_owned(); segments.len().saturating_sub(1)];
-    build_clause_group(segment_docs(&segments), seps, Fit::Measured)
+    build_container(&PARENS, segment_docs(&segments), seps, None, Fit::Measured)
 }
 
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
@@ -542,14 +531,16 @@ pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
         return None;
     }
     if let Some((segments, ops)) = split_chain(inner) {
-        return Some(build_clause_group(
+        return Some(build_container(
+            &PARENS,
             segment_docs(&segments),
             chain_seps(&ops),
+            None,
             Fit::Measured,
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_clause_group(arms, seps, fit))
+    Some(build_container(&PARENS, arms, seps, None, fit))
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -569,10 +560,16 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
     if let Some((segments, ops)) = split_chain(inner) {
-        return build_clause_group(segment_docs(&segments), chain_seps(&ops), Fit::Measured);
+        return build_container(
+            &PARENS,
+            segment_docs(&segments),
+            chain_seps(&ops),
+            None,
+            Fit::Measured,
+        );
     }
     if let Some((arms, seps, fit)) = ternary_layout(inner) {
-        return build_clause_group(arms, seps, fit);
+        return build_container(&PARENS, arms, seps, None, fit);
     }
     build_clause_doc(inner, |_| false, "")
 }
