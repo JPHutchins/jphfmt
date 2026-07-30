@@ -213,12 +213,20 @@ pub(super) fn closes_type_paren(toks: &[Token], close: usize) -> bool {
             && (is_type_group(inner) || ends_in_star())
             && prev_significant(toks, open).is_none_or(|before| {
                 let t = &toks[before];
-                // Only an operator, a bracket or `return` can precede a cast. An identifier before
-                // the `(` makes it an argument list — a call, or `sizeof`/`alignof`/`typeof`, which
-                // take a parenthesized type and yield a *value*: `sizeof(int) & mask` is binary.
-                !matches!(t.text, ")" | "]") && (t.kind != TokenKind::Ident || t.text == "return")
+                can_precede_cast(t)
             })
     })
+}
+
+/// Whether `t` can precede a cast's `(`. Only an operator, a bracket or `return` can: an identifier
+/// before the `(` makes it an argument list — a call, or `sizeof`/`alignof`/`typeof`, which take a
+/// parenthesized type and yield a *value*, so `sizeof(int) & mask` is binary.
+///
+/// Read here to recognize a cast and negated in `space_casts` to space one. They were two conditions
+/// in opposite polarity, and #64 is what their disagreement cost: the lexer has no keyword kind, so
+/// `return` is an `Ident`, and only one of the two carved it out.
+pub(super) fn can_precede_cast(t: &Token) -> bool {
+    !matches!(t.text, ")" | "]") && (t.kind != TokenKind::Ident || t.text == "return")
 }
 
 /// Index of the `(` matching the `)` at `close`, or `None` if unbalanced.
