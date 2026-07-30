@@ -5,9 +5,9 @@
 //! breaking idempotency).
 
 use super::tokens::{
-    closes_literal_type, heads_body, is_callee_ident, is_control_keyword, is_decl_specifier,
-    is_excluded_callee, is_qualifier, is_tag_keyword, is_trivia, is_type_context, is_type_group,
-    is_value_start, ternary_open_before,
+    can_precede_cast, closes_literal_type, heads_body, is_callee_ident, is_control_keyword,
+    is_decl_specifier, is_excluded_callee, is_qualifier, is_tag_keyword, is_trivia,
+    is_type_context, is_type_group, is_value_start, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -266,9 +266,13 @@ fn space_casts(pieces: &mut [Piece]) {
             continue;
         };
         let inner: Vec<Token> = pieces[open + 1..close].iter().map(|p| p.1).collect();
-        let prev_is_value = open > 0
-            && (pieces[open - 1].1.kind == TokenKind::Ident
-                || matches!(pieces[open - 1].1.text, ")" | "]"));
+        // `can_precede_cast` is the same rule `closes_type_paren` reads, negated. Sharing it is the
+        // point: #64 was the two drifting apart, and without the `return` carve-out a cast is spaced
+        // only once the layout's own bounding parenthesis has replaced `return` as the token before
+        // it — a verdict that changes between runs.
+        let prev_is_value = open
+            .checked_sub(1)
+            .is_some_and(|before| !can_precede_cast(&pieces[before].1));
         let followed_by_operand = pieces
             .get(close + 1)
             .is_some_and(|after| same_line(&after.0) && is_value_start(&after.1));
