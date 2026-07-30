@@ -648,7 +648,7 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// and trailing trivia). Such arguments would render differently on subsequent passes because
 /// `build_expr_doc` collapses the newline into a space, which can then be reinterpreted by
 /// `space_bit_fields`, breaking idempotency. When this is true the whole call is passed through
-/// verbatim instead of being laid out via [`build_call_body`].
+/// verbatim instead of being laid out via [`super::builders::build_call_body`].
 pub(super) fn has_middle_newline(inner: &[Token]) -> bool {
     let args = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",");
     for arg in args {
