@@ -691,6 +691,20 @@ fn every_statement_in_a_statement_expression_keeps_its_semicolon() {
     }
 }
 
+/// A comment-bearing group is never laid out, at any length. The builders take no comment guard of
+/// their own — `emit_tokens` refuses the construct first — and this pins that, because flattening a
+/// `//` comment would put the rest of the group on the comment's line and swallow it.
+#[test]
+fn a_comment_bearing_group_passes_through_however_long() {
+    for src in [
+        "int x = (aaaaaaaaaaaaaaaaaaaaaa /* c */ | bbbbbbbbbbbbbbbbbbbbbb | cccccccccccccccccccccc | dddddddddd);\n",
+        "int y = (aaaaaaaaaaaaaaaaaaaaaa // c\n\t| bbbbbbbbbbbbbbbbbbbbbb | cccccccccccccccccccccc | ddddddddddddddd);\n",
+        "int z = arr[aaaaaaaaaaaaaaaaaaaaaa /* c */ + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccc + ddddd];\n",
+    ] {
+        assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+}
+
 #[test]
 fn long_binary_chain_explodes_with_trailing_operators() {
     // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line

@@ -565,6 +565,11 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
 /// `is_boundable` refuses one a chain would have bounded. [`build_cond_doc`] deliberately does not
 /// take that refusal — it has a fallback layout to reach instead of a passthrough — which is why the
 /// guard lives here rather than in [`build_clause_contents`].
+///
+/// Takes no comment or balance guard of its own, and needs none: `super::structure::emit_tokens`
+/// refuses a comment-bearing or unbalanced construct before any of this module runs, so a span that
+/// reaches here has neither. That matters because flattening a `//` comment would put whatever
+/// followed it on the comment's line and swallow it — the layout must never see one.
 pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if spans_lines(inner) {
         return None;
