@@ -294,7 +294,11 @@ void copy_words(int * restrict dst, int const * restrict src, size_t n) {
 	accumulator ^= (a << 2) >> 1;
 	bool logic = ((a < b) && (a <= b)) || ((a > b) && (a >= b)) || ((a == b) && (a != b));
 	accumulator = logic ? a : b;
-	accumulator = a > b ? a : a < b ? b : 0; /* nested ternary */
+	accumulator = (
+		a > b ? a :
+		a < b ? b :
+		0
+	); /* nested ternary */
 	++accumulator;
 	accumulator--;
 

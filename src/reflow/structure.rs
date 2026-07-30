@@ -6,7 +6,7 @@
 //! reservation live alongside.
 
 use super::builders::{
-    build_brace_doc, build_call_body, build_call_doc, build_chain_doc, build_cond_doc,
+    Bound, build_brace_doc, build_call_body, build_call_doc, build_chain_doc, build_cond_doc,
     build_expr_doc, build_for_doc, build_paren_group,
 };
 use super::scope::scoped;
@@ -208,7 +208,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && !contains_comment(&toks[i..semi])
             && is_balanced(&toks[i..semi])
             && !toks[i..semi].iter().any(|s| s.text == "{")
-            && let Some(doc) = build_chain_doc(&toks[i..semi])
+            && let Some(doc) = build_chain_doc(&toks[i..semi], Bound::Parens)
         {
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the

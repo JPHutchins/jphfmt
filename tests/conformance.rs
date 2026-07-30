@@ -733,11 +733,73 @@ fn short_parenthesized_ternary_stays_flat() {
 }
 
 #[test]
-fn unparenthesized_ternary_is_left_alone() {
-    // §8.2: jphfmt does not insert parens; a bare ternary passes through
+fn short_unparenthesized_ternary_is_left_alone() {
+    assert_eq!(format("acc = a > b ? a : b;\n"), "acc = a > b ? a : b;\n");
+}
+
+#[test]
+fn nested_ternary_reads_as_a_map_however_short_it_is() {
+    // #59: two arms are one conditional and fit on a line; more are a `cond -> value` map, which
+    // reads as one only broken — so the width does not decide, and the parens come with the break.
     assert_eq!(
         format("acc = a > b ? a : a < b ? b : 0;\n"),
-        "acc = a > b ? a : a < b ? b : 0;\n"
+        "acc = (\n\ta > b ? a :\n\ta < b ? b :\n\t0\n);\n"
+    );
+}
+
+/// A depth-zero `:` that opens no arm gives a *single* conditional a third arm. Counting `?` rather
+/// than arms is what keeps these two on their line.
+#[test]
+fn a_colon_that_is_not_a_ternary_arm_forces_nothing() {
+    let bit_field = "struct s {\n\tint f : cond ? 1 : 2;\n};\n";
+    assert_eq!(format(bit_field), bit_field);
+    let labeled = "void f(void) {\ndone: p ? x() : y();\n}\n";
+    assert_eq!(
+        format(labeled),
+        "void f(void) {\n\tdone : p ? x() : y();\n}\n"
+    );
+}
+
+/// A chain's arms are bounded even where no head precedes them. Unbounded, a `{}` element's arms
+/// read as elements of the list, a call argument's as sibling arguments, and a statement's are not
+/// indented at all.
+#[test]
+fn a_chain_with_no_head_is_still_bounded() {
+    assert_eq!(
+        format("int f[] = {a ? b : c ? d : e, 1};\n"),
+        "int f[] = {\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n\t1,\n};\n"
+    );
+    assert_eq!(
+        format("h(x, a ? b : c ? d : e, y);\n"),
+        "h(\n\tx,\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n\ty\n);\n"
+    );
+    assert_eq!(
+        format("a ? b() : c ? d() : e();\n"),
+        "(\n\ta ? b() :\n\tc ? d() :\n\te()\n);\n"
+    );
+}
+
+/// A sole argument's span is the call's own parentheses, so it is already bounded. A sole `{}`
+/// element is not: its list writes a trailing comma on the break, which is what made unbounded arms
+/// read as elements in the first place.
+#[test]
+fn a_sole_call_argument_is_not_bounded_twice() {
+    assert_eq!(
+        format("h(a ? b : c ? d : e);\n"),
+        "h(\n\ta ? b :\n\tc ? d :\n\te\n);\n"
+    );
+    assert_eq!(
+        format("struct s w = {a ? b : c ? d : e};\n"),
+        "struct s w = {\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t),\n};\n"
+    );
+}
+
+#[test]
+fn nested_ternary_condition_breaks_at_its_arms() {
+    // The same span in the same parentheses as `x = (a ? b : c ? d : e)`, so it lays out the same.
+    assert_eq!(
+        format("if (a ? b : c ? d : e) {\n\tf();\n}\n"),
+        "if (\n\ta ? b :\n\tc ? d :\n\te\n) {\n\tf();\n}\n"
     );
 }
 

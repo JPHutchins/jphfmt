@@ -22,7 +22,8 @@ This is the Wadler/Prettier `group` combinator (fits-flat **or** fully-broken),
 without Prettier's `fill` mode. A trailing comma before `}` is "magic": it forces
 the list to explode (`{}` lists only). Binary operators and the ternary `:`
 **trail** the line, and a chain that breaks is bounded by parentheses (added if the
-author left them out). Comments are sacred — never reflowed, moved, or re-aligned.
+author left them out). A ternary *chain* — more than one `?` — breaks however short
+it is, so it reads as the map of conditions it is rather than as one line. Comments are sacred — never reflowed, moved, or re-aligned.
 
 ## Usage
 
@@ -49,7 +50,8 @@ ternary — never any other token.
 
 That last one is the only case where `jphfmt` writes a token you did not. It is
 allowed because it bounds a container that was already there implicitly: the
-operands after an assignment or a `return` are one expression, and parenthesizing
+operands after an assignment or a `return`, and the ternary arms of a `{}` element,
+a call argument or an expression statement, are one expression, and parenthesizing
 one expression changes nothing but the layout. A span holding a depth-zero `,` is a
 list rather than an expression — a second declarator, a comma expression — so it is
 left alone, overrunning the width, rather than changed.

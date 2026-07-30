@@ -617,6 +617,17 @@ pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
     has_top_level(inner, "?")
 }
 
+/// Whether more than one `?` appears at bracket depth zero — a ternary *chain*, `a ? b : c ? d : e`.
+/// Counting the `?` rather than the arms is what distinguishes one from a single ternary sharing its
+/// span with a depth-zero `:` that opens no arm: a bit-field's width (`int f : c ? 1 : 2`) or a
+/// labeled statement (`done: p ? x() : y()`) splits into three arms and is still one conditional.
+pub(super) fn is_ternary_chain(inner: &[Token]) -> bool {
+    at_depth_zero(inner)
+        .filter(|(_, t)| t.kind == TokenKind::Punct && t.text == "?")
+        .nth(1)
+        .is_some()
+}
+
 /// Whether any significant token's own text spans lines — an unterminated literal, which the lexer
 /// runs to the end of the file. A one-line width cannot describe it, so no layout may be decided from
 /// a span holding one.
@@ -766,6 +777,27 @@ mod tests {
             mk_punct("?"),
             mk_punct(")"),
             mk_punct("?"),
+        ]));
+    }
+
+    #[test]
+    fn is_ternary_chain_needs_two_questions() {
+        assert!(!is_ternary_chain(&[mk_punct("?"), mk_punct(":")]));
+        assert!(is_ternary_chain(&[
+            mk_punct("?"),
+            mk_punct(":"),
+            mk_punct("?"),
+            mk_punct(":"),
+        ]));
+    }
+
+    #[test]
+    fn is_ternary_chain_ignores_a_bracketed_question() {
+        assert!(!is_ternary_chain(&[
+            mk_punct("?"),
+            mk_punct("("),
+            mk_punct("?"),
+            mk_punct(")"),
         ]));
     }
 

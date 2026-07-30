@@ -4,9 +4,9 @@
 //! §2.2. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident, is_trivia,
-    match_brace, match_bracket, spans_lines, split_chain, split_designators, split_on_commas,
-    split_top_level,
+    has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident,
+    is_ternary_chain, is_trivia, match_brace, match_bracket, spans_lines, split_chain,
+    split_designators, split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -36,9 +36,17 @@ pub(super) fn build_call_body(inner: &[Token]) -> Doc {
         return Doc::text("()");
     }
     let last = args.len() - 1;
+    // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
+    // no pair of its own; with siblings, unbounded arms read as further arguments. A `{}` element is
+    // bounded either way, because its list writes a trailing comma on the break (#59).
+    let bound = if args.len() == 1 {
+        Bound::Enclosing
+    } else {
+        Bound::Parens
+    };
     let mut items = vec![Doc::SoftLine];
     for (idx, arg) in args.into_iter().enumerate() {
-        items.push(build_element_doc(arg));
+        items.push(build_element_doc(arg, bound));
         if idx < last {
             items.push(Doc::text(","));
             items.push(Doc::Line);
@@ -98,12 +106,12 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
 fn build_juxtaposed_doc(element: &[Token]) -> Doc {
     let items = split_designators(element);
     if items.len() < 2 {
-        return build_element_doc(element);
+        return build_element_doc(element, Bound::Parens);
     }
     Doc::concat(
         items
             .iter()
-            .map(|item| build_element_doc(item))
+            .map(|item| build_element_doc(item, Bound::Parens))
             .flat_map(|doc| [Doc::Line, doc])
             .skip(1)
             .collect::<Vec<_>>(),
@@ -138,9 +146,9 @@ fn call_head_before(toks: &[Token], open: usize) -> bool {
 /// parentheses when it breaks, because nothing else bounds it. Its operands go through
 /// [`build_expr_doc`], which never adds a token — a bounded operand would gain another pair as its
 /// indent deepened, one per pass.
-pub(super) fn build_element_doc(toks: &[Token]) -> Doc {
+pub(super) fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
     if is_balanced(toks)
-        && let Some(bounded) = build_chain_doc(toks)
+        && let Some(bounded) = build_chain_doc(toks, headless)
     {
         return bounded;
     }
@@ -245,13 +253,13 @@ fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
 
 /// A parenthesized clause group: flat `(a sep b sep c)` or one element per line, with each `seps[i]`
 /// trailing its element (`;` for a `for` header, ` &&` for a condition, ` |` for a bit chain).
-fn build_clause_group(segments: Vec<Doc>, seps: Vec<String>) -> Doc {
+fn build_clause_group(segments: Vec<Doc>, seps: Vec<String>, fit: Fit) -> Doc {
     if segments.is_empty() {
         return Doc::text("()");
     }
     let mut items = vec![Doc::SoftLine];
     items.extend(trailing_items(segments, seps));
-    Doc::group(Doc::concat([
+    fit.wrap(Doc::concat([
         Doc::text("("),
         Doc::nest(Doc::concat(items)),
         Doc::SoftLine,
@@ -307,37 +315,86 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     !has_top_level(operands, ",")
 }
 
-/// Lay `segments` out bounded by parentheses that appear only when they break. Those are the only
-/// tokens jphfmt writes, and they are legal precisely because the operands are already an implicit
-/// container: bounding it changes the layout and nothing else.
-fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Vec<String>) -> Doc {
-    // No head means the enclosing container's own brackets already bound these operands — a call
-    // argument, a `{}` element — so parentheses here would be a second pair around the same span.
-    if head.is_empty() {
-        return Doc::group(Doc::concat(trailing_items(segments, seps)));
+/// Whether a construct's layout is still the width's to decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    /// Flat if it fits, broken if it does not — §2.2's group.
+    Measured,
+    /// Broken whatever the width says, and reported as not fitting so its parents break too.
+    Forced,
+}
+
+impl Fit {
+    /// A ternary *chain* reads as the `cond -> value` map it is only when every arm has its own line,
+    /// so the width does not get to decide (#59). A single conditional is one thing, and a line is
+    /// where it reads best — including when a depth-zero `:` gives it a third arm it does not own
+    /// ([`is_ternary_chain`]).
+    fn of_ternary(inner: &[Token]) -> Self {
+        if is_ternary_chain(inner) {
+            Self::Forced
+        } else {
+            Self::Measured
+        }
     }
-    Doc::group(Doc::concat([
-        Doc::Text(format!("{head} ")),
-        Doc::IfBreak {
-            broken: "(".to_owned(),
-            flat: String::new(),
-        },
-        Doc::nest(Doc::concat(
-            std::iter::once(Doc::SoftLine)
-                .chain(trailing_items(segments, seps))
+
+    fn wrap(self, body: Doc) -> Doc {
+        match self {
+            Self::Measured => Doc::group(body),
+            Self::Forced => Doc::ForceBreak(Box::new(body)),
+        }
+    }
+}
+
+/// What bounds a run of operands once it breaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Bound {
+    /// The parentheses this pass writes on the break — the only tokens jphfmt adds, legal because the
+    /// operands are already an implicit container: bounding one changes the layout and nothing else.
+    Parens,
+    /// The enclosing container's own brackets. A binary chain that is a call argument or a `{}`
+    /// element adds nothing of its own, since its operands are that bracket's whole span.
+    Enclosing,
+}
+
+/// Lay `segments` out bounded per `bound`, after `head` when there is one.
+fn build_bounded_doc(
+    head: &str,
+    segments: Vec<Doc>,
+    seps: Vec<String>,
+    fit: Fit,
+    bound: Bound,
+) -> Doc {
+    let items = trailing_items(segments, seps);
+    match bound {
+        Bound::Enclosing => fit.wrap(Doc::concat(items)),
+        Bound::Parens => fit.wrap(Doc::concat(
+            (!head.is_empty())
+                .then(|| Doc::Text(format!("{head} ")))
+                .into_iter()
+                .chain([
+                    Doc::IfBreak {
+                        broken: "(".to_owned(),
+                        flat: String::new(),
+                    },
+                    Doc::nest(Doc::concat(
+                        std::iter::once(Doc::SoftLine)
+                            .chain(items)
+                            .collect::<Vec<_>>(),
+                    )),
+                    Doc::SoftLine,
+                    Doc::IfBreak {
+                        broken: ")".to_owned(),
+                        flat: String::new(),
+                    },
+                ])
                 .collect::<Vec<_>>(),
         )),
-        Doc::SoftLine,
-        Doc::IfBreak {
-            broken: ")".to_owned(),
-            flat: String::new(),
-        },
-    ]))
+    }
 }
 
 /// An operator chain or ternary with no parentheses of its own: flat, or one operand per line with the
 /// operator trailing, bounded by parentheses [`build_bounded_doc`] adds on the break.
-pub(super) fn build_chain_doc(toks: &[Token]) -> Option<Doc> {
+pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     let start = operand_span(toks);
     let operands = &toks[start..];
     if !is_boundable(toks, operands) {
@@ -345,16 +402,38 @@ pub(super) fn build_chain_doc(toks: &[Token]) -> Option<Doc> {
     }
     let head = render_segment(&toks[..start]);
     if let Some((segments, ops)) = split_chain(operands) {
+        // A head means these operands are only part of their container's span, so they are bounded;
+        // without one they *are* the span, and the container's brackets bound them already.
+        let bound = if head.is_empty() {
+            Bound::Enclosing
+        } else {
+            Bound::Parens
+        };
         return Some(build_bounded_doc(
             &head,
             segment_docs(&segments),
             chain_seps(&ops),
+            Fit::Measured,
+            bound,
         ));
     }
-    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
+    // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized. With a head
+    // the arms are always bounded; with none it is the position that decides, since unbounded arms
+    // read as elements of whatever list encloses them (#59).
     let arms = ternary_arms(operands)?;
     let seps = vec![" :".to_owned(); arms.len() - 1];
-    Some(build_bounded_doc(&head, segment_docs(&arms), seps))
+    let bound = if head.is_empty() {
+        headless
+    } else {
+        Bound::Parens
+    };
+    Some(build_bounded_doc(
+        &head,
+        segment_docs(&arms),
+        seps,
+        Fit::of_ternary(operands),
+        bound,
+    ))
 }
 
 /// The trailing separators for an operator chain: ` |`, ` &&`, and so on.
@@ -386,7 +465,7 @@ fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str)
     }
     let segments: Vec<&[Token]> = split_top_level(inner, is_sep);
     let seps = vec![sep.to_owned(); segments.len().saturating_sub(1)];
-    build_clause_group(segment_docs(&segments), seps)
+    build_clause_group(segment_docs(&segments), seps, Fit::Measured)
 }
 
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
@@ -423,11 +502,16 @@ pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
         return Some(build_clause_group(
             segment_docs(&segments),
             chain_seps(&ops),
+            Fit::Measured,
         ));
     }
     let arms = ternary_arms(inner)?;
     let seps = vec![" :".to_owned(); arms.len() - 1];
-    Some(build_clause_group(segment_docs(&arms), seps))
+    Some(build_clause_group(
+        segment_docs(&arms),
+        seps,
+        Fit::of_ternary(inner),
+    ))
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -438,14 +522,22 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
 /// An `if`/`while`/`switch` condition — split on its loosest-binding operator with that operator
 /// trailing (§2.7), so `a | b | c` breaks on the same rule `&&` does; a condition with no operator at
 /// depth zero explodes as a single indented element.
+///
+/// A ternary condition is the same span in the same parentheses [`build_paren_group`] would lay out,
+/// so it splits at its arms here too — otherwise `while (a ? b : c ? d : e)` and `x = (a ? b : c ? d
+/// : e)` would disagree about a construct that is bracket-for-bracket identical.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    match split_chain(inner) {
-        Some((segments, ops)) => build_clause_group(segment_docs(&segments), chain_seps(&ops)),
-        None => build_clause_doc(inner, |_| false, ""),
+    if let Some((segments, ops)) = split_chain(inner) {
+        return build_clause_group(segment_docs(&segments), chain_seps(&ops), Fit::Measured);
     }
+    if let Some(arms) = ternary_arms(inner) {
+        let seps = vec![" :".to_owned(); arms.len() - 1];
+        return build_clause_group(segment_docs(&arms), seps, Fit::of_ternary(inner));
+    }
+    build_clause_doc(inner, |_| false, "")
 }
 
 #[cfg(test)]
