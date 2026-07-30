@@ -79,7 +79,18 @@ release = Sequential(
 
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
-py_types = Task("uvx ty check {paths}", paths="release.py")
+PY_SCRIPTS = ("release.py", ".github/workflows/mutants_report.py")
+
+
+def py_scripts(changed: tuple[str, ...]) -> tuple[str, ...]:
+	"""`paths` takes a prefix or a scope function, never a list of files."""
+	return tuple(c for c in changed if c in PY_SCRIPTS) or PY_SCRIPTS
+
+
+py_types = Task("uvx ty check {paths}", paths=py_scripts)
+# 3.14 is what each script's own header asks for; a bare `python -m doctest` would run whatever uv
+# resolves for a project with no pyproject.toml.
+py_doctest = Task("uv run --python 3.14 python -m doctest {paths}", paths=py_scripts)
 # Not `camas --check` (JPHutchins/camas#277); the header above exists only to make this work.
 task_types = Task("uv run tasks.py --check", when="tasks.py")
 
@@ -88,7 +99,7 @@ rust_check_fast = Parallel(rust_fmt_check_fast, clippy_fast, test_fast, doc_fast
 rust_fix_fast = Sequential(rust_fmt_fix, clippy_fix_fast)
 fix_fast = Parallel(rust_fix_fast, vscode)
 rust = Sequential(rust_fix, rust_check)
-cross = Parallel(nix_fmt_check, typos, version_check, py_types, task_types)
+cross = Parallel(nix_fmt_check, typos, version_check, py_types, py_doctest, task_types)
 
 check = Parallel(rust_check, cross, vscode)
 check_fast = Parallel(rust_check_fast, cross, vscode)
