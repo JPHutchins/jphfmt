@@ -648,6 +648,36 @@ fn statement_expression_in_code_block_indents() {
     assert_eq!(format(src), expected);
 }
 
+/// The statement-expression emitter consumed more than it rendered, in two ways, and each deleted
+/// source outright: it reported everything up to `)` while rendering only as far as `}`, and it wrote
+/// one `;` per surviving statement after dropping the empty ones. Passthrough instead — §6 prefers it
+/// to guessing, and no relayout may lose what the author wrote.
+#[test]
+fn a_statement_expression_that_cannot_be_laid_out_keeps_every_token() {
+    for src in [
+        // Something between `}` and `)`, which the emitter consumed without rendering.
+        "({x}y)",
+        "({\"\"}\"\")",
+        "({ int t = 1; t; }/*c*/)",
+        // The `}` is outside the `)` — `match_brace` and `match_bracket` disagree about the nesting.
+        "({)}",
+        // An empty statement: two `;` go in, and only one would have come back out.
+        "({;,;})",
+        "({x;;y;})",
+        // Canonical bodies, which must still lay out rather than fall into the passthrough above.
+        "({ int t = 1; t; })",
+        "({x;})",
+    ] {
+        let out = format(src);
+        assert_eq!(
+            significant(&out),
+            significant(src),
+            "input {src:?} formatted to {out:?}"
+        );
+    }
+    assert_eq!(format("({x;})"), "({\n\tx;\n})\n", "a body still lays out");
+}
+
 #[test]
 fn long_binary_chain_explodes_with_trailing_operators() {
     // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line

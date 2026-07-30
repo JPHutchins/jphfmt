@@ -3,11 +3,50 @@
 
 use jphfmt::{format, format_with_width};
 use proptest::prelude::*;
+use std::collections::HashMap;
 
 /// Strings of C-relevant characters (brackets, operators, comments, strings, whitespace), which
 /// exercise the structurer far more than uniform random bytes would.
 fn c_ish() -> impl Strategy<Value = String> {
     proptest::string::string_regex("[a-zA-Z0-9_(){}\\[\\];,*=<>?:&|+/.# \"'\\n\\t]{0,200}").unwrap()
+}
+
+/// Multi-character pieces of C — the tokens a handler dispatches on, and the bracket pairs that open
+/// and close a construct. Character-level generation reaches a shape like `({x}y)` only by spelling
+/// six specific characters in order, which it effectively never does; assembling from pieces reaches
+/// it constantly, so the structurer's handler boundaries actually get probed.
+const PIECES: &[&str] = &[
+    "({", "})", "{", "}", "(", ")", "[", "]", "[[", "]]", ";", ",", "x", "0", "\"\"", "''", "=",
+    "+", "?", ":", " ", "\n", "\t", "\\\n", "f", "if", "for", "while", "switch", "case", "return",
+    "sizeof", "#define", "/*c*/", "//c\n", "*", "&", "|", "->", ".", "<<", "&&", "||",
+];
+
+fn pieced() -> impl Strategy<Value = String> {
+    proptest::collection::vec(proptest::sample::select(PIECES), 1..24)
+        .prop_map(|pieces| pieces.concat())
+}
+
+/// How many times each character that formatting must not discard occurs.
+///
+/// Whitespace and a `\` continuation are the layout's to place. So is a `,`: §2.3's magic trailing
+/// comma means the layout writes them, and an all-empty `{,}` collapses to `{}`. Everything else is
+/// the author's, and no amount of relayout may drop one.
+fn kept(s: &str) -> HashMap<char, usize> {
+    s.chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\'))
+        .fold(HashMap::new(), |mut counts, c| {
+            *counts.entry(c).or_default() += 1;
+            counts
+        })
+}
+
+/// Whichever of `before`'s characters the output holds fewer of, if any.
+fn dropped(before: &str, after: &str) -> Option<(char, usize, usize)> {
+    let out = kept(after);
+    kept(before).into_iter().find_map(|(c, n)| {
+        let m = out.get(&c).copied().unwrap_or(0);
+        (m < n).then_some((c, n, m))
+    })
 }
 
 proptest! {
@@ -26,5 +65,22 @@ proptest! {
     fn idempotent_across_widths(s in c_ish(), width in 1usize..=120) {
         let once = format_with_width(&s, width);
         prop_assert_eq!(format_with_width(&once, width), once);
+    }
+
+    /// Formatting is a relayout, so it may add a separator the layout owns but must never discard
+    /// what the author wrote. A handler that reports more tokens consumed than it renders deletes
+    /// source silently, which no idempotency check catches: the truncated output is a fixpoint.
+    #[test]
+    fn formatting_never_drops_what_the_author_wrote(s in prop_oneof![c_ish(), pieced()]) {
+        let once = format(&s);
+        if let Some((c, had, has)) = dropped(&s, &once) {
+            prop_assert!(false, "{c:?} appears {had}x in input, {has}x in output: {s:?} -> {once:?}");
+        }
+    }
+
+    #[test]
+    fn pieced_input_is_idempotent(s in pieced()) {
+        let once = format(&s);
+        prop_assert_eq!(format(&once), once);
     }
 }
