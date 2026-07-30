@@ -46,9 +46,15 @@ jobs:
         continue-on-error: true
         run: cargo mutants --jobs 8
 
+      # `cargo mutants` also exits non-zero when it cannot build at all, and then there is no
+      # outcomes.json — say so, rather than letting the report fail with a file-not-found.
       - id: report
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          if [ ! -f mutants.out/outcomes.json ]; then
+            echo "::error::cargo mutants wrote no outcomes.json — it failed before testing a mutant; see the step above"
+            exit 1
+          fi
           uv run .github/workflows/mutants_report.py report mutants.out/outcomes.json \
             "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

@@ -52,6 +52,15 @@ def integer(value: object) -> int | None:
 	return value if type(value) is int else None
 
 
+def listed(value: object) -> list[Any]:
+	"""`{"outcomes": null}` is valid JSON and not iterable.
+
+	>>> listed([1]), listed(None), listed("xs")
+	([1], [], [])
+	"""
+	return value if isinstance(value, list) else []
+
+
 def loaded(path: Path) -> Json:
 	try:
 		value = json.loads(path.read_bytes())
@@ -115,7 +124,7 @@ def survivor(mutant: Json, name: str) -> Survivor | None:
 def survivors(outcomes: Json) -> tuple[Survivor, ...]:
 	scenarios = (
 		outcome.get("scenario")
-		for outcome in outcomes.get("outcomes", ())
+		for outcome in listed(outcomes.get("outcomes"))
 		if isinstance(outcome, dict) and outcome.get("summary") == "MissedMutant"
 	)
 	mutants = (scenario.get("Mutant") for scenario in scenarios if isinstance(scenario, dict))
@@ -213,12 +222,19 @@ def title(tally: Counts, sha: str) -> str:
 	return f"Mutation testing: {tally.missed} surviving mutants at {sha[:7]}"
 
 
-def body(outcomes: Json, repo: str, sha: str, run: str) -> str:
-	tally, found = counts(outcomes), survivors(outcomes)
+def body(outcomes: Json, tally: Counts, repo: str, sha: str, run: str) -> str:
+	found = survivors(outcomes)
 	commit = f"[`{sha[:7]}`](https://github.com/{repo}/tree/{sha})"
 	head = (f"## Mutation testing — {commit}", "", summary_table(tally), "")
 	if not found:
-		return "\n".join((*head, "Every mutant was caught. Nothing to triage.")) + "\n"
+		claim = (
+			"Every mutant was caught. Nothing to triage."
+			if not tally.missed
+			else f"The summary counts {tally.missed} missed, and no `MissedMutant` entry was found "
+			"for any of them — read the artifact rather than this, and check whether "
+			"cargo-mutants' output format moved."
+		)
+		return "\n".join((*head, claim)) + "\n"
 	preamble = (
 		*head,
 		f"{len(found)} mutants survived the suite — the tests pass with the change applied, so "
@@ -243,23 +259,25 @@ def body(outcomes: Json, repo: str, sha: str, run: str) -> str:
 	return "\n".join((*preamble, shown, *omitted, footer))
 
 
-def tested(path: Path) -> Json:
+def tested(path: Path) -> tuple[Json, Counts]:
 	"""A run that tested nothing is a format change or an aborted run, not a clean sweep."""
 	data = loaded(path)
-	if not counts(data).tested:
+	tally = counts(data)
+	if not tally.tested:
 		raise SystemExit(f"{path}: reports no mutants tested")
-	return data
+	return data, tally
 
 
 def main(argv: tuple[str, ...]) -> int:
 	match argv:
 		case ("body", outcomes, repo, sha, run):
-			print(body(tested(Path(outcomes)), repo, sha, run), end="")
+			data, tally = tested(Path(outcomes))
+			print(body(data, tally, repo, sha, run), end="")
 		case ("report", outcomes, repo, sha, run, out):
-			data = tested(Path(outcomes))
-			Path(out).write_text(body(data, repo, sha, run), encoding="utf-8")
-			print(f"missed={counts(data).missed}")
-			print(f"title={title(counts(data), sha)}")
+			data, tally = tested(Path(outcomes))
+			Path(out).write_text(body(data, tally, repo, sha, run), encoding="utf-8")
+			print(f"missed={tally.missed}")
+			print(f"title={title(tally, sha)}")
 		case _:
 			print(__doc__)
 			print("usage: mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE")
