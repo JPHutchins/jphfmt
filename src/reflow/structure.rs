@@ -6,8 +6,8 @@
 //! reservation live alongside.
 
 use super::builders::{
-    Bound, Fit, build_brace_doc, build_call_body, build_chain_doc, build_cond_doc, build_expr_doc,
-    build_for_doc, build_index_group, build_paren_group,
+    BRACKETS, Bound, Fit, PARENS, build_brace_doc, build_bracketed_group, build_call_body,
+    build_chain_doc, build_cond_doc, build_expr_doc, build_for_doc,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -17,7 +17,7 @@ use super::tokens::{
     match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
     respaced_when_joined, split_brace_line_comment, split_top_level, statement_end,
 };
-use crate::doc::{TAB_WIDTH, display_width, render};
+use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
@@ -28,6 +28,15 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
     let mut depth = 0usize;
     emit_tokens(toks, &mut out, &mut col, &mut depth, width);
     out
+}
+
+/// Render `doc` for the line it is landing on and emit it. `reserved` is the width of what must still
+/// fit after it: the tokens the construct does not own but shares its last line with. Every handler
+/// that lays a construct out goes through here, so none of them can drift apart on how they measure.
+fn emit_doc(doc: &Doc, reserved: usize, out: &mut String, col: &mut usize, width: usize) {
+    let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+    let rendered = render(doc, width.saturating_sub(reserved), *col, base_level);
+    emit_str(out, col, &rendered);
 }
 
 /// Walk `toks`, appending to `out` so an enclosing construct's indentation is already in view when a
@@ -68,10 +77,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             } else {
                 build_cond_doc(inner)
             };
-            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-            let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
-            emit_str(out, col, &rendered);
+            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
             i = close + 1;
             continue;
         }
@@ -94,10 +100,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             if !contains_comment(inner) && is_balanced(inner) && !has_middle_newline(inner) {
                 emit_str(out, col, t.text);
                 let doc = build_call_body(inner, Fit::Measured);
-                let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-                let reserved = trailing_reserved(toks, close + 1);
-                let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
-                emit_str(out, col, &rendered);
+                emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
                 i = close + 1;
@@ -184,12 +187,9 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && !(i > 0
                 && toks[i - 1].kind == TokenKind::Ident
                 && !is_excluded_callee(toks[i - 1].text))
-            && let Some(doc) = build_paren_group(&toks[i + 1..close])
+            && let Some(doc) = build_bracketed_group(&toks[i + 1..close], &PARENS)
         {
-            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-            let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
-            emit_str(out, col, &rendered);
+            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
             i = close + 1;
             continue;
         }
@@ -202,12 +202,9 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(close) = match_bracket(toks, i)
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
-            && let Some(doc) = build_index_group(&toks[i + 1..close])
+            && let Some(doc) = build_bracketed_group(&toks[i + 1..close], &BRACKETS)
         {
-            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-            let reserved = trailing_reserved(toks, close + 1);
-            let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
-            emit_str(out, col, &rendered);
+            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
             i = close + 1;
             continue;
         }
@@ -228,11 +225,9 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && !toks[i..semi].iter().any(|s| s.text == "{")
             && let Some(doc) = build_chain_doc(&toks[i..semi], Bound::Parens)
         {
-            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the
             // line after it, which this pass's own whitespace changes shift — an unstable measure.
-            let rendered = render(&doc, width.saturating_sub(1), *col, base_level);
-            emit_str(out, col, &rendered);
+            emit_doc(&doc, 1, out, col, width);
             i = semi;
             continue;
         }
@@ -537,11 +532,8 @@ fn emit_brace(
         }
         return close + 1;
     }
-    let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-    let reserved = trailing_reserved(toks, close + 1);
     let doc = build_brace_doc(inner, padded);
-    let rendered = render(&doc, width.saturating_sub(reserved), *col, base_level);
-    emit_str(out, col, &rendered);
+    emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
     close + 1
 }
 

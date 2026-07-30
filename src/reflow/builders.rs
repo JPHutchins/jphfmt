@@ -177,7 +177,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
         } else if t.kind == TokenKind::Punct
             && t.text == "["
             && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_index_group(&toks[j + 1..close])
+            && let Some(group) = build_bracketed_group(&toks[j + 1..close], &BRACKETS)
         {
             if pending_space && !text.is_empty() {
                 text.push(' ');
@@ -191,7 +191,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
         } else if t.kind == TokenKind::Punct
             && t.text == "("
             && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_paren_group(&toks[j + 1..close])
+            && let Some(group) = build_bracketed_group(&toks[j + 1..close], &PARENS)
         {
             if pending_space && !text.is_empty() {
                 text.push(' ');
@@ -238,7 +238,7 @@ fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
 
 /// A bracket's inner space in the flat form: `{1, 2}` and `f(a, b)` against `enum { A, B }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Pad {
+pub(super) enum Pad {
     Tight,
     Spaced,
 }
@@ -255,7 +255,7 @@ impl Pad {
 /// How a container is bracketed — the only thing that differs between one construct and another,
 /// beyond its separators.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Bracketing<'a> {
+pub(super) enum Bracketing<'a> {
     /// The enclosing container's brackets: elements that are its whole span add nothing of their own,
     /// and take no indent of their own either, because that container already indented them.
     Enclosing,
@@ -325,14 +325,14 @@ fn build_container(
 }
 
 /// The author's `(…)` around a clause run: a `for` header, a condition, a parenthesized chain.
-const PARENS: Bracketing<'static> = Bracketing::Written {
+pub(super) const PARENS: Bracketing<'static> = Bracketing::Written {
     open: "(",
     close: ")",
     pad: Pad::Tight,
 };
 
 /// The author's `[…]` around an index.
-const BRACKETS: Bracketing<'static> = Bracketing::Written {
+pub(super) const BRACKETS: Bracketing<'static> = Bracketing::Written {
     open: "[",
     close: "]",
     pad: Pad::Tight,
@@ -562,24 +562,20 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
     Some(build_container(bracketing, arms, seps, None, fit))
 }
 
-pub(super) fn build_paren_group(inner: &[Token]) -> Option<Doc> {
-    // The author's parentheses do not exempt the span from the width model: a literal running to the
-    // end of the file has no one-line width, so every group holding one passes through, exactly as
-    // `is_boundable` refuses one a chain would have bounded.
+/// A bracketed group the author wrote — `(…)` around an expression, `[…]` around an index. The
+/// subscript is the same container an argument list is, in a different pair, so `arr[a ? b : c]` needs
+/// no bound of its own and breaks on the same rule (#77).
+///
+/// The author's brackets do not exempt the span from the width model: a literal running to the end of
+/// the file has no one-line width, so every group holding one passes through, exactly as
+/// `is_boundable` refuses one a chain would have bounded. [`build_cond_doc`] deliberately does not
+/// take that refusal — it has a fallback layout to reach instead of a passthrough — which is why the
+/// guard lives here rather than in [`build_clause_contents`].
+pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if spans_lines(inner) {
         return None;
     }
-    build_clause_contents(inner, &PARENS)
-}
-
-/// A `[…]` index's contents. The subscript is the same container an argument list is, in the pair the
-/// author already wrote, so `arr[a ? b : c]` needs no bound of its own and breaks on the same rule
-/// (#77).
-pub(super) fn build_index_group(inner: &[Token]) -> Option<Doc> {
-    if spans_lines(inner) {
-        return None;
-    }
-    build_clause_contents(inner, &BRACKETS)
+    build_clause_contents(inner, bracketing)
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -591,9 +587,9 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
 /// trailing (§2.7), so `a | b | c` breaks on the same rule `&&` does; a condition with no operator at
 /// depth zero explodes as a single indented element.
 ///
-/// A ternary condition is the same span in the same parentheses [`build_paren_group`] would lay out,
-/// so it splits at its arms here too — otherwise `while (a ? b : c ? d : e)` and `x = (a ? b : c ? d
-/// : e)` would disagree about a construct that is bracket-for-bracket identical.
+/// A ternary condition is the same span in the same parentheses [`build_bracketed_group`] would lay
+/// out, so it splits at its arms here too — otherwise `while (a ? b : c ? d : e)` and
+/// `x = (a ? b : c ? d : e)` would disagree about a construct that is bracket-for-bracket identical.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
