@@ -9,14 +9,16 @@ jobs:
   mutants:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
       - uses: actions/checkout@v7
 
+      # The report doubles as the already-analyzed sentinel, so it is written survivors or none.
       - uses: actions/cache@v4
         id: cache
         with:
-          path: mutants-report.txt
+          path: mutants-report.md
           key: mutants-${{ github.sha }}
 
       - if: steps.cache.outputs.cache-hit == 'true'
@@ -30,24 +32,48 @@ jobs:
         with:
           tool: cargo-mutants
 
-      # Unguarded: a sub-millisecond command with no side effects, and an output the issue title
-      # reads. Gating it would make an empty title the failure mode if the guards ever diverged.
-      - id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >>"$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@v6
+        if: steps.cache.outputs.cache-hit != 'true'
 
-      # `set -o pipefail` is what makes this step's outcome cargo-mutants' rather than `tee`'s. The
-      # default shell is `bash -e {0}`, which has no pipefail, so the step passed on every run and
-      # the issue below was never filed: 1234 mutants, 200 missed, reported as success.
+      # Surviving mutants are a non-zero exit, which is a finding rather than a failure: what the
+      # steps below gate on is the count the report reads, not this step's outcome.
       - id: mutants
         if: steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
-        run: |
-          set -o pipefail
-          cargo mutants --jobs 8 2>&1 | tee mutants-report.txt
+        run: cargo mutants --jobs 8
 
-      - if: steps.cache.outputs.cache-hit != 'true' && steps.mutants.outcome == 'failure'
+      - id: report
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          uv run .github/workflows/mutants_report.py body mutants.out/outcomes.json "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > mutants-report.md
+          {
+            echo "missed=$(uv run .github/workflows/mutants_report.py missed mutants.out/outcomes.json)"
+            echo "title=$(uv run .github/workflows/mutants_report.py title mutants.out/outcomes.json "$GITHUB_SHA")"
+          } >>"$GITHUB_OUTPUT"
+
+      # Every survivor's log and diff, for the ones the issue body has no room to spell out.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-out
+          path: mutants.out/
+
+      # One rolling issue, rewritten each run: a nightly on a moving `main` would otherwise open one
+      # per commit. An empty number means there is none open, and the action creates it.
+      - id: rolling
+        if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list --label mutation-testing --state open --limit 1 \
+            --json number --jq '.[0].number // ""')
+          echo "number=$number" >>"$GITHUB_OUTPUT"
+
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: 'Mutation testing: surviving mutants ${{ steps.sha.outputs.short }}'
-          content-filepath: mutants-report.txt
+          issue-number: ${{ steps.rolling.outputs.number }}
+          title: ${{ steps.report.outputs.title }}
+          content-filepath: mutants-report.md
           labels: 'mutation-testing'
