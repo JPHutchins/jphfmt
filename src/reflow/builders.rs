@@ -115,7 +115,7 @@ fn call_head_before(toks: &[Token], open: usize) -> bool {
 /// parentheses when it breaks, because nothing else bounds it. Its operands go through
 /// [`build_expr_doc`], which never adds a token — a bounded operand would gain another pair as its
 /// indent deepened, one per pass.
-pub(super) fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
+fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
     if is_balanced(toks)
         && let Some(bounded) = build_chain_doc(toks, headless)
     {
@@ -575,13 +575,25 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";");
+    let clauses = statement_segments(inner);
     let seps = vec![";".to_owned(); clauses.len().saturating_sub(1)];
-    let docs = clauses
-        .iter()
-        .map(|c| build_element_doc(c, Bound::Parens))
-        .collect();
+    let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
     build_container(&PARENS, docs, seps, None, Fit::Measured)
+}
+
+/// Split a `;`-separated run into its elements — a `for` header's clauses, or a statement-expression
+/// body's statements. The two constructs are the same shape and `super::structure::format_stmt_expr`
+/// splits the other one, so the predicate lives here rather than once in each.
+pub(super) fn statement_segments<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [Token<'src>]> {
+    split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";")
+}
+
+/// One element of a `;`-separated run. Bounded, because it has siblings: unbounded, a chain's operands
+/// would sit at the element indent and read as further clauses or statements, exactly as they would
+/// read as further arguments in a call (#59, #63, #77). Both callers go through here so that decision
+/// has one home and cannot drift between them.
+pub(super) fn build_statement_element(toks: &[Token]) -> Doc {
+    build_element_doc(toks, Bound::Parens)
 }
 
 /// An `if`/`while`/`switch` condition — split on its loosest-binding operator with that operator
