@@ -1067,6 +1067,10 @@ fn a_compound_literal_is_never_called_by_what_follows_it() {
         "while (c) (vec2_t){1, 2}.x + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + ccccccccccccccccc;\n",
         // A comment between the type and the body, which trivia-only skipping would stop at.
         "int u = (int[]) /* c */ {1, 2}[0] + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccc;\n",
+        // An anonymous type: its own braces come first, and they spell a `{` no type-token test accepts
+        // (#95). The tag keyword opening the group is what says it is a type.
+        "int v = (struct { int x; }){1}.x + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccccc;\n",
+        "int w = (union { int a; float b; }){.a = 2}.a + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb;\n",
     ] {
         for width in 1..=120 {
             let once = jphfmt::format_with_width(src, width);
@@ -1081,6 +1085,55 @@ fn a_compound_literal_is_never_called_by_what_follows_it() {
             );
         }
     }
+}
+
+/// #95: the type of an anonymous compound literal is a definition, not a list. Laid out as one, its
+/// members gained §2.3's magic comma when the line broke — `{ int x;, }` — so the output did not compile
+/// at *any* width, before or after the call-on-the-literal half of this was fixed.
+///
+/// Members are `;`-terminated, so there is no comma list to lay out and the body is written as the author
+/// wrote it. Only the literal's own `{…}` is a container.
+#[test]
+fn an_anonymous_literal_type_is_a_definition_and_not_a_list() {
+    // The commented spelling is the same definition, and a walk that stopped at the comment read it as a
+    // list — `prev_nontrivia` skips whitespace, not comments.
+    for (src, body) in [
+        (
+            "int v = (struct { int x; }){1}.x + aaaa;\n",
+            "(struct { int x; }){",
+        ),
+        (
+            "int w = (struct /* c */ { int x; }){1}.x + aaaa;\n",
+            "(struct /* c */ { int x; }){",
+        ),
+        (
+            "int u = (union { int a; float b; }){.a = 2}.a + aaaa;\n",
+            "(union { int a; float b; }){",
+        ),
+    ] {
+        for width in 1..=120 {
+            let once = jphfmt::format_with_width(src, width);
+            assert!(
+                once.contains(body),
+                "width {width}: the member list is the author's: {once:?}"
+            );
+            assert!(
+                !once.contains(";,"),
+                "width {width}: a magic comma in a member list: {once:?}"
+            );
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "width {width}"
+            );
+        }
+    }
+    let src = "int v = (struct { int x; }){1}.x + aaaa;\n";
+    // The literal's own body is still a container, and still explodes when it must.
+    assert_eq!(
+        jphfmt::format_with_width(src, 20),
+        "int v = (struct { int x; }){\n\t1,\n}.x + aaaa;\n"
+    );
 }
 
 /// A sole argument's span is the call's own parentheses, so it is already bounded. A sole `{}`

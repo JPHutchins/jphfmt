@@ -14,7 +14,7 @@ use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
     enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
     is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia, prev_significant,
     respaced_when_joined, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
@@ -155,11 +155,13 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             continue;
         }
 
-        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
+        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression and
+        // not a `struct`/`union` definition's own body.
         if in_init
             && t.kind == TokenKind::Punct
             && t.text == "{"
             && last_nonspace_char(out) != Some('(')
+            && !opens_definition_body(toks, i)
             && match_brace(toks, i).is_some()
         {
             i = emit_brace(toks, i, false, out, col, width);
@@ -238,6 +240,21 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         emit_str(out, col, t.text);
         i += 1;
     }
+}
+
+/// Whether the `{` at `open` opens a `struct`/`union` definition's member list — the body of the type an
+/// anonymous compound literal names, `(struct { int x; }){1}`. Its members are `;`-terminated rather than
+/// `,`-separated, so it is not the container [`build_brace_doc`] lays out: exploding it wrote §2.3's magic
+/// comma into a member list, `{ int x;, }`, which does not compile (#95). Emitted verbatim instead, which
+/// keeps the author's spacing too.
+///
+/// Only reachable inside an `= … ;` region — a definition elsewhere never enters the initializer handler.
+/// An `enum` body *is* a comma list, and has its own handler ([`enum_body_brace`]).
+fn opens_definition_body(toks: &[Token], open: usize) -> bool {
+    let tags = |k: usize| matches!(toks[k].text, "struct" | "union");
+    prev_significant(toks, open).is_some_and(|k| {
+        tags(k) || (toks[k].kind == TokenKind::Ident && prev_significant(toks, k).is_some_and(tags))
+    })
 }
 
 /// Whether the token at `i` opens a statement: nothing precedes it, or what does ended the previous

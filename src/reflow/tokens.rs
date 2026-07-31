@@ -220,14 +220,23 @@ pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
     })
 }
 
-/// Whether `inner` names the type of a compound literal: [`is_type_group`], or a lone identifier, which
-/// here can only be a typedef name — `(x){…}` is an expression in no C, so a single parenthesized name
-/// before a `{` is a type. A cast cannot assume as much, which is why [`closes_type_paren`] keeps the
-/// stricter test: `(count) & mask` stays binary.
+/// Whether `inner` names the type of a compound literal: [`is_type_group`], a lone identifier, or a tag
+/// keyword opening the group.
+///
+/// Both relaxations are provable from the *position*, which is what makes them safe. `(x){…}` is an
+/// expression in no C, so a single parenthesized name before a `{` is a typedef name. And nothing but a
+/// type puts `struct`, `union` or `enum` first in a parenthesized group, so an anonymous
+/// `(struct { int x; }){…}` needs no reading of the body it spells out — which [`is_type_group`] refuses,
+/// since a `{` is not a token a type is made of (#95).
+///
+/// A cast cannot assume as much, which is why [`closes_type_paren`] keeps the stricter test:
+/// `(count) & mask` stays binary.
 fn names_literal_type(inner: &[Token]) -> bool {
-    is_type_group(inner) || {
-        let mut named = inner.iter().filter(|t| !is_trivia(t));
-        named.next().is_some_and(|t| is_callee_ident(t)) && named.next().is_none()
+    let mut named = inner.iter().filter(|t| !is_trivia(t));
+    match named.next() {
+        Some(first) if is_tag_keyword(first.text) => true,
+        Some(first) => (is_callee_ident(first) && named.next().is_none()) || is_type_group(inner),
+        None => false,
     }
 }
 
@@ -941,6 +950,23 @@ mod tests {
     #[test]
     fn match_brace_unmatched_open() {
         assert_eq!(match_brace(&[mk_punct("{")], 0), None);
+    }
+
+    #[test]
+    fn closes_block_reads_an_anonymous_literal_type() {
+        use crate::lexer::tokenize;
+        // The *last* `}`, which is the literal's: an anonymous type puts its own pair first, and those
+        // spell a `{` that no type-token test accepts. The tag keyword opening the group says it is a
+        // type without the body being read at all (#95).
+        for src in [
+            "int v = (struct { int x; }){1}",
+            "int w = (union { int a; float b; }){.a = 2}",
+            "int u = (enum { A }){A}",
+        ] {
+            let toks = tokenize(src);
+            let close = toks.iter().rposition(|t| t.text == "}").unwrap();
+            assert!(!closes_block(&toks, close), "{src}");
+        }
     }
 
     #[test]
