@@ -460,30 +460,22 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
     define_body_layout(body, prefix_col, width.saturating_sub(CONTINUATION_WIDTH))
 }
 
+/// A body the walk can lay out is one whose bracket closes it: a call's `(` at index 1, or a group
+/// the author wrote at index 0 — `#define M(x) ((x) ? a : b ? c : d)`, an index, and a statement
+/// expression too, since `match_bracket` counts the parentheses and the `{` is only what the group
+/// holds ([`emit_tokens`] has the handler for it). One test rather than one per shape, because a
+/// bracket is a container like any other (#77) and the walk already lays one out; a body is passed
+/// through only because nothing here claimed it.
+///
+/// **Whole-body**, in every shape. A group with anything beside it would put the rest on the line the
+/// group's own break ends, which is a layout this has no measure for — and claiming such a body from
+/// its first two tokens while rendering only as far as the group is how `({ ... }) + 1` lost its
+/// `+ 1` (#104).
 fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
-    if contains_comment(body) {
-        return None;
-    }
-    if is_call_head(body, 0) && match_bracket(body, 1) == Some(body.len() - 1) {
-        return Some(structure(body, prefix_col, width));
-    }
-    // A body that is entirely one group the author wrote: `#define M(x) ((x) ? a : b ? c : d)`, and a
-    // statement expression `({ ... })` too — `match_bracket` counts parentheses, so the `{` is only
-    // what this group holds, and [`emit_tokens`] has the handler for it. Those parentheses are a
-    // container like any other (#77), and the walk already lays one out — a body is only passed
-    // through because nothing here claimed it.
-    //
-    // Whole-body, because a group with anything beside it would put the rest on the line the group's
-    // own break ends, which is a layout this has no measure for. Claiming such a body from its first
-    // two tokens and rendering only as far as the group is how `({ ... }) + 1` used to lose its
-    // `+ 1` (#104).
-    if body[0].kind == TokenKind::Punct
-        && body[0].text == "("
-        && match_bracket(body, 0) == Some(body.len() - 1)
-    {
-        return Some(structure(body, prefix_col, width));
-    }
-    None
+    let last = body.len().checked_sub(1)?;
+    let open = usize::from(is_call_head(body, 0));
+    (!contains_comment(body) && match_bracket(body, open) == Some(last))
+        .then(|| structure(body, prefix_col, width))
 }
 
 /// Format a `({ ... })` statement-expression: `({` opens the line, each statement on its own line
