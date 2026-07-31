@@ -467,24 +467,21 @@ fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option
     if is_call_head(body, 0) && match_bracket(body, 1) == Some(body.len() - 1) {
         return Some(structure(body, prefix_col, width));
     }
-    // A body that is entirely one group the author wrote: `#define M(x) ((x) ? a : b ? c : d)`. Those
-    // parentheses are a container like any other (#77), and the walk already lays one out — a body is
-    // only passed through because nothing here claimed it. Whole-body, because a group with anything
-    // beside it would put the rest on the line the group's own break ends, which is a layout this has
-    // no measure for.
+    // A body that is entirely one group the author wrote: `#define M(x) ((x) ? a : b ? c : d)`, and a
+    // statement expression `({ ... })` too — `match_bracket` counts parentheses, so the `{` is only
+    // what this group holds, and [`emit_tokens`] has the handler for it. Those parentheses are a
+    // container like any other (#77), and the walk already lays one out — a body is only passed
+    // through because nothing here claimed it.
+    //
+    // Whole-body, because a group with anything beside it would put the rest on the line the group's
+    // own break ends, which is a layout this has no measure for. Claiming such a body from its first
+    // two tokens and rendering only as far as the group is how `({ ... }) + 1` used to lose its
+    // `+ 1` (#104).
     if body[0].kind == TokenKind::Punct
         && body[0].text == "("
         && match_bracket(body, 0) == Some(body.len() - 1)
     {
         return Some(structure(body, prefix_col, width));
-    }
-    if body.len() >= 2
-        && body[0].kind == TokenKind::Punct
-        && body[0].text == "("
-        && body[1].kind == TokenKind::Punct
-        && body[1].text == "{"
-    {
-        return format_stmt_expr(body, 0, 0, width).map(|(s, _)| s);
     }
     None
 }

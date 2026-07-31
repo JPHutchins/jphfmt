@@ -195,6 +195,31 @@ fn a_define_body_that_is_one_group_is_a_container() {
     assert_eq!(format(partial), partial);
 }
 
+/// A statement expression is a parenthesized group, so the container arm above claims a body that is
+/// entirely one — and a body that is *not* entirely one passes through, rather than being claimed from
+/// its first two tokens and rendered only as far as the `})`. That is what deleted the `+ 1` from
+/// `#define M(x) ({ int t = (x); t; }) + 1`, silently changing the expansion on valid GNU C (#104), and
+/// it is #81's shape in a third place: a handler reporting more consumed than it rendered.
+///
+/// Invisible to idempotency, like #81 — the truncated output is a fixpoint.
+#[test]
+fn a_statement_expression_body_keeps_what_follows_it() {
+    let trailing = "#define M(x) ({ int t = (x); t; }) + 1\n";
+    assert_eq!(format(trailing), trailing);
+
+    // Whole-body, so the walk lays it out — the operand is what the arm above already does.
+    let whole = "#define M(x) ({ int t = (x); t; })\n";
+    assert_eq!(
+        format(whole),
+        "#define M(x) ({ \\\n\tint t = (x); \\\n\tt; \\\n})\n"
+    );
+    assert_eq!(format(&format(whole)), format(whole));
+
+    // Neither does anything before it make the body a statement expression to lay out.
+    let leading = "#define N(x) 1 + ({ int t = (x); t; })\n";
+    assert_eq!(format(leading), leading);
+}
+
 /// The gap between a `#define`'s name and a `(` is meaning, not spacing: `#define X (y)` defines `X` as
 /// `(y)`, and `#define X(y)` a function-like macro taking `y`. Tightening it turned every object-like
 /// macro with a parenthesized body into a function-like one, and the output did not compile.
