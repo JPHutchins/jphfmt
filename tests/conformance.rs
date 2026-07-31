@@ -1006,10 +1006,29 @@ fn a_subscript_is_tight_across_a_newline_too() {
             "a gap before a subscript: {src:?} -> {once:?}"
         );
     }
-    // An attribute is not a subscript, and a designator ends no value, so neither is tightened.
+    // An attribute is not a subscript, and a designator ends no value, so neither is tightened. The
+    // second `[` may carry a gap of its own — `space_subscripts` reads a trivia-stripped list, so the
+    // layout has to look past the gap as well or the two passes disagree about what this is.
     assert_eq!(
         format("int x\n[[deprecated]];\n"),
         "int x\n[[deprecated]];\n"
+    );
+    let spaced_attribute = "int f(void) {\n\tif (x [ [aaaa]] && bbbbbbbbbbbbbbbbbbbbbb) { return 1; }\n\treturn 0;\n}\n";
+    assert_eq!(format(spaced_attribute), spaced_attribute);
+}
+
+/// A compound literal's `{` is tight against its `(T)` for the same reason a subscript's `[` is: the
+/// review on #99 found the `{` branch carrying the trap this fixed for `[`, and it reproduced —
+/// `(struct s)⏎{1, 2}.a` in a condition became `(struct s) {1, 2}.a` on the first run and
+/// `(struct s){1, 2}.a` on the second, because `space_braces` tightens what the layout wrote.
+#[test]
+fn a_compound_literal_brace_is_tight_across_a_newline_too() {
+    let src = "int f(void) {\n\tif ((struct s)\n\t{1, 2}.a && bbbbbbbbbbbbbbbbbbbbbb) { return 1; }\n\treturn 0;\n}\n";
+    let once = format(src);
+    assert_eq!(format(&once), once, "{once:?}");
+    assert!(
+        once.contains("(struct s){1, 2}.a"),
+        "the literal's brace is tight: {once:?}"
     );
 }
 
