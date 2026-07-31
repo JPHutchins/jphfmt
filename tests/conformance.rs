@@ -1035,23 +1035,40 @@ fn a_compound_literal_is_never_called_by_what_follows_it() {
 /// wrote it. Only the literal's own `{…}` is a container.
 #[test]
 fn an_anonymous_literal_type_is_a_definition_and_not_a_list() {
-    let src = "int v = (struct { int x; }){1}.x + aaaa;\n";
-    for width in 1..=120 {
-        let once = jphfmt::format_with_width(src, width);
-        assert!(
-            once.contains("(struct { int x; }){"),
-            "width {width}: the member list is the author's: {once:?}"
-        );
-        assert!(
-            !once.contains(";,"),
-            "width {width}: a magic comma in a member list: {once:?}"
-        );
-        assert_eq!(
-            jphfmt::format_with_width(&once, width),
-            once,
-            "width {width}"
-        );
+    // The commented spelling is the same definition, and a walk that stopped at the comment read it as a
+    // list — `prev_nontrivia` skips whitespace, not comments.
+    for (src, body) in [
+        (
+            "int v = (struct { int x; }){1}.x + aaaa;\n",
+            "(struct { int x; }){",
+        ),
+        (
+            "int w = (struct /* c */ { int x; }){1}.x + aaaa;\n",
+            "(struct /* c */ { int x; }){",
+        ),
+        (
+            "int u = (union { int a; float b; }){.a = 2}.a + aaaa;\n",
+            "(union { int a; float b; }){",
+        ),
+    ] {
+        for width in 1..=120 {
+            let once = jphfmt::format_with_width(src, width);
+            assert!(
+                once.contains(body),
+                "width {width}: the member list is the author's: {once:?}"
+            );
+            assert!(
+                !once.contains(";,"),
+                "width {width}: a magic comma in a member list: {once:?}"
+            );
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "width {width}"
+            );
+        }
     }
+    let src = "int v = (struct { int x; }){1}.x + aaaa;\n";
     // The literal's own body is still a container, and still explodes when it must.
     assert_eq!(
         jphfmt::format_with_width(src, 20),

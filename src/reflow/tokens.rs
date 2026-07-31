@@ -235,7 +235,7 @@ fn names_literal_type(inner: &[Token]) -> bool {
     let mut named = inner.iter().filter(|t| !is_trivia(t));
     match named.next() {
         Some(first) if is_tag_keyword(first.text) => true,
-        Some(first) => is_callee_ident(first) && named.next().is_none() || is_type_group(inner),
+        Some(first) => (is_callee_ident(first) && named.next().is_none()) || is_type_group(inner),
         None => false,
     }
 }

@@ -14,7 +14,7 @@ use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
     enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
     is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia, prev_significant,
     respaced_when_joined, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
@@ -252,8 +252,8 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
 /// An `enum` body *is* a comma list, and has its own handler ([`enum_body_brace`]).
 fn opens_definition_body(toks: &[Token], open: usize) -> bool {
     let tags = |k: usize| matches!(toks[k].text, "struct" | "union");
-    prev_nontrivia(toks, open).is_some_and(|k| {
-        tags(k) || (toks[k].kind == TokenKind::Ident && prev_nontrivia(toks, k).is_some_and(tags))
+    prev_significant(toks, open).is_some_and(|k| {
+        tags(k) || (toks[k].kind == TokenKind::Ident && prev_significant(toks, k).is_some_and(tags))
     })
 }
 
