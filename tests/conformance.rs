@@ -3,6 +3,7 @@
 
 mod support;
 
+use jphfmt::doc::display_width;
 use jphfmt::format;
 use support::significant;
 
@@ -187,9 +188,9 @@ fn a_continued_define_reserves_the_columns_its_continuation_takes() {
         let once = format(&src);
         for line in once.lines() {
             assert!(
-                display_columns(line) <= 100,
+                display_width(line) <= 100,
                 "argument length {len}: {} columns: {line:?}",
-                display_columns(line)
+                display_width(line)
             );
         }
         assert_eq!(format(&once), once, "argument length {len}");
@@ -205,9 +206,30 @@ fn a_continued_define_reserves_the_columns_its_continuation_takes() {
     );
 }
 
-/// Columns a line occupies, a tab being [`jphfmt`]'s tab width — §8.5's measure, not `str::len`.
-fn display_columns(line: &str) -> usize {
-    line.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum()
+/// The body of a `#define` whose parameters explode is the *last* line, and `emit_define` writes ` \`
+/// between lines — so that line takes no continuation and only its tab is reserved. Measured two
+/// columns narrower, this 96-column body broke, `explode_params` refused a multi-line body, and the
+/// parameter list stayed flat at 129 columns.
+#[test]
+fn a_params_exploded_define_measures_its_body_against_the_tab_alone() {
+    let params = (1..=4)
+        .map(|i| format!("{p}{i}", p = "p".repeat(25)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body = format!("f({a}, {b})", a = "a".repeat(45), b = "b".repeat(46));
+    let once = format(&format!("#define PPPP({params}) {body}\n"));
+    for line in once.lines() {
+        assert!(
+            display_width(line) <= 100,
+            "{} columns: {line:?}",
+            display_width(line)
+        );
+    }
+    assert!(
+        once.contains(&format!("\t{body}")),
+        "the body keeps its own line whole: {once:?}"
+    );
+    assert_eq!(format(&once), once);
 }
 
 #[test]
