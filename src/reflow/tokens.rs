@@ -494,23 +494,11 @@ fn is_binary_position(inner: &[Token], j: usize) -> bool {
     if !next_nontrivia(inner, j + 1).is_some_and(|k| is_value_start(&inner[k])) {
         return false;
     }
-    prev_nontrivia(inner, j).is_some_and(|k| match inner[k].kind {
-        TokenKind::Ident => is_callee_ident(&inner[k]),
-        TokenKind::Number | TokenKind::String | TokenKind::Char => true,
-        // A `)` that closes a *type* ends no value: `(PyObject *) &x` is an address-of, not a
-        // bitwise-and, and the same holds for the `-`/`+` a cast can precede.
-        TokenKind::Punct => match inner[k].text {
-            ")" => !closes_type_paren(inner, k),
-            "]" => true,
-            _ => false,
-        },
-        // A postfix `++`/`--` ends a value as much as its operand does.
-        TokenKind::Operator => matches!(inner[k].text, "++" | "--"),
-        TokenKind::Newline
-        | TokenKind::Whitespace
-        | TokenKind::Unknown
-        | TokenKind::LineComment
-        | TokenKind::BlockComment => false,
+    prev_nontrivia(inner, j).is_some_and(|k| {
+        // The same question [`ends_value`] answers, with one refinement: a `)` that closes a *type*
+        // ends no value, so `(PyObject *) &x` is an address-of rather than a bitwise-and, and the
+        // same holds for the `-`/`+` a cast can precede.
+        ends_value(&inner[k]) && !(inner[k].text == ")" && closes_type_paren(inner, k))
     })
 }
 
