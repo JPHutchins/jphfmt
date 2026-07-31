@@ -839,6 +839,15 @@ mod tests {
     }
 
     #[test]
+    fn trailing_reserved_does_not_count_the_last_tokens_trailing_space() {
+        let last = [tok(TokenKind::Unknown, "'x ")];
+        assert_eq!(trailing_reserved(&last, 0), display_width("'x"));
+        // The same whitespace in a token that is not the last reaches the output, and counts.
+        let inner = [tok(TokenKind::Unknown, "'x "), tok(TokenKind::Ident, "y")];
+        assert_eq!(trailing_reserved(&inner, 0), display_width("'x y"));
+    }
+
+    #[test]
     fn trailing_reserved_ignores_comments() {
         let toks = [
             tok(TokenKind::LineComment, "// hi"),
