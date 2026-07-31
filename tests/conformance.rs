@@ -1225,6 +1225,87 @@ fn an_anonymous_literal_type_is_a_definition_and_not_a_list() {
     );
 }
 
+/// #90: an empty macro argument is a hole the author wrote, and the comma is what spells it. Dropping
+/// the empty element dropped its comma too, so the call lost an argument and the output did not compile
+/// — `PICK_MID(x, , y)` became `PICK_MID(x, y)`, "macro requires 3 arguments, but only 2 given".
+///
+/// A comma count, not the exact bytes: whether a hole is written `, ,` or `,,` is a layout question this
+/// pins nothing about, but the number of arguments is not a layout question at all. `significant`
+/// excuses commas — §2.3's magic one is the layout's to write — so this is one of the assertions that
+/// filter cannot make.
+#[test]
+fn an_empty_macro_argument_keeps_the_comma_that_spells_it() {
+    for src in [
+        "int p = PICK_MID(x, , y);\n",
+        "int q = PICK_FIRST(, x, y);\n",
+        "int r = PICK_LAST(x, y, );\n",
+        "int s = F(, , );\n",
+        "int t = G(aaaaaaaaaaaaaaaaaaaa, , bbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccc, dddddddddddd);\n",
+    ] {
+        for width in 1..=120 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(
+                once.matches(',').count(),
+                src.matches(',').count(),
+                "width {width}: {src:?} -> {once:?}"
+            );
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "width {width}"
+            );
+        }
+    }
+    // An empty argument list is the one empty element that is not a hole: there is nothing between the
+    // parentheses to keep, and §2.5 writes them tight.
+    assert_eq!(format("int u = f();\n"), "int u = f();\n");
+    assert_eq!(format("int v = f( );\n"), "int v = f();\n");
+
+    // How a hole is spaced is the author's, because the layout has no rule for it: `F(a,, b)` is what
+    // #85's rule would write and no other C formatter does. So a list with a hole passes through, which
+    // the comma count above cannot see — it is satisfied by any spacing.
+    assert_eq!(
+        format("int p = PICK_MID(x, , y);\n"),
+        "int p = PICK_MID(x, , y);\n"
+    );
+    // Only the trailing trivia inside the parens goes, which is `render_segment` trimming its own edges.
+    assert_eq!(
+        format("int r = PICK_LAST(x, y, );\n"),
+        "int r = PICK_LAST(x, y,);\n"
+    );
+    // A `{}` list holds a hole the same way, and the call-level passthrough cannot see one: the braces put
+    // it a bracket deeper, so `split_on_commas` at the call level sees a non-empty argument. The review on
+    // #96 found this, and `MACRO({a, , b}, c)` is the shape that reaches it from valid-ish C.
+    for src in [
+        "int x[] = {1, , 2};\n",
+        "int f(void) {\n\treturn MACRO({a, , b}, c);\n}\n",
+    ] {
+        let once = format(src);
+        assert_eq!(
+            once.matches(',').count(),
+            src.matches(',').count(),
+            "{src:?} -> {once:?}"
+        );
+        assert_eq!(format(&once), once);
+    }
+    // The trailing empty element is §2.3's magic comma, not a hole — it still forces the break and is
+    // still written. And `{,}` holds nothing apart, so it is still the empty list.
+    assert_eq!(
+        format("int a[] = {1, 2,};\n"),
+        "int a[] = {\n\t1,\n\t2,\n};\n"
+    );
+    assert_eq!(format("int b[] = {,};\n"), "int b[] = {};\n");
+
+    // Passing through costs the layout: an over-width list with a hole stays over-width (§6).
+    let long = format!(
+        "int t = G({a}, , {b}, {c}, dddddddddddd);\n",
+        a = "a".repeat(20),
+        b = "b".repeat(20),
+        c = "c".repeat(20)
+    );
+    assert_eq!(format(&long), long);
+}
+
 /// A sole argument's span is the call's own parentheses, so it is already bounded. A sole `{}`
 /// element is not: its list writes a trailing comma on the break, which is what made unbounded arms
 /// read as elements in the first place.

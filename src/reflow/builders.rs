@@ -25,12 +25,21 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    let args: Vec<&[Token]> = split_on_commas(inner)
-        .into_iter()
-        .filter(|a| has_non_trivia(a))
-        .collect();
-    if args.is_empty() {
-        return Doc::text("()");
+    let args = split_on_commas(inner);
+    // An empty element is a hole a macro invocation spells with a bare comma — `PICK(x, , y)`, valid C99
+    // and later. There is no element to lay out for it, and dropping it drops the comma that spells it,
+    // which changes the argument count and does not compile (#90). §6 prefers passthrough, and how a hole
+    // is spaced is the one thing the layout has no rule for: an empty element takes no separator space
+    // (#85), which would write `F(a,, b)` where every other C formatter writes `F(a, , b)`.
+    //
+    // A sole empty element is no hole — it is the empty list `f()`, with nothing between the parentheses
+    // to hold apart.
+    if args.iter().any(|arg| !has_non_trivia(arg)) {
+        return if args.len() == 1 {
+            Doc::text("()")
+        } else {
+            Doc::Text(format!("({})", render_segment(inner)))
+        };
     }
     // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
     // no pair of its own; with siblings, unbounded arms read as further arguments. A `{}` element is
@@ -40,7 +49,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     } else {
         Bound::Parens
     };
-    let seps = vec![",".to_owned(); args.len() - 1];
+    let seps = vec![",".to_owned(); args.len().saturating_sub(1)];
     let elements = args
         .into_iter()
         .map(|a| build_element_doc(a, bound))
@@ -57,6 +66,16 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     }
     let segments = split_on_commas(inner);
     let magic = segments.len() > 1 && segments.last().is_some_and(|s| s.iter().all(is_trivia));
+    // A hole here too (#90): an empty element that is not the *trailing* one, which §2.3 reads as the
+    // magic comma. A braced list is not valid C with a hole in it, but it reaches here as a macro
+    // argument — `MACRO({a, , b}, c)` — where the macro decides what the tokens mean, and the call-level
+    // passthrough cannot see it because the braces put it a bracket deeper. An all-empty `{,}` is not a
+    // hole: nothing is being held apart, and collapsing it to `{}` is what the suite already excuses.
+    let holed = segments.iter().rev().skip(1).any(|s| !has_non_trivia(s))
+        && segments.iter().any(|s| has_non_trivia(s));
+    if holed {
+        return Doc::Text(format!("{{{}}}", render_segment(inner)));
+    }
     let elements: Vec<&[Token]> = segments.into_iter().filter(|s| has_non_trivia(s)).collect();
     if elements.is_empty() {
         return Doc::text("{}");
