@@ -13,10 +13,13 @@
 //!   also format *exactly* to `out.c`. Few shapes qualify (passthrough/explosion decisions must
 //!   be stable under whitespace mutation), so the sentinel is added only to shapes verified stable.
 
+mod support;
+
 use jphfmt::format;
 use jphfmt::lexer::{TokenKind, tokenize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use support::significant;
 
 const CASES_DIR: &str = "tests/cases";
 const SEED: u64 = 0x00C0_FFEE;
@@ -78,16 +81,6 @@ fn read_inputs(dir: &Path) -> Vec<PathBuf> {
                 n == "in" || n.starts_with("in_")
             }) && p.extension().is_some_and(|x| x == "c")
         })
-        .collect()
-}
-
-/// Significant content: everything but whitespace, commas (jphfmt may add a magic trailing comma),
-/// backslashes (line continuations), and parentheses — a chain or ternary that breaks is bounded by
-/// parentheses jphfmt writes, which is legal exactly because the operands were already an implicit
-/// container. Formatting must never alter anything else.
-fn significant(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\' | '(' | ')'))
         .collect()
 }
 

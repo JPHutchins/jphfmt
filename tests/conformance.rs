@@ -1,23 +1,16 @@
 //! Conformance suite. What must hold is idempotency, verbatim passthrough of call-free input, and the §2.2
 //! layout for calls.
 
+mod support;
+
 use jphfmt::format;
+use support::significant;
 
 const GOLDEN: &str = include_str!("golden.c");
 
 #[test]
 fn golden_is_a_fixpoint() {
     assert_eq!(format(GOLDEN), GOLDEN, "golden must be idempotent");
-}
-
-/// Significant content: everything but whitespace, commas (jphfmt may add a magic trailing comma),
-/// backslashes (continuations), and parentheses — a chain or ternary that breaks is bounded by
-/// parentheses jphfmt writes, which is legal exactly because the operands were already an implicit
-/// container. Formatting must never alter anything else.
-fn significant(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\' | '(' | ')'))
-        .collect()
 }
 
 const MESSY: &str = include_str!("messy.c");
