@@ -705,6 +705,43 @@ fn a_comment_bearing_group_passes_through_however_long() {
     }
 }
 
+/// #77: a `for` clause is an element of the header container, not a bare expression. A ternary chain
+/// in one therefore reads as the map it is, and is bounded — unbounded, its arms would sit at the
+/// clause indent and read as further clauses, exactly as they would read as further arguments (#59).
+#[test]
+fn a_for_clause_is_an_element_of_its_header() {
+    assert_eq!(
+        format("for (i = a ? b : c ? d : e; i < n; i++) {\n\tg();\n}\n"),
+        "for (\n\ti = (\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t);\n\ti < n;\n\ti++\n) {\n\tg();\n}\n"
+    );
+    // The step clause is the same element, so it lays out the same way.
+    assert_eq!(
+        format("for (i = 0; i < n; i = a ? b : c ? d : e) {\n\tg();\n}\n"),
+        "for (\n\ti = 0;\n\ti < n;\n\ti = (\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t)\n) {\n\tg();\n}\n"
+    );
+}
+
+/// The clauses that were already right stay right: a header that fits is untouched, an empty clause is
+/// not an element, and a clause holding a depth-zero `,` is a list rather than one expression, so
+/// nothing bounds it (`is_boundable`).
+#[test]
+fn an_ordinary_for_header_is_unchanged() {
+    for src in [
+        "for (i = 0; i < n; i++) {\n\tg();\n}\n",
+        "for (int i = 0, j = n; i < j; i++, j--) {\n\tg();\n}\n",
+        "for (i = a ? b : c; i < n; i++) {\n\tg();\n}\n",
+        "for (i = 0; i < n; i++);\n",
+    ] {
+        assert_eq!(format(src), src, "input {src:?}");
+    }
+    // An empty clause still takes the space after its separator, so `for (;;)` is respaced. #85,
+    // pre-existing and unchanged here — pinned so a fix for it shows up as this test failing.
+    assert_eq!(
+        format("for (;;) {\n\tg();\n}\n"),
+        "for (; ; ) {\n\tg();\n}\n"
+    );
+}
+
 #[test]
 fn long_binary_chain_explodes_with_trailing_operators() {
     // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line
