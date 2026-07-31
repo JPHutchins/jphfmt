@@ -423,7 +423,7 @@ fn names_a_macro(pieces: &[Piece], j: usize) -> bool {
     let before = |k: usize| (0..k).rev().find(|&i| !is_comment(&pieces[i].1));
     before(j)
         .filter(|&k| pieces[k].1.text == "define")
-        .and_then(|k| before(k))
+        .and_then(before)
         .is_some_and(|k| pieces[k].1.text == "#")
 }
 

@@ -183,7 +183,11 @@ fn a_macro_name_keeps_the_gap_that_says_what_it_defines() {
         "#/* c */ define Y (z)\n",
         "#define /* c */ F(x) ((x) + 1)\n",
     ] {
-        assert_eq!(format(src), src, "a comment does not change what is defined");
+        assert_eq!(
+            format(src),
+            src,
+            "a comment does not change what is defined"
+        );
     }
 }
 
