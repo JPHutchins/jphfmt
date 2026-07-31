@@ -6,8 +6,9 @@
 //! character is excused lives once.
 //!
 //! A directory module, so cargo does not compile it as a test binary of its own. Each test binary uses
-//! the subset it needs, which is why the whole module allows dead code.
-#![allow(dead_code)]
+//! the subset it needs, so the items that vary by binary carry `#[allow(dead_code)]` one at a time —
+//! a module-wide allow would also silence a helper that becomes dead in *every* binary, which is the
+//! warning worth keeping.
 
 use std::collections::HashMap;
 
@@ -22,6 +23,7 @@ pub enum Rewrite {
     /// were already an implicit container.
     Bounds,
     /// The `;` a statement expression writes to terminate an unterminated last statement (#81).
+    #[allow(dead_code)]
     Terminator,
 }
 
@@ -39,14 +41,22 @@ impl Rewrite {
 ///
 /// Whitespace, §2.3's magic trailing comma and a `#define`'s `\` continuations are always removed:
 /// they are the layout's to place, and an all-empty `{,}` legitimately collapses to `{}`.
-pub fn authored(s: &str, also: &[Rewrite]) -> String {
-    s.chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\'))
-        .filter(|c| !also.iter().any(|rewrite| rewrite.writes(*c)))
-        .collect()
+fn authored(s: &str, also: &[Rewrite]) -> String {
+    authored_chars(s, also).collect()
+}
+
+/// The characters [`authored`] keeps, as they stream: a comparison that counts folds them straight into
+/// its counts rather than through a `String` it would only read once.
+fn authored_chars<'a>(s: &'a str, also: &'a [Rewrite]) -> impl Iterator<Item = char> + 'a {
+    s.chars().filter(move |c| {
+        !c.is_whitespace()
+            && !matches!(c, ',' | '\\')
+            && !also.iter().any(|rewrite| rewrite.writes(*c))
+    })
 }
 
 /// Significant content: what formatting must never alter, whatever it does to the layout.
+#[allow(dead_code)]
 pub fn significant(s: &str) -> String {
     authored(s, &[Rewrite::Bounds])
 }
@@ -54,18 +64,18 @@ pub fn significant(s: &str) -> String {
 /// How many times each character formatting must not discard occurs. A *count* excuses nothing beyond
 /// the layout's own characters — it can carry the `;` and the `()` formatting may add, and so still
 /// catch a dropped one, which is what an order cannot do.
+#[allow(dead_code)]
 pub fn kept(s: &str) -> HashMap<char, usize> {
-    authored(s, &[])
-        .chars()
-        .fold(HashMap::new(), |mut counts, c| {
-            *counts.entry(c).or_default() += 1;
-            counts
-        })
+    authored_chars(s, &[]).fold(HashMap::new(), |mut counts, c| {
+        *counts.entry(c).or_default() += 1;
+        counts
+    })
 }
 
 /// The author's characters in order. Counting alone would accept `a + b` becoming `b + a`; this would
 /// not — at the cost of excusing every character formatting may *write*, since an inserted one shifts
 /// every position after it.
+#[allow(dead_code)]
 pub fn ordered(s: &str) -> String {
     authored(s, &[Rewrite::Bounds, Rewrite::Terminator])
 }
