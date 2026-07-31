@@ -24,12 +24,18 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    let args: Vec<&[Token]> = split_on_commas(inner)
-        .into_iter()
-        .filter(|a| has_non_trivia(a))
-        .collect();
-    if args.is_empty() {
+    let args = split_on_commas(inner);
+    let is_empty = |arg: &&[Token]| !has_non_trivia(arg);
+    if args.len() == 1 && args.iter().all(is_empty) {
         return Doc::text("()");
+    }
+    // A hole a macro invocation spells with a bare comma — `PICK(x, , y)`, valid C99 and later. There is
+    // no element to lay out for it, and dropping it drops the comma that spells it, which changes the
+    // argument count and does not compile (#90). §6 prefers passthrough, and how a hole is spaced is the
+    // one thing the layout has no rule for: an empty element takes no separator space (#85), which would
+    // write `F(a,, b)` where every other C formatter writes `F(a, , b)`.
+    if args.iter().any(is_empty) {
+        return Doc::Text(format!("({})", render_segment(inner)));
     }
     // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
     // no pair of its own; with siblings, unbounded arms read as further arguments. A `{}` element is
