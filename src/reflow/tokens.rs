@@ -19,7 +19,15 @@ pub(super) fn ends_value(t: &Token) -> bool {
     match t.kind {
         TokenKind::Ident => is_callee_ident(t),
         TokenKind::Number | TokenKind::String | TokenKind::Char => true,
-        TokenKind::Punct => matches!(t.text, ")" | "]"),
+        // `)` closes a call or a parenthesized expression, `]` an earlier subscript, and `}` a
+        // compound literal, which is an lvalue a subscript may index: `(int[]){1, 2}[0]`. Nothing
+        // else in valid C puts a `}` before a `[` — a struct definition or a block there is a
+        // syntax error, and an attribute's `[[` is excluded by its second bracket.
+        TokenKind::Punct => matches!(t.text, ")" | "]" | "}"),
+        // Postfix `++`/`--` end their operand, so `p++[i]` is `(p++)[i]`. The prefix forms cannot
+        // appear here: `++arr[i]` puts the operator before the identifier, not before the `[`.
+        // [`is_value_start`] carves the same two out for the mirror-image question.
+        TokenKind::Operator => matches!(t.text, "++" | "--"),
         _ => false,
     }
 }

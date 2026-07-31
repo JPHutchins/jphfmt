@@ -221,6 +221,13 @@ fn a_subscript_is_tight_against_what_it_indexes() {
     assert_eq!(format("int c = f() [k];\n"), "int c = f()[k];\n");
     assert_eq!(format("int d = \"abc\" [1];\n"), "int d = \"abc\"[1];\n");
     assert_eq!(format("char port [127];\n"), "char port[127];\n");
+    // Postfix `++`/`--` end their operand, and a compound literal is an lvalue a subscript indexes.
+    assert_eq!(format("int e = p++ [i];\n"), "int e = p++[i];\n");
+    assert_eq!(format("int f = q-- [j];\n"), "int f = q--[j];\n");
+    assert_eq!(
+        format("int g = (int[]){1, 2} [0];\n"),
+        "int g = (int[]){1, 2}[0];\n"
+    );
     for unchanged in [
         "int x [[deprecated]];\n",
         "int arr[10] [[deprecated]];\n",

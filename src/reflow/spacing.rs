@@ -606,6 +606,9 @@ mod tests {
         assert_eq!(space_tokens("m[i] ["), "m[i][");
         assert_eq!(space_tokens("f() ["), "f()[");
         assert_eq!(space_tokens("\"abc\" ["), "\"abc\"[");
+        assert_eq!(space_tokens("p++ ["), "p++[");
+        assert_eq!(space_tokens("q-- ["), "q--[");
+        assert_eq!(space_tokens("{1, 2} ["), "{1, 2}[");
     }
 
     #[test]
