@@ -205,13 +205,68 @@ pub(super) fn prev_significant(toks: &[Token], before: usize) -> Option<usize> {
 /// Whether the `)` at `close` closes a compound literal's type — the `(T)` of `(T){…}` — rather than
 /// a parameter list, a `__attribute__` argument, or a declarator suffix, each of which can also put a
 /// `)` before a body's `{`.
+///
+/// A `)` before the type is the one ambiguous case, and it is a declarator's — `int (*f)(void) {` — or
+/// a control header's, which introduces a statement, and a statement may open with a literal:
+/// `if (x) (struct s){1, 2}.a;`. What heads *that* pair says which.
 pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
     match_open_paren(toks, close).is_some_and(|open| {
-        is_type_group(&toks[open + 1..close])
+        names_literal_type(&toks[open + 1..close])
             && prev_significant(toks, open).is_none_or(|before| {
-                !heads_body(&toks[before]) && !matches!(toks[before].text, ")" | "]")
+                !heads_body(&toks[before])
+                    && (!matches!(toks[before].text, ")" | "]")
+                        || closes_control_header(toks, before))
             })
     })
+}
+
+/// Whether `inner` names the type of a compound literal: [`is_type_group`], or a lone identifier, which
+/// here can only be a typedef name — `(x){…}` is an expression in no C, so a single parenthesized name
+/// before a `{` is a type. A cast cannot assume as much, which is why [`closes_type_paren`] keeps the
+/// stricter test: `(count) & mask` stays binary.
+fn names_literal_type(inner: &[Token]) -> bool {
+    is_type_group(inner) || {
+        let mut named = inner.iter().filter(|t| !is_trivia(t));
+        named.next().is_some_and(|t| is_callee_ident(t)) && named.next().is_none()
+    }
+}
+
+/// Whether the `)` at `close` closes an `if`/`for`/`while`/`switch` header, so what follows it is the
+/// statement that header governs rather than more of a declarator.
+pub(super) fn closes_control_header(toks: &[Token], close: usize) -> bool {
+    match_open_paren(toks, close)
+        .and_then(|open| prev_nontrivia(toks, open))
+        .is_some_and(|head| is_control_keyword(toks[head].text))
+}
+
+/// Whether the `}` at `close` closes a block — a function or statement body — rather than a value.
+/// An initializer list and a compound literal's body each *end* a value, so what follows their `}`
+/// goes on with the statement they sit in; only a block's `}` ends one.
+///
+/// An unmatched `}` reads as a block: nothing about the value it might close is known, and §6 prefers
+/// the reading that leaves the tokens where the author put them.
+pub(super) fn closes_block(toks: &[Token], close: usize) -> bool {
+    match_open_brace(toks, close).is_none_or(|open| !opens_value(toks, open))
+}
+
+/// Whether the `{` at `open` opens a value rather than a block. What precedes it says which: the `=`
+/// or `,` of the declaration an initializer belongs to, or the `(T)` of a compound literal. A nested
+/// list's `{` follows the `{` of the list holding it and is a value exactly when that one is, walked
+/// rather than recursed so that brace nesting cannot reach the stack.
+///
+/// Read past comments, not merely trivia: a `(T) /* c */ {…}` is the same literal, and stopping at the
+/// comment would read its `}` as a block's.
+fn opens_value(toks: &[Token], open: usize) -> bool {
+    let mut brace = open;
+    while let Some(k) = prev_significant(toks, brace) {
+        match toks[k].text {
+            "=" | "," => return true,
+            ")" => return closes_literal_type(toks, k),
+            "{" => brace = k,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Whether the `)` at `close` closes a parenthesized *type* — a cast, or a compound literal's type —
@@ -252,18 +307,12 @@ pub(super) fn can_precede_cast(t: &Token) -> bool {
 
 /// Index of the `(` matching the `)` at `close`, or `None` if unbalanced.
 pub(super) fn match_open_paren(toks: &[Token], close: usize) -> Option<usize> {
-    if toks.get(close).map(|t| t.text) != Some(")") {
-        return None;
-    }
-    let mut depth = 0usize;
-    (0..=close).rev().find(|&j| {
-        match toks[j].text {
-            ")" => depth += 1,
-            "(" => depth -= 1,
-            _ => {}
-        }
-        depth == 0 && toks[j].text == "("
-    })
+    matching_back(toks, close, "(", ")")
+}
+
+/// Index of the `{` matching the `}` at `close`, or `None` if unbalanced.
+pub(super) fn match_open_brace(toks: &[Token], close: usize) -> Option<usize> {
+    matching_back(toks, close, "{", "}")
 }
 
 /// The next non-trivia token index in `[from, end)`.
@@ -302,21 +351,30 @@ pub(super) fn match_brace(toks: &[Token], open: usize) -> Option<usize> {
 }
 
 fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> {
-    if toks.get(open).map(|t| t.text) != Some(lhs) {
-        return None;
-    }
+    (toks.get(open).map(|t| t.text) == Some(lhs)).then_some(())?;
+    paired(toks, lhs, rhs, open..toks.len())
+}
+
+fn matching_back(toks: &[Token], close: usize, lhs: &str, rhs: &str) -> Option<usize> {
+    (toks.get(close).map(|t| t.text) == Some(rhs)).then_some(())?;
+    paired(toks, rhs, lhs, (0..=close).rev())
+}
+
+/// The index at which `closes` balances the `opens` the walk starts on. One count in either direction:
+/// forward from an opening bracket, or backward from a closing one, which is the same walk with the
+/// pair read the other way round.
+fn paired(
+    toks: &[Token],
+    opens: &str,
+    closes: &str,
+    mut order: impl Iterator<Item = usize>,
+) -> Option<usize> {
     let mut depth = 0usize;
-    for (j, t) in toks.iter().enumerate().skip(open) {
-        if t.text == lhs {
-            depth += 1;
-        } else if t.text == rhs {
-            depth -= 1;
-            if depth == 0 {
-                return Some(j);
-            }
-        }
-    }
-    None
+    order.find(|&j| {
+        depth += usize::from(toks[j].text == opens);
+        depth = depth.saturating_sub(usize::from(toks[j].text == closes));
+        depth == 0 && toks[j].text == closes
+    })
 }
 
 /// The tokens outside every bracket group, paired with their index — the level a construct's own
@@ -883,6 +941,71 @@ mod tests {
     #[test]
     fn match_brace_unmatched_open() {
         assert_eq!(match_brace(&[mk_punct("{")], 0), None);
+    }
+
+    #[test]
+    fn match_open_brace_balanced() {
+        assert_eq!(
+            match_open_brace(&[mk_punct("{"), mk_punct("}")], 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn match_open_brace_nested() {
+        assert_eq!(
+            match_open_brace(
+                &[mk_punct("{"), mk_punct("{"), mk_punct("}"), mk_punct("}")],
+                3
+            ),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn match_open_brace_unmatched_close() {
+        assert_eq!(match_open_brace(&[mk_punct("}")], 0), None);
+    }
+
+    #[test]
+    fn match_open_brace_wrong_kind() {
+        assert_eq!(match_open_brace(&[mk_punct("("), mk_punct(")")], 1), None);
+    }
+
+    #[test]
+    fn closes_block_tells_a_body_from_a_value() {
+        use crate::lexer::tokenize;
+        // The *first* `}` in each: a nested brace is the interesting one, and it is what says whether
+        // the rule reaches the list or the block that holds it.
+        for (src, is_block) in [
+            ("void f(void) { g(); }", true),
+            ("int main(void) { { int t; } }", true),
+            ("do { g(); } while (x)", true),
+            ("struct s { int a; }", true),
+            ("switch (x) { case 1: break; }", true),
+            ("x = ({ int t = 1; t; })", true),
+            ("}", true),
+            ("int a[] = {1, 2}", false),
+            ("int m[2][2] = {{1, 2}, {3, 4}}", false),
+            ("int a[] = {1, {2}}", false),
+            ("struct s v = {.a = 1}", false),
+            ("int * p = (int[]){1, 2}", false),
+            ("return (struct s){1, 2}", false),
+            // A typedef name spells no type keyword, and a parenthesized single name before a `{` can
+            // be nothing but a type.
+            ("int p = (vec2_t){1, 2}", false),
+            // The `)` before the type is a control header's, so a statement follows it, and a
+            // statement may open with a literal. A declarator's `)` may not.
+            ("if (c) (struct s){1, 2}.a;", false),
+            ("int (*fp(void))(int) { return 0; }", true),
+            ("int (paren)(void) { return 1; }", true),
+            // Read past comments: the same literal, written with one in the middle.
+            ("int p = (int[]) /* c */ {1, 2}", false),
+        ] {
+            let toks = tokenize(src);
+            let close = toks.iter().position(|t| t.text == "}").unwrap();
+            assert_eq!(closes_block(&toks, close), is_block, "{src}");
+        }
     }
 
     #[test]
