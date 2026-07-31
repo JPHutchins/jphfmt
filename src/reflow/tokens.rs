@@ -214,6 +214,28 @@ pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
     })
 }
 
+/// Whether the `}` at `close` closes a block — a function or statement body — rather than a value.
+/// An initializer list and a compound literal's body each *end* a value, so what follows their `}`
+/// goes on with the statement they sit in; only a block's `}` ends one.
+///
+/// An unmatched `}` reads as a block: nothing about the value it might close is known, and §6 prefers
+/// the reading that leaves the tokens where the author put them.
+pub(super) fn closes_block(toks: &[Token], close: usize) -> bool {
+    match_open_brace(toks, close).is_none_or(|open| !opens_value(toks, open))
+}
+
+/// Whether the `{` at `open` opens a value rather than a block. What precedes it says which: the `=`
+/// or `,` of the declaration an initializer belongs to, the `(T)` of a compound literal, or — for a
+/// nested list — the `{` of the list holding it, which is a value exactly when its own opener is.
+fn opens_value(toks: &[Token], open: usize) -> bool {
+    prev_nontrivia(toks, open).is_some_and(|k| match toks[k].text {
+        "=" | "," => true,
+        ")" => closes_literal_type(toks, k),
+        "{" => opens_value(toks, k),
+        _ => false,
+    })
+}
+
 /// Whether the `)` at `close` closes a parenthesized *type* — a cast, or a compound literal's type —
 /// so it ends no value and an operator after it takes one operand, not two.
 ///
@@ -252,18 +274,12 @@ pub(super) fn can_precede_cast(t: &Token) -> bool {
 
 /// Index of the `(` matching the `)` at `close`, or `None` if unbalanced.
 pub(super) fn match_open_paren(toks: &[Token], close: usize) -> Option<usize> {
-    if toks.get(close).map(|t| t.text) != Some(")") {
-        return None;
-    }
-    let mut depth = 0usize;
-    (0..=close).rev().find(|&j| {
-        match toks[j].text {
-            ")" => depth += 1,
-            "(" => depth -= 1,
-            _ => {}
-        }
-        depth == 0 && toks[j].text == "("
-    })
+    matching_back(toks, close, "(", ")")
+}
+
+/// Index of the `{` matching the `}` at `close`, or `None` if unbalanced.
+pub(super) fn match_open_brace(toks: &[Token], close: usize) -> Option<usize> {
+    matching_back(toks, close, "{", "}")
 }
 
 /// The next non-trivia token index in `[from, end)`.
@@ -317,6 +333,21 @@ fn matching(toks: &[Token], open: usize, lhs: &str, rhs: &str) -> Option<usize> 
         }
     }
     None
+}
+
+fn matching_back(toks: &[Token], close: usize, lhs: &str, rhs: &str) -> Option<usize> {
+    if toks.get(close).map(|t| t.text) != Some(rhs) {
+        return None;
+    }
+    let mut depth = 0usize;
+    (0..=close).rev().find(|&j| {
+        if toks[j].text == rhs {
+            depth += 1;
+        } else if toks[j].text == lhs {
+            depth -= 1;
+        }
+        depth == 0 && toks[j].text == lhs
+    })
 }
 
 /// The tokens outside every bracket group, paired with their index — the level a construct's own
@@ -883,6 +914,61 @@ mod tests {
     #[test]
     fn match_brace_unmatched_open() {
         assert_eq!(match_brace(&[mk_punct("{")], 0), None);
+    }
+
+    #[test]
+    fn match_open_brace_balanced() {
+        assert_eq!(
+            match_open_brace(&[mk_punct("{"), mk_punct("}")], 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn match_open_brace_nested() {
+        assert_eq!(
+            match_open_brace(
+                &[mk_punct("{"), mk_punct("{"), mk_punct("}"), mk_punct("}")],
+                3
+            ),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn match_open_brace_unmatched_close() {
+        assert_eq!(match_open_brace(&[mk_punct("}")], 0), None);
+    }
+
+    #[test]
+    fn match_open_brace_wrong_kind() {
+        assert_eq!(match_open_brace(&[mk_punct("("), mk_punct(")")], 1), None);
+    }
+
+    #[test]
+    fn closes_block_tells_a_body_from_a_value() {
+        use crate::lexer::tokenize;
+        // The *first* `}` in each: a nested brace is the interesting one, and it is what says whether
+        // the rule reaches the list or the block that holds it.
+        for (src, is_block) in [
+            ("void f(void) { g(); }", true),
+            ("int main(void) { { int t; } }", true),
+            ("do { g(); } while (x)", true),
+            ("struct s { int a; }", true),
+            ("switch (x) { case 1: break; }", true),
+            ("x = ({ int t = 1; t; })", true),
+            ("}", true),
+            ("int a[] = {1, 2}", false),
+            ("int m[2][2] = {{1, 2}, {3, 4}}", false),
+            ("int a[] = {1, {2}}", false),
+            ("struct s v = {.a = 1}", false),
+            ("int * p = (int[]){1, 2}", false),
+            ("return (struct s){1, 2}", false),
+        ] {
+            let toks = tokenize(src);
+            let close = toks.iter().position(|t| t.text == "}").unwrap();
+            assert_eq!(closes_block(&toks, close), is_block, "{src}");
+        }
     }
 
     #[test]

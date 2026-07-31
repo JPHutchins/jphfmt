@@ -979,6 +979,42 @@ fn a_head_less_binary_chain_is_bounded_like_a_ternary() {
     assert_eq!(format(src), expected);
 }
 
+/// #88: a compound literal is a value like any other, so the `}` that ends one ends a value and not a
+/// statement. Read as a statement boundary, what followed the literal became a statement of its own,
+/// and the parentheses bounding it (#59) landed against the `}` — `(struct s){1, 2}(.a + …)`, a *call*
+/// on the literal, which does not compile.
+///
+/// Asserted as the absence of that call at every width rather than as exact output: what jphfmt should
+/// write here is a layout question, and pinning today's answer would make tomorrow's improvement read
+/// as a regression. No layout may ever put a `(` against a literal's `}`.
+///
+/// Nothing else in the suite can see this. Idempotency cannot: the call is a fixpoint. [`significant`]
+/// cannot: it excludes parentheses, because jphfmt legitimately writes the pair bounding a broken
+/// chain — which is exactly what makes a *mis-placed* one invisible.
+#[test]
+fn a_compound_literal_is_never_called_by_what_follows_it() {
+    for src in [
+        "int * p = (int[]){1, 2} + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc;\n",
+        "int q = (struct s){1, 2}.a + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccccccccccc;\n",
+        "int * r = ((int[]){1, 2} + aaaaaaaaaaaaaaaaaaaa) + bbbbbbbbbbbbbbbbbbbb + cccccccccccccccccc;\n",
+        "void f(void) {\n\tg((int[]){1, 2} + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb, 1);\n}\n",
+        "int * s = (int[]){1, 2} + a;\n",
+    ] {
+        for width in 1..=120 {
+            let once = jphfmt::format_with_width(src, width);
+            assert!(
+                !once.contains("}(") && !once.contains("} ("),
+                "width {width}: a call on the literal: {once:?}"
+            );
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "width {width}"
+            );
+        }
+    }
+}
+
 /// A sole argument's span is the call's own parentheses, so it is already bounded. A sole `{}`
 /// element is not: its list writes a trailing comma on the break, which is what made unbounded arms
 /// read as elements in the first place.

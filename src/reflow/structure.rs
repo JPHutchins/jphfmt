@@ -11,9 +11,9 @@ use super::builders::{
 };
 use super::scope::scoped;
 use super::tokens::{
-    closes_literal_type, contains_comment, directive_end, enum_body_brace, has_middle_newline,
-    has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break, is_comment,
-    is_control_keyword, is_excluded_callee, is_trivia, match_brace, match_bracket,
+    closes_block, closes_literal_type, contains_comment, directive_end, enum_body_brace,
+    has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break,
+    is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace, match_bracket,
     match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
     respaced_when_joined, split_brace_line_comment, statement_end,
 };
@@ -241,18 +241,25 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
 }
 
 /// Whether the token at `i` opens a statement: nothing precedes it, or what does ended the previous
-/// one — a `;`, either brace, an `else`, or the `)` of a braceless `if`/`for`/`while`/`switch` header.
-/// A property of the token stream, not of what has been emitted so far: any other `)` is inside the
-/// statement, which some handler has already claimed from its first token.
+/// one — a `;`, a `{`, a block's `}`, an `else`, or the `)` of a braceless `if`/`for`/`while`/`switch`
+/// header. A property of the token stream, not of what has been emitted so far: any other `)` is
+/// inside the statement, which some handler has already claimed from its first token.
+///
+/// A `}` that closes a value ends no statement (#88), and reading one as if it did is what let a chain
+/// after a compound literal be claimed as a statement of its own: the parentheses bounding it landed
+/// against the literal, making it a *call* on it, and the output did not compile.
 fn starts_statement(toks: &[Token], i: usize) -> bool {
     let Some(k) = prev_nontrivia(toks, i) else {
         return true;
     };
-    matches!(toks[k].text, ";" | "{" | "}" | "else")
-        || (toks[k].text == ")"
-            && match_open_paren(toks, k)
-                .and_then(|open| prev_nontrivia(toks, open))
-                .is_some_and(|head| is_control_keyword(toks[head].text)))
+    match toks[k].text {
+        ";" | "{" | "else" => true,
+        "}" => closes_block(toks, k),
+        ")" => match_open_paren(toks, k)
+            .and_then(|open| prev_nontrivia(toks, open))
+            .is_some_and(|head| is_control_keyword(toks[head].text)),
+        _ => false,
+    }
 }
 
 /// Format a `#define`: a function-like macro whose body is a single call/`_Generic` or a
