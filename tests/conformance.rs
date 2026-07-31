@@ -751,9 +751,12 @@ fn a_for_clause_is_an_element_of_its_header() {
     );
 }
 
-/// The clauses that were already right stay right: a header that fits is untouched, an empty clause is
-/// not an element, and a clause holding a depth-zero `,` is a list rather than one expression, so
-/// nothing bounds it (`is_boundable`).
+/// The clauses that were already right stay right: a header that fits is untouched, and a clause
+/// holding a depth-zero `,` is a list rather than one expression, so nothing bounds it
+/// (`is_boundable`).
+///
+/// An empty clause is an element like any other, and takes no space after the separator that ends it
+/// (#85) — so the most idiomatic loop in C round-trips, wherever the hole is.
 #[test]
 fn an_ordinary_for_header_is_unchanged() {
     for src in [
@@ -761,14 +764,26 @@ fn an_ordinary_for_header_is_unchanged() {
         "for (int i = 0, j = n; i < j; i++, j--) {\n\tg();\n}\n",
         "for (i = a ? b : c; i < n; i++) {\n\tg();\n}\n",
         "for (i = 0; i < n; i++);\n",
+        "for (;;) {\n\tg();\n}\n",
+        "for (; i < n;) {\n\tg();\n}\n",
+        "for (i = 0;;) {\n\tg();\n}\n",
+        "for (;; i++) {\n\tg();\n}\n",
     ] {
         assert_eq!(format(src), src, "input {src:?}");
     }
-    // An empty clause still takes the space after its separator, so `for (;;)` is respaced. #85,
-    // pre-existing and unchanged here — pinned so a fix for it shows up as this test failing.
+}
+
+/// #85: an empty clause takes no *space* after its separator, which is not the same as taking no
+/// separator. The broken form still puts every clause on its own line — the header is one container,
+/// and a clause that happens to be empty is still one of its elements.
+#[test]
+fn an_empty_for_clause_still_breaks_onto_its_own_line() {
     assert_eq!(
-        format("for (;;) {\n\tg();\n}\n"),
-        "for (; ; ) {\n\tg();\n}\n"
+        format(
+            "for (;; iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii++, jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj++) {\n\tg();\n}\n"
+        ),
+        "for (\n\t;\n\t;\n\tiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii++, \
+         jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj++\n) {\n\tg();\n}\n"
     );
 }
 

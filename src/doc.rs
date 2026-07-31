@@ -53,6 +53,20 @@ impl Doc {
     pub fn nest(inner: Doc) -> Doc {
         Doc::Nest(Box::new(inner))
     }
+    /// Whether this renders as nothing at every width. Only text can: every other variant either
+    /// writes something or is a break, which is not nothing.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Doc::Text(text) => text.is_empty(),
+            Doc::Concat(items) => items.iter().all(Doc::is_empty),
+            Doc::Nest(inner) => inner.is_empty(),
+            Doc::Line
+            | Doc::SoftLine
+            | Doc::Group(_)
+            | Doc::IfBreak { .. }
+            | Doc::ForceBreak(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -296,5 +310,33 @@ mod tests {
         assert_eq!(render(&doc, 4, 0, 0), "def\nx y");
         // Width 2: both groups overflow; inner Line uses Nest indentation (level 1).
         assert_eq!(render(&doc, 2, 0, 0), "def\nx\n\ty");
+    }
+
+    #[test]
+    fn is_empty_is_renders_as_nothing() {
+        for doc in [
+            Doc::text(""),
+            Doc::concat([]),
+            Doc::concat([Doc::text(""), Doc::text("")]),
+            Doc::nest(Doc::text("")),
+        ] {
+            assert_eq!(render(&doc, 80, 0, 0), "");
+            assert!(doc.is_empty(), "{doc:?}");
+        }
+        // A break renders as nothing only when flat, and the flat form is not the only one.
+        for doc in [
+            Doc::text(" "),
+            Doc::SoftLine,
+            Doc::Line,
+            Doc::concat([Doc::text(""), Doc::SoftLine]),
+            Doc::group(Doc::text("")),
+            Doc::IfBreak {
+                broken: ",".to_owned(),
+                flat: String::new(),
+            },
+            Doc::ForceBreak(Box::new(Doc::text(""))),
+        ] {
+            assert!(!doc.is_empty(), "{doc:?}");
+        }
     }
 }
