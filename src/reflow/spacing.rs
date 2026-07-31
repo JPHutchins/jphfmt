@@ -3,6 +3,12 @@
 //! this never changes meaning. Runs before structuring so the layout measures final widths
 //! (otherwise a later space could widen a line and flip a fits/explode decision on the next pass,
 //! breaking idempotency).
+//!
+//! Two gaps belong to nobody here, and a rule that writes one is a bug in every rule's shape:
+//! the gap before a `\` line continuation, which the layout writes (`emit_define` writes ` \`), and
+//! the gap before a comment, which [`collapse_runs`] preserves as the author positioned it (§2.1).
+//! `reflow::tests::the_output_is_a_fixpoint_of_the_spacing_pass` catches the first, since the layout
+//! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
     can_precede_cast, closes_literal_type, ends_value, heads_body, is_callee_ident,
@@ -246,9 +252,14 @@ fn space_pointers(pieces: &mut [Piece]) {
             // layout writes `struct s * \`, so the two passes spelled the same tokens differently —
             // a disagreement `format_with_width` is a fixpoint of only because the layout runs
             // second, and `reflow::tests` now asserts it does not happen.
+            //
+            // Nor is a comment. [`collapse_runs`] passes `keep_inline_run` for one precisely so its
+            // gap survives as the author positioned it (§2.1), and clearing it here made the two
+            // rules of a single pass disagree: `struct s * /* c */ x` came out `struct s */* c */ x`.
             if let Some(after) = pieces.get_mut(k + 1)
                 && same_line(&after.0)
                 && after.1.text != "\\"
+                && !is_comment(&after.1)
             {
                 after.0 = if after.1.kind == TokenKind::Ident {
                     " ".to_owned()

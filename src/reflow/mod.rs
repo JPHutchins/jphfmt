@@ -179,29 +179,37 @@ mod tests {
         if respaced == out {
             return Ok(());
         }
-        let (a, b) = out
-            .lines()
-            .zip(respaced.lines())
-            .find(|(a, b)| a != b)
-            .unwrap_or(("<line count>", "<line count>"));
-        Err(format!("layout wrote {a:?}, the spacing pass writes {b:?}"))
+        // Whole strings when no line disagrees: `str::lines` drops a trailing newline and stops at the
+        // shorter side, so a difference in either is a difference this zip cannot show.
+        match out.lines().zip(respaced.lines()).find(|(a, b)| a != b) {
+            Some((a, b)) => Err(format!("layout wrote {a:?}, the spacing pass writes {b:?}")),
+            None => Err(format!(
+                "layout wrote {out:?}, the spacing pass writes {respaced:?}"
+            )),
+        }
     }
 
     /// Every fixture the repo keeps, at the default width.
+    ///
+    /// Every read is unwrapped rather than skipped. A fixture this silently passed over would be a
+    /// green run reporting coverage it did not have, which is the failure mode the check exists to
+    /// close.
     #[test]
     fn the_output_is_a_fixpoint_of_the_spacing_pass() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let cases = std::fs::read_dir(root.join("tests/cases")).expect("read tests/cases");
+        let read_dir = |dir: std::path::PathBuf| {
+            std::fs::read_dir(&dir)
+                .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+                .map(|entry| entry.expect("dir entry").path())
+        };
         let files = [root.join("tests/golden.c"), root.join("tests/messy.c")]
             .into_iter()
-            .chain(cases.flatten().flat_map(|shape| {
-                std::fs::read_dir(shape.path())
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .map(|f| f.path())
-                    .filter(|p| p.extension().is_some_and(|x| x == "c"))
-            }));
+            .chain(
+                read_dir(root.join("tests/cases"))
+                    .filter(|shape| shape.is_dir())
+                    .flat_map(read_dir)
+                    .filter(|p| p.extension().is_some_and(|x| x == "c")),
+            );
         for path in files {
             let src = std::fs::read_to_string(&path).expect("read fixture");
             if let Err(why) = is_a_spacing_fixpoint(&src, DEFAULT_WIDTH) {
