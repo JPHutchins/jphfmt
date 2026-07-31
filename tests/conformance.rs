@@ -155,6 +155,42 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
     assert_eq!(format(src), expected);
 }
 
+/// The gap between a `#define`'s name and a `(` is meaning, not spacing: `#define X (y)` defines `X` as
+/// `(y)`, and `#define X(y)` a function-like macro taking `y`. Tightening it turned every object-like
+/// macro with a parenthesized body into a function-like one, and the output did not compile.
+///
+/// Invisible to every check in the suite, which is why it survived: the character dropped is whitespace,
+/// which every excuse set removes by design, and `#define X(y)` is a fixpoint. 478 of the 1200 corpus
+/// files write the shape, and glibc's `elf.h` came out with 100 compiler errors.
+#[test]
+fn a_macro_name_keeps_the_gap_that_says_what_it_defines() {
+    for src in [
+        "#define X (y)\n",
+        "#define SECURE_FLAG (1 << 3)\n",
+        "#define WEOF (0xffffffffu)\n",
+        // A function-like macro's name is tight, and stays tight.
+        "#define F(x) ((x) + 1)\n",
+        "#define MIN(a, b) ((a) < (b) ? (a) : (b))\n",
+    ] {
+        assert_eq!(format(src), src, "the author's gap is the definition");
+    }
+    // The `#`-to-keyword gap belongs to the scope pass, and still collapses.
+    assert_eq!(format("# define H (c)\n"), "#define H (c)\n");
+    // A comment is whitespace by the time the preprocessor reads the line, so it defines the same thing
+    // — and the walk back to the `#` has to read past it, since a comment is a token of its own.
+    for src in [
+        "#define /* c */ X (y)\n",
+        "#/* c */ define Y (z)\n",
+        "#define /* c */ F(x) ((x) + 1)\n",
+    ] {
+        assert_eq!(
+            format(src),
+            src,
+            "a comment does not change what is defined"
+        );
+    }
+}
+
 /// The structure pass measures a `#define` at the `#if` depth the scope pass will indent it to, and
 /// nothing else asserts the two agree. This define's line is 94 columns: it fits at depth 0 and
 /// overruns at depth 2, so it explodes only if those 8 columns were counted.
