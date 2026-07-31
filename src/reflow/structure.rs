@@ -716,6 +716,10 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             // so Unknown tokens containing multiple lines don't inflate the reserve.
             _ => match t.text.find('\n') {
                 Some(nl) => return width + pending + display_width(t.text[..nl].trim_end()),
+                // The last token's trailing whitespace does not reach the output either — an
+                // unterminated string or char literal carries it *inside* the token, so `pending`
+                // never sees it, and `normalize_endings` trims it from the file's end (#102).
+                None if j + 1 == toks.len() => t.text.trim_end(),
                 None => t.text,
             },
         };

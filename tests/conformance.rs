@@ -1075,6 +1075,30 @@ fn a_head_less_binary_chain_is_bounded_like_a_ternary() {
     assert_eq!(format(src), expected);
 }
 
+/// #102: whitespace that ends the file never reaches the output — `normalize_endings` trims it — so
+/// reserving for it measures a line this pass is about to shorten, and the next pass reaches a different
+/// verdict. `trailing_reserved` says exactly that about a whitespace *run*, but an unterminated string or
+/// char literal carries the whitespace *inside* the token, where that guard cannot see it.
+///
+/// A third piece of #84's fallout: before an index was a container, nothing here had a decision to be
+/// inconsistent about. Reduced from a `proptest` failure at 200k cases.
+#[test]
+fn whitespace_that_ends_the_file_reserves_nothing() {
+    for (src, width) in [
+        ("A_[A * a < aA *]\"xxxx ", 21),
+        ("A_[A * a < aA *]\'x ", 19),
+        // The same tail with a newline after it is already fine, and must stay so.
+        ("A_[A * a < aA *]\"xxxx \n", 21),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "{src:?} at width {width} -> {once:?}"
+        );
+    }
+}
+
 /// The gap before a subscript is tight however it was written (§2.5) — a newline included, because the
 /// layout collapses it and `space_subscripts` would tighten what the layout wrote. #84 added the spacing
 /// rule without the layout's half, so `A\n[0] + b;` became `A [0] + b;` on the first run and `A[0] + b;`
