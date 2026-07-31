@@ -393,6 +393,13 @@ fn without_continuations<'src>(toks: &[Token<'src>]) -> Vec<Token<'src>> {
 fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<Define<'src>> {
     let define = next_nontrivia_in(toks, start + 1, end)?;
     let name = next_nontrivia_in(toks, define + 1, end)?;
+    // A `\` is not a name. `from_hash` flattens the continuations inside the head, so splitting here
+    // would delete this one with nothing to write it back — and what follows it is then read as the
+    // body rather than as the name, which is how `#define \` + `(})` came out as `#define (})`. §6
+    // prefers passthrough, and a continued name is not a shape this needs to lay out.
+    if is_backslash(&toks[name]) {
+        return None;
+    }
     let function_like = toks
         .get(name + 1)
         .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");

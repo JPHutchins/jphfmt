@@ -220,6 +220,26 @@ fn a_statement_expression_body_keeps_what_follows_it() {
     assert_eq!(format(leading), leading);
 }
 
+/// A `#define` whose name is a line continuation is not one to split. `split_define` flattens the
+/// continuations inside the head, so there is nothing to write this one back, and what follows it is
+/// read as the body rather than as the name — `#define \` + `(})` came out as `#define (})`, which
+/// `space_call_heads` then tightened to `#define(})` on the next pass.
+///
+/// Found by the 200k property run on the branch that made the body claimable; before that the body was
+/// passed through, which masked the loss.
+#[test]
+fn a_continued_macro_name_is_not_a_name_to_split() {
+    for src in [
+        "#define\\\n(})",
+        "#define \\\nNAME 1\n",
+        "#define NAME\\\n(x) x + 1\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "{src:?}");
+        assert!(once.contains('\\'), "the continuation survives: {once:?}");
+    }
+}
+
 /// The gap between a `#define`'s name and a `(` is meaning, not spacing: `#define X (y)` defines `X` as
 /// `(y)`, and `#define X(y)` a function-like macro taking `y`. Tightening it turned every object-like
 /// macro with a parenthesized body into a function-like one, and the output did not compile.
