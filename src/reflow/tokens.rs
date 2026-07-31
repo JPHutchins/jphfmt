@@ -11,6 +11,27 @@ pub(super) fn is_callee_ident(t: &Token) -> bool {
     t.kind == TokenKind::Ident && !is_excluded_callee(t.text) && !is_type_context(t.text)
 }
 
+/// Whether `t` can end the value a `[` subscripts: an identifier that names something rather than
+/// introducing a construct, a literal, or the `)`/`]` that closes one. Nothing else can be indexed, so
+/// a `[` after anything else opens something other than a subscript — a `{}` list's designator, or an
+/// attribute.
+pub(super) fn ends_value(t: &Token) -> bool {
+    match t.kind {
+        TokenKind::Ident => is_callee_ident(t),
+        TokenKind::Number | TokenKind::String | TokenKind::Char => true,
+        // `)` closes a call or a parenthesized expression, `]` an earlier subscript, and `}` a
+        // compound literal, which is an lvalue a subscript may index: `(int[]){1, 2}[0]`. Nothing
+        // else in valid C puts a `}` before a `[` — a struct definition or a block there is a
+        // syntax error, and an attribute's `[[` is excluded by its second bracket.
+        TokenKind::Punct => matches!(t.text, ")" | "]" | "}"),
+        // Postfix `++`/`--` end their operand, so `p++[i]` is `(p++)[i]`. The prefix forms cannot
+        // appear here: `++arr[i]` puts the operator before the identifier, not before the `[`.
+        // [`is_value_start`] carves the same two out for the mirror-image question.
+        TokenKind::Operator => matches!(t.text, "++" | "--"),
+        _ => false,
+    }
+}
+
 /// A control keyword whose `(` heads a clause, not an argument list.
 pub(super) fn is_control_keyword(text: &str) -> bool {
     matches!(text, "if" | "for" | "while" | "switch")
@@ -473,23 +494,11 @@ fn is_binary_position(inner: &[Token], j: usize) -> bool {
     if !next_nontrivia(inner, j + 1).is_some_and(|k| is_value_start(&inner[k])) {
         return false;
     }
-    prev_nontrivia(inner, j).is_some_and(|k| match inner[k].kind {
-        TokenKind::Ident => is_callee_ident(&inner[k]),
-        TokenKind::Number | TokenKind::String | TokenKind::Char => true,
-        // A `)` that closes a *type* ends no value: `(PyObject *) &x` is an address-of, not a
-        // bitwise-and, and the same holds for the `-`/`+` a cast can precede.
-        TokenKind::Punct => match inner[k].text {
-            ")" => !closes_type_paren(inner, k),
-            "]" => true,
-            _ => false,
-        },
-        // A postfix `++`/`--` ends a value as much as its operand does.
-        TokenKind::Operator => matches!(inner[k].text, "++" | "--"),
-        TokenKind::Newline
-        | TokenKind::Whitespace
-        | TokenKind::Unknown
-        | TokenKind::LineComment
-        | TokenKind::BlockComment => false,
+    prev_nontrivia(inner, j).is_some_and(|k| {
+        // The same question [`ends_value`] answers, with one refinement: a `)` that closes a *type*
+        // ends no value, so `(PyObject *) &x` is an address-of rather than a bitwise-and, and the
+        // same holds for the `-`/`+` a cast can precede.
+        ends_value(&inner[k]) && !(inner[k].text == ")" && closes_type_paren(inner, k))
     })
 }
 
