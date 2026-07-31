@@ -10,9 +10,9 @@
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident,
-    is_ternary_chain, is_trivia, match_brace, match_bracket, spans_lines, split_chain,
-    split_designators, split_on_commas, split_top_level,
+    ends_value, has_non_trivia, has_top_level, has_top_level_question, is_balanced,
+    is_callee_ident, is_ternary_chain, is_trivia, match_brace, match_bracket, spans_lines,
+    split_chain, split_designators, split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -147,6 +147,19 @@ fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, sp
     }
 }
 
+/// Whether the `[` at `open` subscripts the value before it, so §2.5 writes it tight — the mirror of
+/// [`call_head_before`], and load-bearing for the same reason: `space_subscripts` tightens a same-line gap
+/// on the next pass, so a gap collapsed to a *space* here would make this pass's output a fixpoint of that
+/// one instead of itself.
+fn subscripts_before(toks: &[Token], open: usize) -> bool {
+    toks[open].text == "["
+        && toks.get(open + 1).is_none_or(|next| next.text != "[")
+        && (0..open)
+            .rev()
+            .find(|&k| !is_trivia(&toks[k]))
+            .is_some_and(|k| ends_value(&toks[k]))
+}
+
 fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
@@ -193,14 +206,21 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
             && let Some(close) = match_bracket(toks, j)
             && let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing)
         {
-            flush_pending(&mut text, &mut parts, &mut pending_space, true);
+            flush_pending(
+                &mut text,
+                &mut parts,
+                &mut pending_space,
+                !subscripts_before(toks, j),
+            );
             parts.push(group);
             j = close + 1;
         } else {
-            if pending_space {
+            // A `[` the author left a gap before is still tight (§2.5), even when the index has nothing
+            // to lay out and falls through to here: a space would be tightened on the next pass.
+            if pending_space && !subscripts_before(toks, j) {
                 text.push(' ');
-                pending_space = false;
             }
+            pending_space = false;
             text.push_str(t.text);
             j += 1;
         }
