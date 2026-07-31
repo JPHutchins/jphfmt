@@ -155,11 +155,13 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             continue;
         }
 
-        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression.
+        // An initializer brace: in an `= ... ;` region, a `{` that is not a statement-expression and
+        // not a `struct`/`union` definition's own body.
         if in_init
             && t.kind == TokenKind::Punct
             && t.text == "{"
             && last_nonspace_char(out) != Some('(')
+            && !opens_definition_body(toks, i)
             && match_brace(toks, i).is_some()
         {
             i = emit_brace(toks, i, false, out, col, width);
@@ -238,6 +240,21 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         emit_str(out, col, t.text);
         i += 1;
     }
+}
+
+/// Whether the `{` at `open` opens a `struct`/`union` definition's member list — the body of the type an
+/// anonymous compound literal names, `(struct { int x; }){1}`. Its members are `;`-terminated rather than
+/// `,`-separated, so it is not the container [`build_brace_doc`] lays out: exploding it wrote §2.3's magic
+/// comma into a member list, `{ int x;, }`, which does not compile (#95). Emitted verbatim instead, which
+/// keeps the author's spacing too.
+///
+/// Only reachable inside an `= … ;` region — a definition elsewhere never enters the initializer handler.
+/// An `enum` body *is* a comma list, and has its own handler ([`enum_body_brace`]).
+fn opens_definition_body(toks: &[Token], open: usize) -> bool {
+    let tags = |k: usize| matches!(toks[k].text, "struct" | "union");
+    prev_nontrivia(toks, open).is_some_and(|k| {
+        tags(k) || (toks[k].kind == TokenKind::Ident && prev_nontrivia(toks, k).is_some_and(tags))
+    })
 }
 
 /// Whether the token at `i` opens a statement: nothing precedes it, or what does ended the previous
