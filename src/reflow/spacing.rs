@@ -399,7 +399,7 @@ fn space_semicolons(pieces: &mut [Piece]) {
 fn space_call_heads(pieces: &mut [Piece]) {
     for j in 0..pieces.len().saturating_sub(1) {
         let next_is_paren = pieces[j + 1].1.kind == TokenKind::Punct && pieces[j + 1].1.text == "(";
-        if !(next_is_paren && same_line(&pieces[j + 1].0)) {
+        if !(next_is_paren && same_line(&pieces[j + 1].0)) || names_a_macro(pieces, j) {
             continue;
         }
         if is_callee_ident(&pieces[j].1) {
@@ -408,6 +408,17 @@ fn space_call_heads(pieces: &mut [Piece]) {
             pieces[j + 1].0 = " ".to_owned();
         }
     }
+}
+
+/// Whether the token at `j` is the name in a `#define`, where the gap before a `(` is not spacing but
+/// meaning: `#define X (y)` defines `X` as `(y)`, and `#define X(y)` a function-like macro taking `y`.
+/// Neither spelling may become the other, so the author's gap stands exactly as written (§6).
+///
+/// Tightening it turned every object-like macro whose body is parenthesized into a function-like one, and
+/// the output did not compile — the most common shape in the corpus that jphfmt got wrong, and invisible
+/// to every check because the character it dropped was whitespace.
+fn names_a_macro(pieces: &[Piece], j: usize) -> bool {
+    j >= 2 && pieces[j - 1].1.text == "define" && pieces[j - 2].1.text == "#"
 }
 
 /// A subscript is tight against what it indexes, exactly as a call is tight against its callee
@@ -631,6 +642,15 @@ mod tests {
     fn space_call_heads_spaces_control() {
         assert_eq!(space_tokens("if ("), "if (");
         assert_eq!(space_tokens("if\t("), "if (");
+    }
+
+    #[test]
+    fn space_call_heads_leaves_a_macro_name_alone() {
+        // The gap is the definition: object-like keeps its space, function-like keeps its tightness.
+        assert_eq!(space_tokens("#define X (y)"), "#define X (y)");
+        assert_eq!(space_tokens("#define F(x) x"), "#define F(x) x");
+        // A call elsewhere on a `#define` line is still tightened.
+        assert_eq!(space_tokens("#define F(x) g (x)"), "#define F(x) g(x)");
     }
 
     #[test]
