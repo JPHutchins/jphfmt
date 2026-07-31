@@ -742,6 +742,36 @@ fn an_ordinary_for_header_is_unchanged() {
     );
 }
 
+/// #77: a statement in a statement-expression body is an element of that body, not a bare expression.
+/// A ternary chain in one therefore reads as the map it is, bounded — unbounded, its arms would sit at
+/// the statement indent and read as further statements (#59).
+#[test]
+fn a_statement_expression_body_holds_elements() {
+    assert_eq!(
+        format("int x = ({ int t = a ? b : c ? d : e; t * 2; });\n"),
+        "int x = ({\n\tint t = (\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t);\n\tt * 2;\n});\n"
+    );
+    // A head-less chain is bounded by the same rule that bounds a `{}` element's (#63).
+    assert_eq!(
+        format("int y = ({ g(); a ? b : c ? d : e; });\n"),
+        "int y = ({\n\tg();\n\t(\n\t\ta ? b :\n\t\tc ? d :\n\t\te\n\t);\n});\n"
+    );
+    // A body whose statements fit still explodes at its `;` — that is the statement-expression rule,
+    // unchanged — but nothing inside a statement is bounded, and one `?` is one conditional.
+    for (src, expected) in [
+        (
+            "int z = ({ int t = larger; t * 2; });\n",
+            "int z = ({\n\tint t = larger;\n\tt * 2;\n});\n",
+        ),
+        (
+            "int w = ({ int t = a ? b : c; t; });\n",
+            "int w = ({\n\tint t = a ? b : c;\n\tt;\n});\n",
+        ),
+    ] {
+        assert_eq!(format(src), expected, "input {src:?}");
+    }
+}
+
 #[test]
 fn long_binary_chain_explodes_with_trailing_operators() {
     // §2.2/§2.7: an operator chain is a container like any other, so it breaks one operand per line

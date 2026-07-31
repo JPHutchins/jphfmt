@@ -147,7 +147,7 @@ fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, sp
     }
 }
 
-pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
+fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
     {

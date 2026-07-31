@@ -7,7 +7,7 @@
 
 use super::builders::{
     Bound, Fit, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
-    build_cond_doc, build_expr_doc, build_for_doc, group_bracketing,
+    build_cond_doc, build_element_doc, build_for_doc, group_bracketing,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -477,8 +477,11 @@ fn format_stmt_expr(
         .iter()
         .chain(has_non_trivia(trailing).then_some(trailing))
         .map(|s| {
+            // An element, not a bare expression: a chain or ternary here has siblings, so it is
+            // bounded when it breaks — unbounded, its arms would sit at the statement indent and
+            // read as further statements of the body (#59, #77).
             render(
-                &build_expr_doc(s),
+                &build_element_doc(s, Bound::Parens),
                 width.saturating_sub(1),
                 stmt_col,
                 base_level + 1,
