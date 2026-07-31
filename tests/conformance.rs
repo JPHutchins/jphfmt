@@ -1184,6 +1184,29 @@ fn an_empty_macro_argument_keeps_the_comma_that_spells_it() {
         format("int r = PICK_LAST(x, y, );\n"),
         "int r = PICK_LAST(x, y,);\n"
     );
+    // A `{}` list holds a hole the same way, and the call-level passthrough cannot see one: the braces put
+    // it a bracket deeper, so `split_on_commas` at the call level sees a non-empty argument. The review on
+    // #96 found this, and `MACRO({a, , b}, c)` is the shape that reaches it from valid-ish C.
+    for src in [
+        "int x[] = {1, , 2};\n",
+        "int f(void) {\n\treturn MACRO({a, , b}, c);\n}\n",
+    ] {
+        let once = format(src);
+        assert_eq!(
+            once.matches(',').count(),
+            src.matches(',').count(),
+            "{src:?} -> {once:?}"
+        );
+        assert_eq!(format(&once), once);
+    }
+    // The trailing empty element is §2.3's magic comma, not a hole — it still forces the break and is
+    // still written. And `{,}` holds nothing apart, so it is still the empty list.
+    assert_eq!(
+        format("int a[] = {1, 2,};\n"),
+        "int a[] = {\n\t1,\n\t2,\n};\n"
+    );
+    assert_eq!(format("int b[] = {,};\n"), "int b[] = {};\n");
+
     // Passing through costs the layout: an over-width list with a hole stays over-width (§6).
     let long = format!(
         "int t = G({a}, , {b}, {c}, dddddddddddd);\n",
