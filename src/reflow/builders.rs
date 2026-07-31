@@ -217,14 +217,32 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
 
 /// `segments` with `seps[i]` trailing segment `i`: flat `a sep b`, or one element per line with the
 /// separator ending each (§2.4, §2.7).
+///
+/// The gap after a separator is what the element following it is worth: a [`Doc::Line`] before content,
+/// a [`Doc::SoftLine`] before nothing. So an empty element takes no space in the flat form — `for (;;)`,
+/// not `for (; ; )` (#85) — while the broken form is untouched, because both break the same way.
+///
+/// One gap per separator, and there is a separator between elements only — so a `seps` longer than the
+/// gaps has no last element to separate from, and the `zip` drops it. No caller writes one; the trailing
+/// separator a container does write is `build_container`'s own, which knows its bracket.
 fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
-    let mut seps = seps.into_iter();
+    let gaps = segments
+        .iter()
+        .skip(1)
+        .map(|next| {
+            if next.is_empty() {
+                Doc::SoftLine
+            } else {
+                Doc::Line
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut seps = seps.into_iter().zip(gaps);
     let mut items = Vec::with_capacity(segments.len() * 3);
     for seg in segments {
         items.push(seg);
-        if let Some(sep) = seps.next() {
-            items.push(Doc::text(sep));
-            items.push(Doc::Line);
+        if let Some((sep, gap)) = seps.next() {
+            items.extend([Doc::text(sep), gap]);
         }
     }
     items
