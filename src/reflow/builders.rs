@@ -504,18 +504,6 @@ fn segment_docs(segments: &[&[Token]]) -> Vec<Doc> {
     segments.iter().map(|s| build_expr_doc(s)).collect()
 }
 
-/// Split `inner` on the depth-zero separators `is_sep` selects, build each segment as its own
-/// expression [`Doc`], and lay them out inside the author's parentheses with `sep` trailing all but
-/// the last — the shared shape of a ternary chain, a `for` header, and a logical-operator condition.
-fn build_clause_doc(inner: &[Token], is_sep: impl Fn(&Token) -> bool, sep: &str) -> Doc {
-    if !is_balanced(inner) {
-        return Doc::Text(format!("({})", render_segment(inner)));
-    }
-    let segments: Vec<&[Token]> = split_top_level(inner, is_sep);
-    let seps = vec![sep.to_owned(); segments.len().saturating_sub(1)];
-    build_container(&PARENS, segment_docs(&segments), seps, None, Fit::Measured)
-}
-
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
 fn render_segment(toks: &[Token]) -> String {
     let mut s = String::new();
@@ -578,8 +566,22 @@ pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) ->
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
+///
+/// Each clause is an *element* of this container, not a bare expression, so a chain or ternary inside
+/// one is bounded when it breaks (#77). Unbounded, its arms would sit at the clause indent and read as
+/// further clauses — the same reason a call's arguments bound theirs (#59) — and a ternary chain
+/// forces the break, so `for (i = a ? b : c ? d : e; …)` reads as the map it is.
 pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
-    build_clause_doc(inner, |t| t.kind == TokenKind::Punct && t.text == ";", ";")
+    if !is_balanced(inner) {
+        return Doc::Text(format!("({})", render_segment(inner)));
+    }
+    let clauses = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";");
+    let seps = vec![";".to_owned(); clauses.len().saturating_sub(1)];
+    let docs = clauses
+        .iter()
+        .map(|c| build_element_doc(c, Bound::Parens))
+        .collect();
+    build_container(&PARENS, docs, seps, None, Fit::Measured)
 }
 
 /// An `if`/`while`/`switch` condition — split on its loosest-binding operator with that operator
@@ -593,7 +595,17 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
-    build_clause_contents(inner, &PARENS).unwrap_or_else(|| build_clause_doc(inner, |_| false, ""))
+    build_clause_contents(inner, &PARENS).unwrap_or_else(|| {
+        // No depth-zero operator to split at, so the whole condition is one element: an overlong one
+        // still breaks away from the `if (` and the `) {` rather than overrunning them.
+        build_container(
+            &PARENS,
+            vec![build_expr_doc(inner)],
+            Vec::new(),
+            None,
+            Fit::Measured,
+        )
+    })
 }
 
 #[cfg(test)]
