@@ -10,9 +10,10 @@
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    has_non_trivia, has_top_level, has_top_level_question, is_balanced, is_callee_ident,
-    is_ternary_chain, is_trivia, match_brace, match_bracket, spans_lines, split_chain,
-    split_designators, split_on_commas, split_top_level,
+    closes_literal_type, ends_value, has_non_trivia, has_top_level, has_top_level_question,
+    is_balanced, is_callee_ident, is_ternary_chain, is_trivia, match_brace, match_bracket,
+    next_nontrivia, prev_nontrivia, spans_lines, split_chain, split_designators, split_on_commas,
+    split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -135,8 +136,8 @@ pub(super) fn group_bracketing(t: &Token) -> Option<&'static Bracketing<'static>
 }
 
 /// Flush the text accumulated so far into `parts`, so a nested group can be pushed as its own [`Doc`].
-/// `space` is whether a pending gap becomes one: every bracket keeps it except a call's `(`, which §2.5
-/// writes tight against its callee.
+/// `space` is whether a pending gap becomes one. A bracket §2.5 writes tight drops it instead: a call's
+/// `(` against its callee, and whatever [`tight_against_previous`] recognizes.
 fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, space: bool) {
     if space && *pending && !text.is_empty() {
         text.push(' ');
@@ -144,6 +145,24 @@ fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, sp
     *pending = false;
     if !text.is_empty() {
         parts.push(Doc::Text(std::mem::take(text)));
+    }
+}
+
+/// Whether the bracket at `open` is written tight against what precedes it (§2.5): a subscript's `[`
+/// against the value it indexes, or a compound literal's `{` against its `(T)`.
+///
+/// The mirror of [`call_head_before`], and load-bearing for the same reason — see its doc. Reads the next
+/// *significant* token for the `[[` carve-out, because `space_subscripts` reads a trivia-stripped list and
+/// the two must see the same thing.
+fn tight_against_previous(toks: &[Token], open: usize) -> bool {
+    let previous = prev_nontrivia(toks, open);
+    match toks.get(open).map(|t| t.text) {
+        Some("[") => {
+            next_nontrivia(toks, open + 1).is_none_or(|next| toks[next].text != "[")
+                && previous.is_some_and(|k| ends_value(&toks[k]))
+        }
+        Some("{") => previous.is_some_and(|k| toks[k].text == ")" && closes_literal_type(toks, k)),
+        _ => false,
     }
 }
 
@@ -174,7 +193,12 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
             && t.text == "{"
             && let Some(close) = match_brace(toks, j)
         {
-            flush_pending(&mut text, &mut parts, &mut pending_space, true);
+            flush_pending(
+                &mut text,
+                &mut parts,
+                &mut pending_space,
+                !tight_against_previous(toks, j),
+            );
             parts.push(build_brace_doc(&toks[j + 1..close], false));
             j = close + 1;
         } else if t.kind == TokenKind::Punct
@@ -193,14 +217,21 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
             && let Some(close) = match_bracket(toks, j)
             && let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing)
         {
-            flush_pending(&mut text, &mut parts, &mut pending_space, true);
+            flush_pending(
+                &mut text,
+                &mut parts,
+                &mut pending_space,
+                !tight_against_previous(toks, j),
+            );
             parts.push(group);
             j = close + 1;
         } else {
-            if pending_space {
+            // A bracket the author left a gap before is still tight (§2.5), even when it has nothing to
+            // lay out and falls through to here: a space would be tightened on the next pass.
+            if pending_space && !tight_against_previous(toks, j) {
                 text.push(' ');
-                pending_space = false;
             }
+            pending_space = false;
             text.push_str(t.text);
             j += 1;
         }

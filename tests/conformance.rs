@@ -1039,6 +1039,59 @@ fn a_head_less_binary_chain_is_bounded_like_a_ternary() {
     assert_eq!(format(src), expected);
 }
 
+/// The gap before a subscript is tight however it was written (§2.5) — a newline included, because the
+/// layout collapses it and `space_subscripts` would tighten what the layout wrote. #84 added the spacing
+/// rule without the layout's half, so `A\n[0] + b;` became `A [0] + b;` on the first run and `A[0] + b;`
+/// on the second: the output was a fixpoint of the *spacing* pass rather than of itself.
+///
+/// The same trap `call_head_before` documents for a call's `(`, which is why the two now read the same
+/// way. Found by `proptest` at 200k cases, and reduced from `'':A\n[]?;`.
+#[test]
+fn a_subscript_is_tight_across_a_newline_too() {
+    for src in [
+        "A\n[0] + b;\n",
+        "arr\n[0] + arr\n[1];\n",
+        // The index has nothing to lay out, so it falls through to the plain token path.
+        "A\n[] + b;\n",
+        // An index that *does* lay out takes the group path instead.
+        "A\n[a ? b : c] + d;\n",
+        // Reduced from the proptest failures, which is what a fixpoint-of-another-pass looks like.
+        "'':A\n[]?;",
+        "({[[]&x\n[]]",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "{src:?} -> {once:?}");
+        assert!(
+            !once.contains(" ["),
+            "a gap before a subscript: {src:?} -> {once:?}"
+        );
+    }
+    // An attribute is not a subscript, and a designator ends no value, so neither is tightened. The
+    // second `[` may carry a gap of its own — `space_subscripts` reads a trivia-stripped list, so the
+    // layout has to look past the gap as well or the two passes disagree about what this is.
+    assert_eq!(
+        format("int x\n[[deprecated]];\n"),
+        "int x\n[[deprecated]];\n"
+    );
+    let spaced_attribute = "int f(void) {\n\tif (x [ [aaaa]] && bbbbbbbbbbbbbbbbbbbbbb) { return 1; }\n\treturn 0;\n}\n";
+    assert_eq!(format(spaced_attribute), spaced_attribute);
+}
+
+/// A compound literal's `{` is tight against its `(T)` for the same reason a subscript's `[` is: the
+/// review on #99 found the `{` branch carrying the trap this fixed for `[`, and it reproduced —
+/// `(struct s)⏎{1, 2}.a` in a condition became `(struct s) {1, 2}.a` on the first run and
+/// `(struct s){1, 2}.a` on the second, because `space_braces` tightens what the layout wrote.
+#[test]
+fn a_compound_literal_brace_is_tight_across_a_newline_too() {
+    let src = "int f(void) {\n\tif ((struct s)\n\t{1, 2}.a && bbbbbbbbbbbbbbbbbbbbbb) { return 1; }\n\treturn 0;\n}\n";
+    let once = format(src);
+    assert_eq!(format(&once), once, "{once:?}");
+    assert!(
+        once.contains("(struct s){1, 2}.a"),
+        "the literal's brace is tight: {once:?}"
+    );
+}
+
 /// #88: a compound literal is a value like any other, so the `}` that ends one ends a value and not a
 /// statement. Read as a statement boundary, what followed the literal became a statement of its own,
 /// and the parentheses bounding it (#59) landed against the `}` — `(struct s){1, 2}(.a + …)`, a *call*
