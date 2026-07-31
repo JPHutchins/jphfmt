@@ -7,7 +7,7 @@
 
 use super::builders::{
     Bound, Fit, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
-    build_cond_doc, build_expr_doc, build_for_doc, group_bracketing,
+    build_cond_doc, build_for_doc, build_statement_element, group_bracketing, statement_segments,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -15,7 +15,7 @@ use super::tokens::{
     has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break, is_comment,
     is_control_keyword, is_excluded_callee, is_trivia, match_brace, match_bracket,
     match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
-    respaced_when_joined, split_brace_line_comment, split_top_level, statement_end,
+    respaced_when_joined, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -467,7 +467,7 @@ fn format_stmt_expr(
     let inner_indent = "\t".repeat(base_level + 1);
     let close_indent = "\t".repeat(base_level);
     let stmt_col = (base_level + 1) * TAB_WIDTH;
-    let segments = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ";");
+    let segments = statement_segments(inner);
     let (trailing, leading) = segments.split_last()?;
     // Every leading segment becomes a statement, empty or not, because each gets exactly one `;`
     // written back: dropping an empty one would lose the `;` that produced it. Only the last may be
@@ -478,7 +478,7 @@ fn format_stmt_expr(
         .chain(has_non_trivia(trailing).then_some(trailing))
         .map(|s| {
             render(
-                &build_expr_doc(s),
+                &build_statement_element(s),
                 width.saturating_sub(1),
                 stmt_col,
                 base_level + 1,
