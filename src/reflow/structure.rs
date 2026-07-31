@@ -313,7 +313,9 @@ fn explode_params(def: &Define, flat: &str, scoped_col: usize, width: usize) -> 
     }
     let params = def.params.as_deref()?;
     let continued = width.saturating_sub(CONTINUATION_WIDTH);
-    let body = format_define_body(&def.body, 0, continued.saturating_sub(TAB_WIDTH))?;
+    // The body is the last line, and [`emit_define`] writes ` \` *between* lines, so this one takes
+    // none: only the tab is reserved, and [`format_define_body`] owns whatever the continuation costs.
+    let body = format_define_body(&def.body, 0, width.saturating_sub(TAB_WIDTH))?;
     // A body of more than one line cannot be indented under the `)`: on the next pass its own line
     // breaks make it a passthrough, so the tab added here would be part of the text and another
     // would be added on top of it, once per run.
@@ -421,7 +423,27 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
 }
 
 /// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
+///
+/// Laid out twice when it breaks. [`emit_define`] ends every line of a continued body with ` \`, and
+/// those columns are the continuation's, not the layout's — measured against the whole width, a nested
+/// group stays flat on the strength of two columns it does not own and the line as written overruns
+/// §8.5 by exactly them (#93). A body that fits on one line takes no continuation and keeps the whole
+/// width, which is why one measurement cannot serve both.
+///
+/// The second layout cannot return to the first's: a body that breaks at `width` breaks at anything
+/// narrower.
+///
+/// This owns the reservation, so a caller passes the width the body's *first* line has and no less:
+/// pre-subtracting would reserve the continuation twice.
 fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
+    let measured = define_body_layout(body, prefix_col, width)?;
+    if !measured.contains('\n') {
+        return Some(measured);
+    }
+    define_body_layout(body, prefix_col, width.saturating_sub(CONTINUATION_WIDTH))
+}
+
+fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     if contains_comment(body) {
         return None;
     }

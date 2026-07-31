@@ -3,6 +3,7 @@
 
 mod support;
 
+use jphfmt::doc::display_width;
 use jphfmt::format;
 use support::significant;
 
@@ -170,6 +171,65 @@ fn a_define_is_measured_at_the_depth_the_scope_pass_indents_it_to() {
          \tbbbbbbbbbbbbbbbb, \\\n\tcccccccccccccccc, \\\n\tddddddddddddd \\\n)\n#\tendif\n#endif\n"
     );
     assert_eq!(format(&nested), nested);
+}
+
+/// #93: every line of a continued `#define` ends in ` \`, and those two columns are the continuation's
+/// rather than the layout's. Measured against the whole width, the nested `g(…)` here stayed flat on
+/// the strength of columns it did not own, and the line as written overran §8.5 by exactly them.
+///
+/// One column narrower on each argument and the line lands exactly at the limit, which is the check
+/// that the reservation is two columns and not a blanket explosion: the shortest form still wins when
+/// it genuinely fits.
+#[test]
+fn a_continued_define_reserves_the_columns_its_continuation_takes() {
+    for len in 40..=50 {
+        let (a, b) = ("a".repeat(len), "b".repeat(len));
+        let src = format!("#define P(x) f(x, g({a}, {b}), y)\n");
+        let once = format(&src);
+        for line in once.lines() {
+            assert!(
+                display_width(line) <= 100,
+                "argument length {len}: {} columns: {line:?}",
+                display_width(line)
+            );
+        }
+        assert_eq!(format(&once), once, "argument length {len}");
+    }
+    let at_the_limit = format(&format!(
+        "#define P(x) f(x, g({a}, {b}), y)\n",
+        a = "a".repeat(44),
+        b = "b".repeat(44)
+    ));
+    assert!(
+        at_the_limit.contains("\tg(aaa"),
+        "a nested group that fits must stay flat: {at_the_limit:?}"
+    );
+}
+
+/// The body of a `#define` whose parameters explode is the *last* line, and `emit_define` writes ` \`
+/// between lines — so that line takes no continuation and only its tab is reserved. Measured two
+/// columns narrower, this 96-column body broke, `explode_params` refused a multi-line body, and the
+/// parameter list stayed flat at 129 columns.
+#[test]
+fn a_params_exploded_define_measures_its_body_against_the_tab_alone() {
+    let params = (1..=4)
+        .map(|i| format!("{p}{i}", p = "p".repeat(25)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body = format!("f({a}, {b})", a = "a".repeat(45), b = "b".repeat(46));
+    let once = format(&format!("#define PPPP({params}) {body}\n"));
+    for line in once.lines() {
+        assert!(
+            display_width(line) <= 100,
+            "{} columns: {line:?}",
+            display_width(line)
+        );
+    }
+    assert!(
+        once.contains(&format!("\t{body}")),
+        "the body keeps its own line whole: {once:?}"
+    );
+    assert_eq!(format(&once), once);
 }
 
 #[test]
