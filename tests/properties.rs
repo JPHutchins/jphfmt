@@ -1,9 +1,11 @@
 //! Property tests: the lexer is total and the pipeline is safe, so these must hold for *any*
 //! input, not just valid C. proptest also catches panics, so this doubles as a fuzz harness.
 
+mod support;
+
 use jphfmt::{format, format_with_width};
 use proptest::prelude::*;
-use std::collections::HashMap;
+use support::{kept, ordered};
 
 /// Strings of C-relevant characters (brackets, operators, comments, strings, whitespace), which
 /// exercise the structurer far more than uniform random bytes would.
@@ -26,20 +28,6 @@ fn pieced() -> impl Strategy<Value = String> {
         .prop_map(|pieces| pieces.concat())
 }
 
-/// How many times each character that formatting must not discard occurs.
-///
-/// Whitespace and a `\` continuation are the layout's to place. So is a `,`: §2.3's magic trailing
-/// comma means the layout writes them, and an all-empty `{,}` collapses to `{}`. Everything else is
-/// the author's, and no amount of relayout may drop one.
-fn kept(s: &str) -> HashMap<char, usize> {
-    s.chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\\'))
-        .fold(HashMap::new(), |mut counts, c| {
-            *counts.entry(c).or_default() += 1;
-            counts
-        })
-}
-
 /// Whichever of `before`'s characters the output holds fewer of, if any.
 fn dropped(before: &str, after: &str) -> Option<(char, usize, usize)> {
     let out = kept(after);
@@ -47,15 +35,6 @@ fn dropped(before: &str, after: &str) -> Option<(char, usize, usize)> {
         let m = out.get(&c).copied().unwrap_or(0);
         (m < n).then_some((c, n, m))
     })
-}
-
-/// The author's characters in order, dropping the ones a relayout may *write* as well as discard:
-/// a `;` terminating a statement expression's last statement, and the `()` that bound a broken chain.
-/// Counting alone would accept `a + b` becoming `b + a`; this would not.
-fn ordered(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, ',' | ';' | '\\' | '(' | ')'))
-        .collect()
 }
 
 proptest! {
