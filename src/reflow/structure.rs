@@ -416,7 +416,24 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
 }
 
 /// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
+///
+/// Laid out twice when it breaks. [`emit_define`] ends every line of a continued body with ` \`, and
+/// those columns are the continuation's, not the layout's — measured against the whole width, a nested
+/// group stays flat on the strength of two columns it does not own and the line as written overruns
+/// §8.5 by exactly them (#93). A body that fits on one line takes no continuation and keeps the whole
+/// width, which is why one measurement cannot serve both.
+///
+/// The second layout cannot return to the first's: a body that breaks at `width` breaks at anything
+/// narrower.
 fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
+    let measured = define_body_layout(body, prefix_col, width)?;
+    if !measured.contains('\n') {
+        return Some(measured);
+    }
+    define_body_layout(body, prefix_col, width.saturating_sub(CONTINUATION_WIDTH))
+}
+
+fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     if contains_comment(body) {
         return None;
     }

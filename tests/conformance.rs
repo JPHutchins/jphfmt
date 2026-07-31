@@ -172,6 +172,44 @@ fn a_define_is_measured_at_the_depth_the_scope_pass_indents_it_to() {
     assert_eq!(format(&nested), nested);
 }
 
+/// #93: every line of a continued `#define` ends in ` \`, and those two columns are the continuation's
+/// rather than the layout's. Measured against the whole width, the nested `g(…)` here stayed flat on
+/// the strength of columns it did not own, and the line as written overran §8.5 by exactly them.
+///
+/// One column narrower on each argument and the line lands exactly at the limit, which is the check
+/// that the reservation is two columns and not a blanket explosion: the shortest form still wins when
+/// it genuinely fits.
+#[test]
+fn a_continued_define_reserves_the_columns_its_continuation_takes() {
+    for len in 40..=50 {
+        let (a, b) = ("a".repeat(len), "b".repeat(len));
+        let src = format!("#define P(x) f(x, g({a}, {b}), y)\n");
+        let once = format(&src);
+        for line in once.lines() {
+            assert!(
+                display_columns(line) <= 100,
+                "argument length {len}: {} columns: {line:?}",
+                display_columns(line)
+            );
+        }
+        assert_eq!(format(&once), once, "argument length {len}");
+    }
+    let at_the_limit = format(&format!(
+        "#define P(x) f(x, g({a}, {b}), y)\n",
+        a = "a".repeat(44),
+        b = "b".repeat(44)
+    ));
+    assert!(
+        at_the_limit.contains("\tg(aaa"),
+        "a nested group that fits must stay flat: {at_the_limit:?}"
+    );
+}
+
+/// Columns a line occupies, a tab being [`jphfmt`]'s tab width — §8.5's measure, not `str::len`.
+fn display_columns(line: &str) -> usize {
+    line.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum()
+}
+
 #[test]
 fn comment_line_ends_are_trimmed() {
     let src = "int a; // after a line comment   \nint b; /* first   \n * interior   \n */\n";
