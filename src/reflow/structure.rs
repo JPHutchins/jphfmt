@@ -11,10 +11,10 @@ use super::builders::{
 };
 use super::scope::scoped;
 use super::tokens::{
-    closes_block, closes_literal_type, contains_comment, directive_end, enum_body_brace,
-    has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head, is_chain_break,
-    is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace, match_bracket,
-    match_open_paren, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
+    closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
+    enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
+    is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia,
     respaced_when_joined, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
@@ -255,9 +255,7 @@ fn starts_statement(toks: &[Token], i: usize) -> bool {
     match toks[k].text {
         ";" | "{" | "else" => true,
         "}" => closes_block(toks, k),
-        ")" => match_open_paren(toks, k)
-            .and_then(|open| prev_nontrivia(toks, open))
-            .is_some_and(|head| is_control_keyword(toks[head].text)),
+        ")" => closes_control_header(toks, k),
         _ => false,
     }
 }

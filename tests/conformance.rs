@@ -999,6 +999,14 @@ fn a_compound_literal_is_never_called_by_what_follows_it() {
         "int * r = ((int[]){1, 2} + aaaaaaaaaaaaaaaaaaaa) + bbbbbbbbbbbbbbbbbbbb + cccccccccccccccccc;\n",
         "void f(void) {\n\tg((int[]){1, 2} + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb, 1);\n}\n",
         "int * s = (int[]){1, 2} + a;\n",
+        // The type is a typedef name, so no keyword in the group says it is a type. A parenthesized
+        // single name before a `{` can be nothing else, which is what makes it provable.
+        "int t = (vec2_t){1, 2}.x + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccccccccccc;\n",
+        // A braceless `if` body: the `)` before the type is a control header's, not a declarator's.
+        "if (c) (struct s){1, 2}.a + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccccccccccc;\n",
+        "while (c) (vec2_t){1, 2}.x + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + ccccccccccccccccc;\n",
+        // A comment between the type and the body, which trivia-only skipping would stop at.
+        "int u = (int[]) /* c */ {1, 2}[0] + aaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbb + cccccccccc;\n",
     ] {
         for width in 1..=120 {
             let once = jphfmt::format_with_width(src, width);
