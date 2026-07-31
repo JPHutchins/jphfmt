@@ -153,3 +153,60 @@ fn retab(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_WIDTH, format_with_width, spacing::space_tokens};
+
+    /// The formatter's output must be a fixpoint of the spacing pass *alone*.
+    ///
+    /// [`format_with_width`] runs the layout second, so a construct it spells one way and
+    /// [`space_tokens`] spells another still comes out stable — the layout rewrites the disagreement
+    /// away every run. What it cannot do is make the two agree, and the width the layout measured is
+    /// then a width no pass will keep: whether the disagreement is visible depends on whether the
+    /// construct was claimed, which is how #98, #99 and #43 each reached the output.
+    ///
+    /// Narrower than idempotency, not weaker: it localises the failure at the pass boundary rather
+    /// than waiting for the disagreement to flip a fits/explode verdict, which needs an odd input and
+    /// an odd width to happen. It is also not a superset — #100 and #102 are pass-boundary bugs this
+    /// cannot see, because their outputs *are* fixpoints of the spacing pass.
+    ///
+    /// Fixtures only, for now. As a property over random input it finds #43 in a few thousand cases,
+    /// so it can be searched rather than sampled once that is fixed.
+    fn is_a_spacing_fixpoint(src: &str, width: usize) -> Result<(), String> {
+        let out = format_with_width(src, width);
+        let respaced = space_tokens(&out);
+        if respaced == out {
+            return Ok(());
+        }
+        let (a, b) = out
+            .lines()
+            .zip(respaced.lines())
+            .find(|(a, b)| a != b)
+            .unwrap_or(("<line count>", "<line count>"));
+        Err(format!("layout wrote {a:?}, the spacing pass writes {b:?}"))
+    }
+
+    /// Every fixture the repo keeps, at the default width.
+    #[test]
+    fn the_output_is_a_fixpoint_of_the_spacing_pass() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let cases = std::fs::read_dir(root.join("tests/cases")).expect("read tests/cases");
+        let files = [root.join("tests/golden.c"), root.join("tests/messy.c")]
+            .into_iter()
+            .chain(cases.flatten().flat_map(|shape| {
+                std::fs::read_dir(shape.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|f| f.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "c"))
+            }));
+        for path in files {
+            let src = std::fs::read_to_string(&path).expect("read fixture");
+            if let Err(why) = is_a_spacing_fixpoint(&src, DEFAULT_WIDTH) {
+                panic!("{}: {why}", path.display());
+            }
+        }
+    }
+}

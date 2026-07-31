@@ -241,8 +241,14 @@ fn space_pointers(pieces: &mut [Piece]) {
             for piece in pieces[j..=k].iter_mut().filter(|p| same_line(&p.0)) {
                 piece.0 = " ".to_owned();
             }
+            // A `\` is not a token to hug: it ends the line, and the space before one is the layout's
+            // (`emit_define` writes ` \`). Tightening it against the run gave `struct s *\` where the
+            // layout writes `struct s * \`, so the two passes spelled the same tokens differently —
+            // a disagreement `format_with_width` is a fixpoint of only because the layout runs
+            // second, and `reflow::tests` now asserts it does not happen.
             if let Some(after) = pieces.get_mut(k + 1)
                 && same_line(&after.0)
+                && after.1.text != "\\"
             {
                 after.0 = if after.1.kind == TokenKind::Ident {
                     " ".to_owned()
