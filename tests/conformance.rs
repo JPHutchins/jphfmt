@@ -176,6 +176,15 @@ fn a_macro_name_keeps_the_gap_that_says_what_it_defines() {
     }
     // The `#`-to-keyword gap belongs to the scope pass, and still collapses.
     assert_eq!(format("# define H (c)\n"), "#define H (c)\n");
+    // A comment is whitespace by the time the preprocessor reads the line, so it defines the same thing
+    // — and the walk back to the `#` has to read past it, since a comment is a token of its own.
+    for src in [
+        "#define /* c */ X (y)\n",
+        "#/* c */ define Y (z)\n",
+        "#define /* c */ F(x) ((x) + 1)\n",
+    ] {
+        assert_eq!(format(src), src, "a comment does not change what is defined");
+    }
 }
 
 /// The structure pass measures a `#define` at the `#if` depth the scope pass will indent it to, and

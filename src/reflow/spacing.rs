@@ -418,7 +418,13 @@ fn space_call_heads(pieces: &mut [Piece]) {
 /// the output did not compile — the most common shape in the corpus that jphfmt got wrong, and invisible
 /// to every check because the character it dropped was whitespace.
 fn names_a_macro(pieces: &[Piece], j: usize) -> bool {
-    j >= 2 && pieces[j - 1].1.text == "define" && pieces[j - 2].1.text == "#"
+    // Past comments, which are pieces of their own: a comment is whitespace by the time the
+    // preprocessor reads the line, so `#define /* c */ X (y)` defines exactly what `#define X (y)` does.
+    let before = |k: usize| (0..k).rev().find(|&i| !is_comment(&pieces[i].1));
+    before(j)
+        .filter(|&k| pieces[k].1.text == "define")
+        .and_then(|k| before(k))
+        .is_some_and(|k| pieces[k].1.text == "#")
 }
 
 /// A subscript is tight against what it indexes, exactly as a call is tight against its callee
@@ -651,6 +657,15 @@ mod tests {
         assert_eq!(space_tokens("#define F(x) x"), "#define F(x) x");
         // A call elsewhere on a `#define` line is still tightened.
         assert_eq!(space_tokens("#define F(x) g (x)"), "#define F(x) g(x)");
+        // A comment is whitespace to the preprocessor, so it does not change what is being defined.
+        assert_eq!(
+            space_tokens("#define /* c */ X (y)"),
+            "#define /* c */ X (y)"
+        );
+        assert_eq!(
+            space_tokens("#/* c */ define Y (z)"),
+            "#/* c */ define Y (z)"
+        );
     }
 
     #[test]
