@@ -155,6 +155,46 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
     assert_eq!(format(src), expected);
 }
 
+/// #77's fourth item: a `#define` body that is entirely one group the author wrote is a container like
+/// any other, and the walk already lays one out — the body was passed through only because nothing in
+/// `define_body_layout` claimed it. `emit_define` places the `\` continuations and #93's two-pass
+/// measurement reserves their columns, so the layout needs nothing new.
+///
+/// Whole-body only: a group with anything beside it would put the rest on the line the group's own break
+/// ends, which there is no measure for here. And a *bare* chain body still passes through — bounding one
+/// would add parentheses to a macro body, which is not this pass's to do.
+#[test]
+fn a_define_body_that_is_one_group_is_a_container() {
+    let ternary = "#define M(x) ((x) ? aaaaaaaaaaaaaaaaaaaaaa : bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd)\n";
+    assert_eq!(
+        format(ternary),
+        "#define M(x) ( \\\n\t(x) ? aaaaaaaaaaaaaaaaaaaaaa : \\\n\tbbbbbbbbbbbbbbbbbbbbbb ? \
+         cccccccccccccccccccc : \\\n\tdddddddddddddddddddd \\\n)\n"
+    );
+    assert_eq!(format(&format(ternary)), format(ternary));
+
+    // A chain body breaks the same way, since it is the same container.
+    let chain = "#define N(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd)\n";
+    let broken = format(chain);
+    assert!(broken.starts_with("#define N(x) ( \\\n"), "{broken:?}");
+    assert_eq!(format(&broken), broken);
+    for line in broken.lines() {
+        assert!(
+            display_width(line) <= 100,
+            "{} columns: {line:?}",
+            display_width(line)
+        );
+    }
+
+    // A bare chain gets no parentheses of jphfmt's, however long it is: they would be tokens the author
+    // did not write, in a body whose expansion is the author's to control.
+    let bare = "#define Q(x) x + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd\n";
+    assert_eq!(format(bare), bare);
+    // A group with anything beside it is not whole-body, so it passes through too.
+    let partial = "#define R(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc) + d\n";
+    assert_eq!(format(partial), partial);
+}
+
 /// The gap between a `#define`'s name and a `(` is meaning, not spacing: `#define X (y)` defines `X` as
 /// `(y)`, and `#define X(y)` a function-like macro taking `y`. Tightening it turned every object-like
 /// macro with a parenthesized body into a function-like one, and the output did not compile.
