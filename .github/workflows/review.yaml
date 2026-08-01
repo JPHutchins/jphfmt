@@ -57,6 +57,7 @@ jobs:
         cache.nixos.org:443
         static.rust-lang.org:443
         tarballs.nixos.org:443
+        *.actions.githubusercontent.com:443
       mechanic_time_limit: 3m
       mechanic_grace_period: 90s
       mechanic_usd_limit: "0.10"
