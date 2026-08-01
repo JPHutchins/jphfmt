@@ -35,6 +35,9 @@ from pathlib import Path
 from typing import NamedTuple
 
 GCC_TIMEOUT_S = 30
+# Generous: the largest corpus file is a 360k-line amalgamation, and a run that reports the wrong
+# file as hung is worse than one that waits.
+FORMAT_TIMEOUT_S = 60
 
 
 class Errors(NamedTuple):
@@ -52,10 +55,31 @@ class TimedOut(NamedTuple):
 Compile = Errors | Crashed | TimedOut
 
 
+class Formatted(NamedTuple):
+	text: str
+
+
+class Failed(NamedTuple):
+	status: int
+	stderr: str
+
+
+class Hung(NamedTuple):
+	seconds: float
+
+
+Formatting = Formatted | Failed | Hung
+
+
 class Unformattable(NamedTuple):
 	path: Path
 	status: int
 	stderr: str
+
+
+class Stalled(NamedTuple):
+	path: Path
+	seconds: float
 
 
 class NotIdempotent(NamedTuple):
@@ -70,7 +94,7 @@ class Regressed(NamedTuple):
 	after: Compile
 
 
-Verdict = Unformattable | NotIdempotent | Regressed
+Verdict = Unformattable | Stalled | NotIdempotent | Regressed
 
 
 def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
@@ -147,14 +171,32 @@ def first_difference(before: str, after: str) -> tuple[str, str]:
 	return next((pair for pair in lines if pair[0] != pair[1]), ("", ""))
 
 
-def format_with(binary: Path, source: Path | str) -> tuple[int, str, str]:
-	run = subprocess.run(
-		(str(binary), str(source) if isinstance(source, Path) else "/dev/stdin"),
-		input=None if isinstance(source, Path) else source,
-		capture_output=True,
-		text=True,
-	)
-	return run.returncode, run.stdout, run.stderr
+def format_with(binary: Path, source: Path | str) -> Formatting:
+	"""Format `source`, which is a path to read or the text to pipe.
+
+	Timed out, because `ThreadPoolExecutor` cannot cancel a blocked worker: one formatter that never
+	returns would stall the whole run with no diagnostic — not even which file. A formatter that hangs
+	is exactly the class of bug this exists to find, so it has to be reportable.
+	"""
+	try:
+		run = subprocess.run(
+			(str(binary), str(source) if isinstance(source, Path) else "/dev/stdin"),
+			input=None if isinstance(source, Path) else source,
+			capture_output=True,
+			text=True,
+			timeout=FORMAT_TIMEOUT_S,
+		)
+	except subprocess.TimeoutExpired:
+		return Hung(FORMAT_TIMEOUT_S)
+	return Formatted(run.stdout) if run.returncode == 0 else Failed(run.returncode, run.stderr)
+
+
+def as_verdict(path: Path, outcome: Failed | Hung) -> Verdict:
+	match outcome:
+		case Failed(status, stderr):
+			return Unformattable(path, status, stderr)
+		case Hung(seconds):
+			return Stalled(path, seconds)
 
 
 def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
@@ -164,15 +206,16 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 	were present: `sqlite3.c` was unstable, so the `gcc` comparison never ran on it, and the 48 errors
 	its formatted form carries surfaced only once the instability was fixed (#109, #112).
 	"""
-	status, once, stderr = format_with(binary, path)
-	if status != 0:
-		return (Unformattable(path, status, stderr),)
-	again_status, twice, again_stderr = format_with(binary, once)
+	first = format_with(binary, path)
+	if not isinstance(first, Formatted):
+		return (as_verdict(path, first),)
+	once = first.text
+	again = format_with(binary, once)
 	unstable: tuple[Verdict, ...] = ()
-	if again_status != 0:
-		unstable = (Unformattable(path, again_status, again_stderr),)
-	elif twice != once:
-		unstable = (NotIdempotent(path, *first_difference(once, twice)),)
+	if not isinstance(again, Formatted):
+		unstable = (as_verdict(path, again),)
+	elif again.text != once:
+		unstable = (NotIdempotent(path, *first_difference(once, again.text)),)
 	with tempfile.TemporaryDirectory() as tmp:
 		original, formatted = Path(tmp) / "in.c", Path(tmp) / "out.c"
 		original.write_bytes(path.read_bytes())
@@ -199,6 +242,8 @@ def report(verdict: Verdict) -> str:
 	match verdict:
 		case Unformattable(path, status, stderr):
 			return f"EXIT {status:<4} {path}\n           {stderr.strip() or '(no stderr)'}"
+		case Stalled(path, seconds):
+			return f"HUNG      {path}\n           no output in {seconds}s"
 		case NotIdempotent(path, line, again):
 			return f"UNSTABLE  {path}\n            once: {line!r}\n           twice: {again!r}"
 		case Regressed(path, before, after):
