@@ -13,9 +13,15 @@ pub enum TokenKind {
     LineComment,
     #[token("/*", lex_block_comment)]
     BlockComment,
-    #[regex(r#""([^"\\]|\\.)*""#)]
+    // `\\[\s\S]` rather than `\\.`, because `.` matches `\r` and not `\n`: a `\`-continued literal
+    // was one token under CRLF and several under LF, so normalizing the line endings (§2.1) handed
+    // the next pass a different *tokenization* and any spacing rule could then disagree with itself
+    // across passes (#110). C splices a `\`-newline in translation phase 2, before tokenization, so
+    // matching across either flavour is the correct reading — and not a widening in kind, since
+    // `[^"\\]` already matches a bare newline.
+    #[regex(r#""([^"\\]|\\[\s\S])*""#)]
     String,
-    #[regex(r"'([^'\\]|\\.)*'")]
+    #[regex(r"'([^'\\]|\\[\s\S])*'")]
     Char,
     // C11 §6.4.8's pp-number: an exponent's sign belongs to the number, so `1e-5` and `0x1p-1022`
     // are one token and no later pass reads that `-` as an operator to space.

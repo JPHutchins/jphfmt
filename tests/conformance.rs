@@ -1643,3 +1643,27 @@ fn a_block_after_a_directive_is_not_a_compound_literal() {
         assert_eq!(format(&once), once, "{src:?}");
     }
 }
+
+/// A `\`-continued literal is one token under either line ending. The `String` rule's escape was
+/// `\\.`, and the regex crate's `.` matches `\r` but not `\n`, so `"a\` + CRLF was one token and
+/// `"a\` + LF was a stray `"` followed by loose identifiers. Formatting normalizes the endings
+/// (§2.1), so the second pass lexed what the first pass wrote *differently* — and every spacing rule
+/// was then free to disagree with itself across passes, inside the literal's own text (#110).
+///
+/// Found by the corpus check on a CRLF file; the LF half of the same defect is why glibc's
+/// `pthread.h` has a `("\`-continued deprecation message that no rule here treated as a string.
+#[test]
+fn a_continued_literal_is_one_token_under_either_line_ending() {
+    let crlf = "#error \"a\\\r\n b=0.\"\r\n";
+    let lf = "#error \"a\\\n b=0.\"\n";
+    // The tokenization cannot depend on the line ending, so neither can the output.
+    assert_eq!(format(crlf), format(lf));
+    assert_eq!(format(crlf), lf, "the message keeps its own spacing");
+    assert_eq!(format(&format(crlf)), format(crlf));
+
+    // The `("\` shape glibc writes, with the message's text untouched.
+    let attribute = "int f(void) __attribute_deprecated_msg__(\"\\\nf is deprecated, use g\");\n";
+    assert_eq!(format(attribute), attribute);
+    // A character literal takes the same escape.
+    assert_eq!(format("char c = '\\\n';\n"), "char c = '\\\n';\n");
+}
