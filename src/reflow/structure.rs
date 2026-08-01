@@ -716,6 +716,10 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             // so Unknown tokens containing multiple lines don't inflate the reserve.
             _ => match t.text.find('\n') {
                 Some(nl) => return width + pending + display_width(t.text[..nl].trim_end()),
+                // The last token's trailing whitespace does not reach the output either — an
+                // unterminated string or char literal carries it *inside* the token, so `pending`
+                // never sees it, and `normalize_endings` trims it from the file's end (#102).
+                None if j + 1 == toks.len() => t.text.trim_end(),
                 None => t.text,
             },
         };
@@ -832,6 +836,15 @@ mod tests {
         // ` {` of a function body: the space and brace count, and the brace stops the reserve.
         let toks = [tok(TokenKind::Whitespace, " "), tok(TokenKind::Punct, "{")];
         assert_eq!(trailing_reserved(&toks, 0), 2);
+    }
+
+    #[test]
+    fn trailing_reserved_does_not_count_the_last_tokens_trailing_space() {
+        let last = [tok(TokenKind::Unknown, "'x ")];
+        assert_eq!(trailing_reserved(&last, 0), display_width("'x"));
+        // The same whitespace in a token that is not the last reaches the output, and counts.
+        let inner = [tok(TokenKind::Unknown, "'x "), tok(TokenKind::Ident, "y")];
+        assert_eq!(trailing_reserved(&inner, 0), display_width("'x y"));
     }
 
     #[test]
