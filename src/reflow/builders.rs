@@ -11,9 +11,9 @@
 
 use super::tokens::{
     closes_literal_type, ends_value, has_non_trivia, has_top_level, has_top_level_question,
-    is_balanced, is_callee_ident, is_ternary_chain, is_trivia, match_brace, match_bracket,
-    next_nontrivia, prev_nontrivia, spans_lines, split_chain, split_designators, split_on_commas,
-    split_top_level,
+    holds_directive, is_balanced, is_callee_ident, is_ternary_chain, is_trivia, match_brace,
+    match_bracket, next_nontrivia, prev_nontrivia, spans_lines, split_chain, split_designators,
+    split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -439,7 +439,7 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     // rewrites. Either anywhere in the construct — head included — and the width this decides from
     // is not the width the next pass measures. A tab needs no refusal: `display_width` counts the
     // columns it occupies, the same as every other measure in the pipeline.
-    if spans_lines(toks) || toks.iter().any(|t| t.text == "#") {
+    if spans_lines(toks) || holds_directive(toks) {
         return false;
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
@@ -627,7 +627,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
 /// reaches here has neither. That matters because flattening a `//` comment would put whatever
 /// followed it on the comment's line and swallow it — the layout must never see one.
 pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
-    if spans_lines(inner) {
+    if spans_lines(inner) || holds_directive(inner) {
         return None;
     }
     build_clause_contents(inner, bracketing)

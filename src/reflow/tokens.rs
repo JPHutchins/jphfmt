@@ -724,6 +724,21 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
         .any(|t| !is_trivia(t) && t.text.contains(['\n', '\r']))
 }
 
+/// Whether `toks` holds a preprocessor directive's `#`. The lines a directive spans are not the
+/// construct's to lay out — its own column belongs to `scope_directives`, and the tokens on either
+/// side of it are the preprocessor's alternatives rather than one expression. A handler that measures
+/// across one writes the `#` mid-line, and the output does not compile (#112):
+///
+/// ```c
+/// if (a == 1 #if defined(X) || b == 2 #endif) {
+/// ```
+///
+/// §6's passthrough is the whole answer, exactly as it is for a comment ([`contains_comment`]).
+pub(super) fn holds_directive(toks: &[Token]) -> bool {
+    toks.iter()
+        .any(|t| t.kind == TokenKind::Punct && t.text == "#")
+}
+
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
 /// and trailing trivia). Such arguments would render differently on subsequent passes because
 /// `build_expr_doc` collapses the newline into a space, which can then be reinterpreted by
