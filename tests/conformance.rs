@@ -1590,3 +1590,32 @@ fn a_ternary_arm_in_a_brace_list_still_lays_out() {
     let src = "x = {a ? b : 0, c};\n";
     assert_eq!(format(src), src);
 }
+
+/// A `)` that closes a *call's* argument list closes no type, so the `{` after it is not a compound
+/// literal's brace. `#if !defined(X)` ends in `)`, and `defined` is an excluded callee — which the
+/// hand-written guard here did not reject, only a plain callee — so the block on the next line was laid
+/// out as a `{}` initializer list: statements joined onto one line, and §2.3's trailing comma written
+/// into statement position when that line overflows. The output does not compile (#109).
+///
+/// `can_precede_cast` is the question a cast already asks of the same position, and #64 was the cost of
+/// two spellings of it drifting apart. This is the third.
+#[test]
+fn a_block_after_a_directive_is_not_a_compound_literal() {
+    let src = "static int f(int nBuf, int pid) {\n#if !defined(X)\n\t{\n\t\tlong tttttttttttttttt;\n\t\tnBuf = sizeof(tttttttttttttttt) + sizeof(pid) + nBuf + pid + nBuf + pid + nBuf;\n\t}\n#endif\n\treturn nBuf;\n}\n";
+    assert_eq!(format(src), src, "the block is a block");
+
+    // The short form was stable and compiled; it only joined the statements onto one line.
+    let short =
+        "void f(void) {\n\tint pid;\n#if X\n\t{\n\t\tint fd;\n\t\tfd = 1;\n\t}\n#endif\n}\n";
+    assert_eq!(format(short), short);
+
+    // What the predicate exists to accept still passes: a literal after a control header, and after
+    // every token a cast may follow.
+    for src in [
+        "int g(int x) {\n\tif (x)\n\t\treturn (struct s){1, 2}.a;\n\treturn 0;\n}\n",
+        "int * p = (int[]){1, 2};\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "{src:?}");
+    }
+}
