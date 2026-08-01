@@ -206,16 +206,20 @@ pub(super) fn prev_significant(toks: &[Token], before: usize) -> Option<usize> {
 /// a parameter list, a `__attribute__` argument, or a declarator suffix, each of which can also put a
 /// `)` before a body's `{`.
 ///
-/// A `)` before the type is the one ambiguous case, and it is a declarator's — `int (*f)(void) {` — or
-/// a control header's, which introduces a statement, and a statement may open with a literal:
-/// `if (x) (struct s){1, 2}.a;`. What heads *that* pair says which.
+/// [`can_precede_cast`] is the whole test for what comes before the `(`, and it is the same question
+/// a cast asks: an identifier there makes the `(` an argument list, so `defined(X)`, `sizeof(int)` and
+/// `f(x)` all close no type. Spelling it out again here is what #109 cost — the hand-written guard
+/// rejected a preceding *callee* but not a preceding excluded callee, so `#if !defined(X)` followed by
+/// a block had its `{` taken for a literal's, and the block was laid out as an initializer list.
+///
+/// The one exception is the case that predicate exists to exclude: a `)` before the type. That one is
+/// a declarator's — `int (*f)(void) {` — or a control header's, which introduces a statement, and a
+/// statement may open with a literal: `if (x) (struct s){1, 2}.a;`. What heads *that* pair says which.
 pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
     match_open_paren(toks, close).is_some_and(|open| {
         names_literal_type(&toks[open + 1..close])
             && prev_significant(toks, open).is_none_or(|before| {
-                !heads_body(&toks[before])
-                    && (!matches!(toks[before].text, ")" | "]")
-                        || closes_control_header(toks, before))
+                can_precede_cast(&toks[before]) || closes_control_header(toks, before)
             })
     })
 }
