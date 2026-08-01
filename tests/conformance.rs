@@ -1835,3 +1835,49 @@ fn a_continued_literal_is_one_token_under_either_line_ending() {
     assert_eq!(format(desync), laid_out);
     assert_eq!(format(laid_out), laid_out);
 }
+
+/// The lines a `#if` spans are the preprocessor's alternatives, not one expression. A construct that
+/// measures across one lays the directive out as its own content and writes the `#` mid-line, which
+/// does not compile (#112) — `if (a == 1 #if defined(X) || b == 2 #endif) {`. `contains_comment` is
+/// the same refusal for the same reason, and directives had no counterpart to it.
+///
+/// Two handlers reach the shape and both are needed: the control header, and the bracketed group
+/// inside it. Removing either takes `sqlite3.c` from 0 `gcc` errors back to 45. The call handler needs
+/// no guard — a directive's `#` is not trivia, so it lands in some argument's trimmed body along with
+/// the newline that precedes it, and `has_middle_newline` already declines. The call shapes below are
+/// here to keep that true rather than to test a guard.
+///
+/// A directive begins its line; the stringize `#` of `foo(#x, y)` does not, and that call still lays
+/// out. Refusing on any `#` cost real layout: `#define STR(x) f(#x, …)` exploded its *parameter list*
+/// instead of its argument list.
+#[test]
+fn a_construct_does_not_measure_across_a_directive() {
+    let header = "static int f(int a, int b) {\n\tif (a == 111111111\n#if defined(__APPLE__)\n\t\t|| b == 22222222\n#endif\n\t) {\n\t\treturn 1;\n\t}\n\treturn 0;\n}\n";
+    assert_eq!(format(header), header, "the header passes through");
+
+    let group =
+        "int x = (aaaaaaaaaaaaaaaaaaaaa\n#if defined(X)\n\t| bbbbbbbbbbbbbbbbbbbbb\n#endif\n);\n";
+    assert_eq!(format(group), group, "so does the group");
+
+    // A directive anywhere in a call's arguments, wherever the newlines fall around it.
+    for src in [
+        "void g(void) {\n\tfoo(x,\n#if X\n\t\ty\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(x, y\n#if X\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(\n#if X\n\t\tx\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(x\n#if X\n\t\t, y\n#endif\n\t);\n}\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
+    }
+
+    // The stringize `#` is not a directive, and `##` is not even a `Punct`.
+    let stringize = "#define STR(x) fooooooooooooooo(\n\t#x, \\\n\tbarrrrrrrrrrrrrrr, \\\n\tbazzzzzzzzzzzzzzz, \\\n\tquxxxxxxxxxxxxxxxxxxxxxxxxxxxx \\\n)\n";
+    assert!(
+        format(stringize).starts_with("#define STR(x) fooooooooooooooo("),
+        "the argument list breaks, not the parameter list: {:?}",
+        format(stringize)
+    );
+    assert_eq!(
+        format("#define CAT(a, b) a##b\n"),
+        "#define CAT(a, b) a##b\n"
+    );
+}

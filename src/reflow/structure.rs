@@ -12,10 +12,11 @@ use super::builders::{
 use super::scope::scoped;
 use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
-    enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
-    is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
-    prev_significant, respaced_when_joined, spans_lines, split_brace_line_comment, statement_end,
+    enum_body_brace, has_middle_newline, has_non_trivia, holds_directive, is_backslash,
+    is_balanced, is_call_head, is_chain_break, is_comment, is_control_keyword, is_excluded_callee,
+    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
+    opens_stmt_expr, prev_nontrivia, prev_significant, respaced_when_joined, spans_lines,
+    split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -77,6 +78,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(open) = next_paren(toks, i)
             && let Some(close) = match_bracket(toks, open)
             && !contains_comment(&toks[open + 1..close])
+            && !holds_directive(&toks[open + 1..close])
             && is_balanced(&toks[open + 1..close])
         {
             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
