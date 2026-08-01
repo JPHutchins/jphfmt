@@ -52,10 +52,6 @@ class TimedOut(NamedTuple):
 Compile = Errors | Crashed | TimedOut
 
 
-class Ok(NamedTuple):
-	path: Path
-
-
 class Unformattable(NamedTuple):
 	path: Path
 	status: int
@@ -74,7 +70,7 @@ class Regressed(NamedTuple):
 	after: Compile
 
 
-Verdict = Ok | Unformattable | NotIdempotent | Regressed
+Verdict = Unformattable | NotIdempotent | Regressed
 
 
 def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
@@ -161,24 +157,32 @@ def format_with(binary: Path, source: Path | str) -> tuple[int, str, str]:
 	return run.returncode, run.stdout, run.stderr
 
 
-def check(binary: Path, path: Path) -> Verdict:
+def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
+	"""Every property that fails for `path`, not the first.
+
+	Reporting only the first hid a compile-breaking bug behind a non-idempotency for as long as both
+	were present: `sqlite3.c` was unstable, so the `gcc` comparison never ran on it, and the 48 errors
+	its formatted form carries surfaced only once the instability was fixed (#109, #112).
+	"""
 	status, once, stderr = format_with(binary, path)
 	if status != 0:
-		return Unformattable(path, status, stderr)
+		return (Unformattable(path, status, stderr),)
 	again_status, twice, again_stderr = format_with(binary, once)
+	unstable: tuple[Verdict, ...] = ()
 	if again_status != 0:
-		return Unformattable(path, again_status, again_stderr)
-	if twice != once:
-		return NotIdempotent(path, *first_difference(once, twice))
+		unstable = (Unformattable(path, again_status, again_stderr),)
+	elif twice != once:
+		unstable = (NotIdempotent(path, *first_difference(once, twice)),)
 	with tempfile.TemporaryDirectory() as tmp:
 		original, formatted = Path(tmp) / "in.c", Path(tmp) / "out.c"
 		original.write_bytes(path.read_bytes())
 		formatted.write_text(once)
 		before = compiles(original, path.parent)
 		after = compiles(formatted, path.parent)
+	regressed: tuple[Verdict, ...] = ()
 	if severity(after) > severity(before):
-		return Regressed(path, before, after)
-	return Ok(path)
+		regressed = (Regressed(path, before, after),)
+	return unstable + regressed
 
 
 def describe(result: Compile) -> str:
@@ -193,8 +197,6 @@ def describe(result: Compile) -> str:
 
 def report(verdict: Verdict) -> str:
 	match verdict:
-		case Ok(path):
-			return f"ok        {path}"
 		case Unformattable(path, status, stderr):
 			return f"EXIT {status:<4} {path}\n           {stderr.strip() or '(no stderr)'}"
 		case NotIdempotent(path, line, again):
@@ -228,13 +230,13 @@ def main(argv: tuple[str, ...]) -> int:
 		return 1
 
 	with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-		verdicts = tuple(pool.map(lambda p: check(args.binary, p), files))
+		per_file = tuple(pool.map(lambda p: check(args.binary, p), files))
 
-	failures = tuple(v for v in verdicts if not isinstance(v, Ok))
-	for verdict in failures:
+	for verdict in (v for verdicts in per_file for v in verdicts):
 		print(report(verdict))
-	print(f"{len(files) - len(failures)} of {len(files)} files clean")
-	return 1 if failures else 0
+	clean = sum(1 for verdicts in per_file if not verdicts)
+	print(f"{clean} of {len(files)} files clean")
+	return 0 if clean == len(files) else 1
 
 
 if __name__ == "__main__":
