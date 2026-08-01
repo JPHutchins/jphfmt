@@ -33,7 +33,7 @@ jobs:
       conclusion:    ${{ github.event.workflow_run.conclusion }}
       trigger_event: ${{ github.event.workflow_run.event }}
       api_base_url:  ${{ vars.API_BASE_URL }}
-      model_full:    deepseek-v4-pro
+      model_full:    deepseek-v4-flash
       model_mechanic: deepseek-v4-flash
       # Check-running via our own Nix composite at .github/actions/code-review-setup.
       # Egress locked to block. extra_endpoints are the hosts an audit pass observed beyond the
