@@ -729,13 +729,18 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// `build_expr_doc` collapses the newline into a space, which can then be reinterpreted by
 /// `space_bit_fields`, breaking idempotency. When this is true the whole call is passed through
 /// verbatim instead of being laid out via [`super::builders::build_call_body`].
+///
+/// A newline inside a *token* counts as much as one between two, which is what [`spans_lines`] asks:
+/// a `\`-continued literal holds its own line break, so a width measured across it describes no line
+/// that will be written. Reading only `Newline` tokens was enough while such a literal lexed as
+/// fragments; #110 made it one token, and this is the guard that noticed.
 pub(super) fn has_middle_newline(inner: &[Token]) -> bool {
     let args = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",");
     for arg in args {
         let first = arg.iter().position(|t| !is_trivia(t));
         let last = arg.iter().rposition(|t| !is_trivia(t));
         if let (Some(f), Some(l)) = (first, last)
-            && arg[f..=l].iter().any(|t| t.kind == TokenKind::Newline)
+            && (arg[f..=l].iter().any(|t| t.kind == TokenKind::Newline) || spans_lines(&arg[f..=l]))
         {
             return true;
         }
@@ -1138,6 +1143,17 @@ mod tests {
             tok(TokenKind::Ident, "c"),
         ];
         assert!(has_middle_newline(&toks));
+    }
+
+    #[test]
+    fn has_middle_newline_inside_a_continued_literal() {
+        // A `\`-continued literal holds its own line break, so a width measured across it describes
+        // no line that will be written — and #110 made it one token, where reading only `Newline`
+        // tokens stopped seeing it.
+        use crate::lexer::tokenize;
+        let toks = tokenize("\"a\\\nb\", c");
+        assert!(has_middle_newline(&toks));
+        assert!(!has_middle_newline(&tokenize("\"ab\", c")));
     }
 
     #[test]

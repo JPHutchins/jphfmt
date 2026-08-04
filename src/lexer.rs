@@ -3,7 +3,16 @@ use logos::{Lexer, Logos};
 /// The lexical category of a [`Token`]. Trivia (whitespace, newlines, comments) are
 /// first-class kinds, not skipped, so the token stream is lossless: concatenating every
 /// token's text reproduces the source exactly.
+/// A literal's escape: `\` and whatever follows it, **including a newline**. `\\.` would not do —
+/// the regex crate's `.` matches `\r` and not `\n`, so a `\`-continued literal was one token under
+/// CRLF and several under LF, and normalizing the endings (§2.1) then handed the next pass a
+/// different tokenization (#110). C splices a `\`-newline in translation phase 2, before
+/// tokenization, so either flavour is one literal.
+///
+/// A subpattern rather than the same fragment twice, because a string and a character literal must
+/// never disagree about what an escape is.
 #[derive(Logos, Debug, Clone, Copy, PartialEq, Eq)]
+#[logos(subpattern escape = r"\\[\s\S]")]
 pub enum TokenKind {
     #[regex(r"\r\n|\r|\n")]
     Newline,
@@ -13,9 +22,11 @@ pub enum TokenKind {
     LineComment,
     #[token("/*", lex_block_comment)]
     BlockComment,
-    #[regex(r#""([^"\\]|\\.)*""#)]
+    // Not a widening in kind: `[^"\\]` already matches a bare newline, so a literal holding one is
+    // already one token. Only the escaped newline was read two ways.
+    #[regex(r#""([^"\\]|(?&escape))*""#)]
     String,
-    #[regex(r"'([^'\\]|\\.)*'")]
+    #[regex(r"'([^'\\]|(?&escape))*'")]
     Char,
     // C11 §6.4.8's pp-number: an exponent's sign belongs to the number, so `1e-5` and `0x1p-1022`
     // are one token and no later pass reads that `-` as an operator to space.
