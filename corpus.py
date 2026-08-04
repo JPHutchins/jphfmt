@@ -19,12 +19,13 @@ Both files go through gcc from the *same* directory with the *same* flags. Compi
 where it lives and the output somewhere else resolves ``#include`` differently, which reports
 failures that are the harness's rather than the formatter's.
 
-Nothing here is skipped quietly. A missing compiler, an unreadable corpus and a gcc that dies on a
-signal each end the run or name the file, because a check that passes vacuously is worse than one
-that is not run at all.
+Nothing here is skipped quietly, and nothing here passes on nothing. A missing compiler, a gcc that
+rejects these flags, an unreadable corpus and a gcc that dies on a signal each end the run or name
+the file, because a check that passes vacuously is worse than one that is not run at all.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,11 @@ GCC_TIMEOUT_S = 30
 # Generous: the largest corpus file is a 360k-line amalgamation, and a run that reports the wrong
 # file as hung is worse than one that waits.
 FORMAT_TIMEOUT_S = 60
+BUILD_TIMEOUT_S = 300
+GCC_FLAGS = ("-std=c2x", "-fsyntax-only")
+# `error:` is what this counts, and gcc translates its diagnostics wherever a locale catalog is
+# installed. A localized gcc would report zero errors for every file in the corpus.
+ENGLISH = {**os.environ, "LC_ALL": "C"}
 
 
 class Errors(NamedTuple):
@@ -94,7 +100,12 @@ class Regressed(NamedTuple):
 	after: Compile
 
 
-Verdict = Unformattable | Stalled | NotIdempotent | Regressed
+class Broke(NamedTuple):
+	path: Path
+	error: str
+
+
+Verdict = Unformattable | Stalled | NotIdempotent | Regressed | Broke
 
 
 def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
@@ -115,12 +126,13 @@ def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
 
 
 def compiles(source: Path, include: Path) -> Compile:
-	"""How gcc fares on `source`. Assumes gcc is on PATH — [`main`] checks that once, up front."""
+	"""How gcc fares on `source`. Assumes a usable gcc — [`unusable_gcc`] establishes that up front."""
 	try:
 		gcc = subprocess.run(
-			("gcc", "-std=c2x", "-fsyntax-only", "-I", str(include), str(source)),
+			("gcc", *GCC_FLAGS, "-I", str(include), str(source)),
 			capture_output=True,
 			text=True,
+			env=ENGLISH,
 			timeout=GCC_TIMEOUT_S,
 		)
 	except subprocess.TimeoutExpired:
@@ -228,6 +240,53 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 	return unstable + regressed
 
 
+def checked(binary: Path, path: Path) -> tuple[Verdict, ...]:
+	"""[`check`], with whatever it raises reported against `path` instead of ending the run.
+
+	`ThreadPoolExecutor.map` re-raises a worker's exception as its results are consumed, so one
+	unreadable file would discard every verdict already computed for the other 1199 — a run that did
+	the work and reported on none of it.
+	"""
+	try:
+		return check(binary, path)
+	except Exception as error:
+		return (Broke(path, f"{type(error).__name__}: {error}"),)
+
+
+def unusable_gcc() -> str | None:
+	"""Why this machine's gcc cannot do the check, or `None` if it can.
+
+	Both compiles take the same flags, so flags gcc rejects fail them identically, [`severity`] finds
+	no regression, and all 1200 files read clean — the vacuous pass, wearing the same face as a run
+	that proved something.
+	"""
+	if shutil.which("gcc") is None:
+		return "gcc is not on PATH — this check needs a C compiler"
+	probe = subprocess.run(
+		("gcc", *GCC_FLAGS, "-x", "c", "/dev/null"),
+		capture_output=True,
+		text=True,
+		env=ENGLISH,
+		timeout=GCC_TIMEOUT_S,
+	)
+	if probe.returncode == 0:
+		return None
+	return f"gcc rejects {' '.join(GCC_FLAGS)}: {probe.stderr.strip() or '(no stderr)'}"
+
+
+def unbuildable() -> str | None:
+	"""Why the release binary could not be built, or `None` if it was.
+
+	Timed out like every other subprocess here: a cargo stalled on a network fetch or a held lock would
+	hang the run before it names a single file.
+	"""
+	try:
+		build = subprocess.run(("cargo", "build", "--release", "--quiet"), timeout=BUILD_TIMEOUT_S)
+	except subprocess.TimeoutExpired:
+		return f"cargo build did not finish in {BUILD_TIMEOUT_S}s"
+	return None if build.returncode == 0 else f"cargo build failed with status {build.returncode}"
+
+
 def describe(result: Compile) -> str:
 	match result:
 		case Errors(count):
@@ -248,6 +307,8 @@ def report(verdict: Verdict) -> str:
 			return f"UNSTABLE  {path}\n            once: {line!r}\n           twice: {again!r}"
 		case Regressed(path, before, after):
 			return f"REGRESSED {path}\n           gcc: {describe(before)} -> {describe(after)}"
+		case Broke(path, error):
+			return f"HARNESS   {path}\n           {error}"
 
 
 def main(argv: tuple[str, ...]) -> int:
@@ -260,14 +321,15 @@ def main(argv: tuple[str, ...]) -> int:
 	cli.add_argument("--no-build", action="store_true")
 	args = cli.parse_args(argv)
 
-	if shutil.which("gcc") is None:
-		print("gcc is not on PATH — this check needs a C compiler", file=sys.stderr)
+	if (unusable := unusable_gcc()) is not None:
+		print(unusable, file=sys.stderr)
 		return 1
 	if not args.root.is_dir():
 		print(f"no corpus at {args.root} — pass --root", file=sys.stderr)
 		return 1
-	if not args.no_build:
-		subprocess.run(("cargo", "build", "--release", "--quiet"), check=True)
+	if not args.no_build and (unbuilt := unbuildable()) is not None:
+		print(unbuilt, file=sys.stderr)
+		return 1
 
 	files = discover(args.root, args.limit, args.depth)
 	if not files:
@@ -275,7 +337,7 @@ def main(argv: tuple[str, ...]) -> int:
 		return 1
 
 	with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-		per_file = tuple(pool.map(lambda p: check(args.binary, p), files))
+		per_file = tuple(pool.map(lambda p: checked(args.binary, p), files))
 
 	for verdict in (v for verdicts in per_file for v in verdicts):
 		print(report(verdict))
