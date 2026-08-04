@@ -397,7 +397,12 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
     // would delete this one with nothing to write it back — and what follows it is then read as the
     // body rather than as the name, which is how `#define \` + `(})` came out as `#define (})`. §6
     // prefers passthrough, and a continued name is not a shape this needs to lay out.
-    if is_backslash(&toks[name]) {
+    //
+    // A `\` touching the name is the same hazard on the other side: the splice joins the two lines
+    // with nothing between them, so `#define NAME\` + `(x)` defines the function-like `NAME(x)`,
+    // while the `(x)` reads here as an object-like body. Only the adjacent one — `#define NAME \` +
+    // `(x)` splices to a space, and `NAME` really is object-like there.
+    if is_backslash(&toks[name]) || toks.get(name + 1).is_some_and(is_backslash) {
         return None;
     }
     let function_like = toks

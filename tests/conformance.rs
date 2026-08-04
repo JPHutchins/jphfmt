@@ -225,6 +225,11 @@ fn a_statement_expression_body_keeps_what_follows_it() {
 /// read as the body rather than as the name — `#define \` + `(})` came out as `#define (})`, which
 /// `space_call_heads` then tightened to `#define(})` on the next pass.
 ///
+/// A `\` touching the name is the same loss from the other side: the splice leaves nothing between the
+/// lines, so `#define NAME\` + `(x)` defines the function-like `NAME(x)` and `#define NAME (x)` is a
+/// different macro. `(x) x + 1` was already here and passed, because a body that is not one whole
+/// bracket is not claimable — it took a claimable one to reach the gap.
+///
 /// Found by the 200k property run on the branch that made the body claimable; before that the body was
 /// passed through, which masked the loss.
 #[test]
@@ -233,6 +238,7 @@ fn a_continued_macro_name_is_not_a_name_to_split() {
         "#define\\\n(})",
         "#define \\\nNAME 1\n",
         "#define NAME\\\n(x) x + 1\n",
+        "#define NAME\\\n(x)\n",
     ] {
         let once = format(src);
         assert_eq!(format(&once), once, "{src:?}");
