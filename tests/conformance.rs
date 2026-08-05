@@ -155,44 +155,40 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
     assert_eq!(format(src), expected);
 }
 
-/// #77's fourth item: a `#define` body that is entirely one group the author wrote is a container like
-/// any other, and the walk already lays one out — the body was passed through only because nothing in
-/// `define_body_layout` claimed it. `emit_define` places the `\` continuations and #93's two-pass
-/// measurement reserves their columns, so the layout needs nothing new.
+/// #77's fourth item — a `#define` body that is entirely one group laid out as a container — is **not**
+/// implemented, and this pins that it is not, so the day it is, this test fails and says where to look.
 ///
-/// Whole-body only: a group with anything beside it would put the rest on the line the group's own break
-/// ends, which there is no measure for here. And a *bare* chain body still passes through — bounding one
-/// would add parentheses to a macro body, which is not this pass's to do.
+/// Claiming such a body is a two-line change and produced five distinct regressions over three review
+/// rounds on #103, each on a body the walk then measured as something it is not: a dropped `\`
+/// continuation; a nested `({ … })` collapsed to a brace list, both adjacent and spaced; a two-cycle at
+/// width 40 on a nested parenthesized ternary, because the two passes measure the body at different
+/// columns (#43/#108's defect, not the claim's); and a `\`-continued string literal gaining a ` \` inside
+/// its own text on every pass, which changes what the macro expands to.
+///
+/// A body that is one bracket is not one construct — it is whatever the macro's use makes of it, and
+/// §6 prefers passthrough. The `#104` fix that shipped with these findings is narrow and separate: a
+/// statement-expression body is laid out only when its `)` is the body's last token.
 #[test]
-fn a_define_body_that_is_one_group_is_a_container() {
-    let ternary = "#define M(x) ((x) ? aaaaaaaaaaaaaaaaaaaaaa : bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd)\n";
-    assert_eq!(
-        format(ternary),
-        "#define M(x) ( \\\n\t(x) ? aaaaaaaaaaaaaaaaaaaaaa : \\\n\tbbbbbbbbbbbbbbbbbbbbbb ? \
-         cccccccccccccccccccc : \\\n\tdddddddddddddddddddd \\\n)\n"
-    );
-    assert_eq!(format(&format(ternary)), format(ternary));
-
-    // A chain body breaks the same way, since it is the same container.
-    let chain = "#define N(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd)\n";
-    let broken = format(chain);
-    assert!(broken.starts_with("#define N(x) ( \\\n"), "{broken:?}");
-    assert_eq!(format(&broken), broken);
-    for line in broken.lines() {
-        assert!(
-            display_width(line) <= 100,
-            "{} columns: {line:?}",
-            display_width(line)
-        );
+fn a_define_body_that_is_one_group_passes_through() {
+    for src in [
+        "#define M(x) ((x) ? aaaaaaaaaaaaaaaaaaaaaa : bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd)\n",
+        "#define N(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd)\n",
+        // A bare chain gets no parentheses of jphfmt's, however long it is: they would be tokens the
+        // author did not write, in a body whose expansion is the author's to control.
+        "#define Q(x) x + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd\n",
+        "#define R(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc) + d\n",
+        // Each shape a claim regressed, at the width that showed it.
+        "#define X (a + ({ int t = (x); t; }))\n",
+        "#define X (({ int t = (x); t; }) + a)\n",
+        "#define X (a + ( { int t = (x); t; } ))\n",
+        "#define MSG (\"abc\\\n def\")\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
     }
 
-    // A bare chain gets no parentheses of jphfmt's, however long it is: they would be tokens the author
-    // did not write, in a body whose expansion is the author's to control.
-    let bare = "#define Q(x) x + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd\n";
-    assert_eq!(format(bare), bare);
-    // A group with anything beside it is not whole-body, so it passes through too.
-    let partial = "#define R(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc) + d\n";
-    assert_eq!(format(partial), partial);
+    // The nested-ternary two-cycle showed at width 40, so the width it showed at is the one asserted.
+    let ternary = "#define value(x) ((123 ? 0xff : (a)) ? (t))\n";
+    assert_eq!(jphfmt::format_with_width(ternary, 40), ternary);
 }
 
 /// A statement expression is a parenthesized group, so the container arm above claims a body that is

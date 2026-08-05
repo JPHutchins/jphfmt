@@ -480,26 +480,19 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
 /// `+ 1` (#104).
 fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     let last = body.len().checked_sub(1)?;
-    let open = usize::from(is_call_head(body, 0));
-    (!contains_comment(body)
-        && match_bracket(body, open) == Some(last)
-        && !holds_nested_stmt_expr(&body[open + 1..last]))
-    .then(|| structure(body, prefix_col, width))
-}
-
-/// Whether `toks` holds a statement expression that is not the whole of it. Only the whole one is
-/// reached by [`emit_tokens`]'s own `({` handler; one with an operand beside it is swallowed by whichever
-/// handler claims the span around it, and reaches `build_expr_doc`'s `{` branch, which spaces a block as
-/// a brace list. `#define X (a + ({ int t = (x); t; }))` came out as `(a + ({int t = (x); t;}))`.
-///
-/// §6 prefers passthrough over a layout no handler owns. The body that *is* a statement expression is
-/// the shape #77 asks for and keeps its layout.
-fn holds_nested_stmt_expr(toks: &[Token]) -> bool {
-    let whole = next_nontrivia(toks, 0).is_some_and(|first| {
-        opens_stmt_expr(toks, first)
-            && match_bracket(toks, first) == prev_nontrivia(toks, toks.len())
-    });
-    !whole && (0..toks.len()).any(|i| opens_stmt_expr(toks, i))
+    if contains_comment(body) {
+        return None;
+    }
+    if is_call_head(body, 0) && match_bracket(body, 1) == Some(last) {
+        return Some(structure(body, prefix_col, width));
+    }
+    // `format_stmt_expr` renders as far as the `})` and reports the `)` consumed, so a body with
+    // anything after it had that tail dropped — `({ int t = (x); t; }) + 1` lost its `+ 1` and the
+    // expansion changed on valid GNU C (#104). The `)` must close the body for the render to be it.
+    if opens_stmt_expr(body, 0) && match_bracket(body, 0) == Some(last) {
+        return format_stmt_expr(body, 0, 0, width).map(|(s, _)| s);
+    }
+    None
 }
 
 /// Format a `({ ... })` statement-expression: `({` opens the line, each statement on its own line
