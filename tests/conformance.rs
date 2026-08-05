@@ -1888,6 +1888,17 @@ fn a_construct_does_not_measure_across_a_directive() {
     let commented = "int x = (a\n/* c */ #if X\n\t| b\n#endif\n);\n";
     assert_eq!(format(commented), commented);
 
+    // Which line a `#` is on is what the layout decides, so the test for a directive may not read it.
+    // Breaking this argument list puts the stringize `#x` at the start of a line, and a position-based
+    // test then called it a directive and refused on pass 2 what it laid out on pass 1.
+    let moved = "#define STR(x) fooooooooooooooo(#x, barrrrrrrrrrrrrrr, bazzzzzzzzzzzzzzz, quxxxxxxxxxxxxxxxxxxxxxxxxxxxx)\n";
+    let broken = format(moved);
+    assert!(
+        broken.contains("\n\t#x, \\\n"),
+        "the `#` lands at a line start: {broken:?}"
+    );
+    assert_eq!(format(&broken), broken, "and is still not a directive");
+
     // The stringize `#` is not a directive, and `##` is not even a `Punct`.
     let stringize = "#define STR(x) fooooooooooooooo(\n\t#x, \\\n\tbarrrrrrrrrrrrrrr, \\\n\tbazzzzzzzzzzzzzzz, \\\n\tquxxxxxxxxxxxxxxxxxxxxxxxxxxxx \\\n)\n";
     assert!(

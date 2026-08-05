@@ -744,23 +744,52 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 ///
 /// §6's passthrough is the whole answer, exactly as it is for a comment ([`contains_comment`]).
 ///
-/// A directive begins its line, which is what separates it from the stringize `#` of `foo(#x, y)` —
-/// an ordinary call whose arguments still lay out. `##` is an [`TokenKind::Operator`] and never
-/// reaches the test. A `#` with no newline before it inside `toks` cannot be a directive: the
-/// construct opened on an earlier line, so that newline would be here.
+/// What separates it from the stringize `#` of `foo(#x, y)` — an ordinary call whose arguments still
+/// lay out — is what *follows* it: a directive names one, or nothing follows it on its line (the null
+/// directive). Every name below is a keyword or a directive C reserves, so none can be the macro
+/// parameter a `#` stringizes. `##` is an [`TokenKind::Operator`] and never reaches the test.
 ///
-/// A block comment before it does not stop it being one: translation phase 3 replaces a comment with
-/// whitespace and phase 4 then recognizes the directive, so `/* c */ #define X 1` defines `X`.
+/// Position cannot answer this. Which line a `#` is on is what the layout decides, so a predicate that
+/// reads it is not a fixpoint of the pass that owns it — and reading it cost one: the first form of this
+/// asked whether the `#` began its line, so a group holding `A[A&#0` was laid out on pass 1, which put
+/// the `#` at a line start, and refused on pass 2. That is #43's defect in the guard whose whole reason
+/// is that a directive's column belongs to a later pass.
+///
+/// A block comment does not separate a `#` from its name: translation phase 3 replaces a comment with
+/// whitespace and phase 4 then recognizes the directive, so `# /* c */ define X 1` defines `X`.
 pub(super) fn holds_directive(toks: &[Token]) -> bool {
     toks.iter().enumerate().any(|(i, t)| {
         t.kind == TokenKind::Punct
             && t.text == "#"
-            && toks[..i]
+            && toks[i + 1..]
                 .iter()
-                .rev()
-                .find(|before| before.kind != TokenKind::Whitespace && !is_comment(before))
-                .is_some_and(|before| before.kind == TokenKind::Newline)
+                .take_while(|after| after.kind != TokenKind::Newline)
+                .find(|after| after.kind != TokenKind::Whitespace && !is_comment(after))
+                .is_none_or(|after| names_directive(after.text))
     })
+}
+
+/// A preprocessing directive's name (C23 §6.10.1). Each is a keyword or reserved to the preprocessor,
+/// so a `#` before one is never the stringize operator.
+fn names_directive(text: &str) -> bool {
+    matches!(
+        text,
+        "if" | "ifdef"
+            | "ifndef"
+            | "elif"
+            | "elifdef"
+            | "elifndef"
+            | "else"
+            | "endif"
+            | "define"
+            | "undef"
+            | "include"
+            | "embed"
+            | "line"
+            | "error"
+            | "warning"
+            | "pragma"
+    )
 }
 
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
