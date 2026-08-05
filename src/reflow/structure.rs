@@ -14,8 +14,8 @@ use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
     enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
     is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia, prev_significant,
-    respaced_when_joined, split_brace_line_comment, statement_end,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
+    prev_significant, respaced_when_joined, spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -133,12 +133,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         }
 
         // GNU statement-expression `({ ... })` — block-indent its statements.
-        if t.kind == TokenKind::Punct
-            && t.text == "("
-            && toks
-                .get(i + 1)
-                .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
-        {
+        if opens_stmt_expr(toks, i) {
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             if let Some((block, next)) = format_stmt_expr(toks, i, base_level, width) {
                 emit_str(out, col, &block);
@@ -393,9 +388,20 @@ fn without_continuations<'src>(toks: &[Token<'src>]) -> Vec<Token<'src>> {
 fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<Define<'src>> {
     let define = next_nontrivia_in(toks, start + 1, end)?;
     let name = next_nontrivia_in(toks, define + 1, end)?;
-    let function_like = toks
-        .get(name + 1)
-        .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");
+    // A `\` is not a name. `from_hash` flattens the continuations inside the head, so splitting here
+    // would delete this one with nothing to write it back — and what follows it is then read as the
+    // body rather than as the name, which is how `#define \` + `(})` came out as `#define (})`. §6
+    // prefers passthrough, and a continued name is not a shape this needs to lay out.
+    //
+    // A `\` touching the name is the same hazard on the other side: the splice joins the two lines
+    // with nothing between them, so `#define NAME\` + `(x)` defines the function-like `NAME(x)`,
+    // while the `(x)` reads here as an object-like body. Only the adjacent one — `#define NAME \` +
+    // `(x)` splices to a space, and `NAME` really is object-like there.
+    let after_name = toks.get(name + 1);
+    if is_backslash(&toks[name]) || after_name.is_some_and(is_backslash) {
+        return None;
+    }
+    let function_like = after_name.is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");
     // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is not
     // closed within it (e.g. a newline ended the directive mid-params), so it is not a
     // function-like macro we can split — pass through verbatim.
@@ -460,19 +466,37 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
     define_body_layout(body, prefix_col, width.saturating_sub(CONTINUATION_WIDTH))
 }
 
+/// Two shapes only: a body that is one whole call, and one that is one whole statement expression.
+/// Anything else passes through. #77's fourth item would claim every whole bracket here, and
+/// `a_define_body_that_is_one_group_passes_through` records the five ways that went wrong — a body that
+/// is one bracket is not one construct, it is whatever the macro's use makes of it, and §6 prefers
+/// passthrough.
+///
+/// **Whole-body** in both retained shapes. A group with anything beside it would put the rest on the
+/// line the group's own break ends, which is a layout this has no measure for — and claiming such a
+/// body from its first two tokens while rendering only as far as the group is how `({ ... }) + 1` lost
+/// its `+ 1` (#104).
 fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
+    let last = body.len().checked_sub(1)?;
     if contains_comment(body) {
         return None;
     }
-    if is_call_head(body, 0) && match_bracket(body, 1) == Some(body.len() - 1) {
+    // A `\`-continued literal is one token whose *text* holds the newline (#110/#111), so the body's
+    // rendered form already carries it — and `emit_define` re-splits at every `\n` to place the
+    // continuations, putting its ` \` inside the literal. Re-lexing that back into the same token makes
+    // it compound: `f("a\` + ` b")` became `f("a\ \` + ` b")`, then `"a\ \ \`, once per pass, and the
+    // macro expands to different text each time (#117). `spans_lines` is the refusal
+    // `is_boundable` and `build_bracketed_group` already make for the same reason.
+    if spans_lines(body) {
+        return None;
+    }
+    if is_call_head(body, 0) && match_bracket(body, 1) == Some(last) {
         return Some(structure(body, prefix_col, width));
     }
-    if body.len() >= 2
-        && body[0].kind == TokenKind::Punct
-        && body[0].text == "("
-        && body[1].kind == TokenKind::Punct
-        && body[1].text == "{"
-    {
+    // `format_stmt_expr` renders as far as the `})` and reports the `)` consumed, so a body with
+    // anything after it had that tail dropped — `({ int t = (x); t; }) + 1` lost its `+ 1` and the
+    // expansion changed on valid GNU C (#104). The `)` must close the body for the render to be it.
+    if opens_stmt_expr(body, 0) && match_bracket(body, 0) == Some(last) {
         return format_stmt_expr(body, 0, 0, width).map(|(s, _)| s);
     }
     None

@@ -656,6 +656,15 @@ pub(super) fn is_trivia(t: &Token) -> bool {
     matches!(t.kind, TokenKind::Whitespace | TokenKind::Newline)
 }
 
+/// Whether `toks[i]` opens a GNU statement expression — the `({` of `({ int t = x; t; })`.
+pub(super) fn opens_stmt_expr(toks: &[Token], i: usize) -> bool {
+    toks.get(i)
+        .is_some_and(|t| t.kind == TokenKind::Punct && t.text == "(")
+        && toks
+            .get(i + 1)
+            .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
+}
+
 /// Whether `toks` holds any non-trivia token — a segment worth emitting as its own element rather
 /// than dropping as empty.
 pub(super) fn has_non_trivia(toks: &[Token]) -> bool {

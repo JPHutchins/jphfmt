@@ -155,6 +155,159 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
     assert_eq!(format(src), expected);
 }
 
+/// #77's fourth item — a `#define` body that is entirely one group laid out as a container — is **not**
+/// implemented, and this pins that it is not, so the day it is, this test fails and says where to look.
+///
+/// Claiming such a body is a two-line change and produced five distinct regressions over three review
+/// rounds on #103, each on a body the walk then measured as something it is not: a dropped `\`
+/// continuation; a nested `({ … })` collapsed to a brace list, both adjacent and spaced; a two-cycle at
+/// width 40 on a nested parenthesized ternary, because the two passes measure the body at different
+/// columns (#43/#108's defect, not the claim's); and a `\`-continued string literal gaining a ` \` inside
+/// its own text on every pass, which changes what the macro expands to.
+///
+/// A body that is one bracket is not one construct — it is whatever the macro's use makes of it, and
+/// §6 prefers passthrough. The `#104` fix that shipped with these findings is narrow and separate: a
+/// statement-expression body is laid out only when its `)` is the body's last token.
+#[test]
+fn a_define_body_that_is_one_group_passes_through() {
+    for src in [
+        "#define M(x) ((x) ? aaaaaaaaaaaaaaaaaaaaaa : bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd)\n",
+        "#define N(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd)\n",
+        // A bare chain gets no parentheses of jphfmt's, however long it is: they would be tokens the
+        // author did not write, in a body whose expansion is the author's to control.
+        "#define Q(x) x + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd\n",
+        "#define R(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc) + d\n",
+        // Each shape a claim regressed, at the width that showed it.
+        "#define X (a + ({ int t = (x); t; }))\n",
+        "#define X (({ int t = (x); t; }) + a)\n",
+        "#define X (a + ( { int t = (x); t; } ))\n",
+        "#define MSG (\"abc\\\n def\")\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
+    }
+
+    // The nested-ternary two-cycle showed at width 40, so the width it showed at is the one asserted.
+    let ternary = "#define value(x) ((123 ? 0xff : (a)) ? (t))\n";
+    assert_eq!(jphfmt::format_with_width(ternary, 40), ternary);
+}
+
+/// A statement expression is a parenthesized group, so the container arm above claims a body that is
+/// entirely one — and a body that is *not* entirely one passes through, rather than being claimed from
+/// its first two tokens and rendered only as far as the `})`. That is what deleted the `+ 1` from
+/// `#define M(x) ({ int t = (x); t; }) + 1`, silently changing the expansion on valid GNU C (#104), and
+/// it is #81's shape in a third place: a handler reporting more consumed than it rendered.
+///
+/// Invisible to idempotency, like #81 — the truncated output is a fixpoint.
+#[test]
+fn a_statement_expression_body_keeps_what_follows_it() {
+    let trailing = "#define M(x) ({ int t = (x); t; }) + 1\n";
+    assert_eq!(format(trailing), trailing);
+
+    // Whole-body, so the walk lays it out — the operand is what the arm above already does.
+    let whole = "#define M(x) ({ int t = (x); t; })\n";
+    assert_eq!(
+        format(whole),
+        "#define M(x) ({ \\\n\tint t = (x); \\\n\tt; \\\n})\n"
+    );
+    assert_eq!(format(&format(whole)), format(whole));
+
+    // Neither does anything before it make the body a statement expression to lay out.
+    let leading = "#define N(x) 1 + ({ int t = (x); t; })\n";
+    assert_eq!(format(leading), leading);
+
+    // Wrapping that in parentheses makes the *body* one whole group, so the container arm claims it —
+    // but the `({` inside is then no longer where the walk tests for one, and reaches
+    // `build_expr_doc`'s brace-list branch, which spaces a block as a list: `(a + ({int t = (x); t;}))`.
+    // §6 prefers passthrough over a layout no handler owns.
+    for operand in [
+        "#define X (a + ({ int t = (x); t; }))\n",
+        "#define X (({ int t = (x); t; }) + a)\n",
+    ] {
+        assert_eq!(format(operand), operand, "{operand:?}");
+    }
+}
+
+/// A body holding a `\`-continued literal is not one to lay out. Such a literal is **one token** whose
+/// text holds the newline (#110/#111), so a rendered body already carries it — and `emit_define` re-splits
+/// at every `\n` to place the continuations, putting its ` \` *inside the literal*. Re-lexing that back
+/// into the same token compounds it, once per pass:
+///
+/// ```text
+/// #define M(x) f("a\        ->  f("a\ \      ->  f("a\ \ \
+///  b")                          b")             b")
+/// ```
+///
+/// Non-idempotent, and the macro expands to different text each time (#117). Both arms `define_body_layout`
+/// retains carried it — pre-existing on `main`, which is why it was filed rather than folded into the
+/// deferral of #77's fourth item, where the container arm had the same defect.
+///
+/// `spans_lines` is the refusal `is_boundable` and `build_bracketed_group` already make, for exactly this
+/// reason: a token carrying a line break is a literal the one-line width model cannot describe.
+#[test]
+fn a_define_body_holding_a_continued_literal_passes_through() {
+    for src in [
+        "#define M(x) f(\"a\\\n b\")\n",
+        "#define M(x) ({ f(\"a\\\n b\"); })\n",
+        "#define M(x) ({ char * s = \"a\\\n b\"; s; })\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
+    }
+
+    // What the refusal must not take with it: the same two arms, with no continued literal, still lay out.
+    let call = "#define M(x) fooooooooooooooo(aaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccccccc, dddddddddddddddd)\n";
+    assert!(format(call).contains(" \\\n"), "{:?}", format(call));
+    let block = "#define M(x) ({ int t = (x); t; })\n";
+    assert_eq!(
+        format(block),
+        "#define M(x) ({ \\\n\tint t = (x); \\\n\tt; \\\n})\n"
+    );
+}
+
+/// A `#define` whose name is a line continuation is not one to split. `split_define` flattens the
+/// continuations inside the head, so there is nothing to write this one back, and what follows it is
+/// read as the body rather than as the name — `#define \` + `(})` came out as `#define (})`, which
+/// `space_call_heads` then tightened to `#define(})` on the next pass.
+///
+/// A `\` touching the name is the same loss from the other side: the splice leaves nothing between the
+/// lines, so `#define NAME\` + `(x)` defines the function-like `NAME(x)` and `#define NAME (x)` is a
+/// different macro. `(x) x + 1` was already here and passed, because a body that is not one whole
+/// bracket is not claimable — it took a claimable one to reach the gap.
+///
+/// Found by the 200k property run on the branch that made the body claimable; before that the body was
+/// passed through, which masked the loss.
+///
+/// Only a *claimable* body reaches the split, so only an input with one pins the guard — everything else
+/// keeps its `\` through `emit_define`'s verbatim fallback whether the guard is there or not. With #77's
+/// fourth item deferred, the claimable shapes are a whole call and a whole statement expression, which
+/// makes `f(x)` the input that pins the `toks[name + 1]` arm and `f()` the one that pins `toks[name]`.
+/// `#define NAME\` + `f(x)` splices the two names into one, defining a function-like macro that takes
+/// `x`; without the guard it came out as the object-like `#define NAME f(x)` — a different macro, which
+/// `main` still writes.
+///
+/// The other four assert passthrough and pin no arm. They are kept because passthrough is worth holding,
+/// not because they cover the guard, and were asserted with `contains('\\')` until the review found that
+/// two of them stayed green with the guard deleted. All of them would.
+#[test]
+fn a_continued_macro_name_is_not_a_name_to_split() {
+    // Claimable, so these reach the split and fail if the guard goes.
+    assert_eq!(format("#define NAME\\\nf(x)\n"), "#define NAME\\\nf(x)\n");
+    assert_eq!(format("#define\\\nf()\n"), "#define\\\nf()\n");
+    assert_eq!(
+        format("#define NAME\\\n({ x; })\n"),
+        "#define NAME\\\n({ x; })\n"
+    );
+
+    // The only input without a trailing newline; formatting adds the one every other line has (§2.1).
+    assert_eq!(format("#define\\\n(})"), "#define\\\n(})\n");
+    for src in [
+        "#define \\\nNAME 1\n",
+        "#define NAME\\\n(x) x + 1\n",
+        "#define NAME\\\n(x)\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
+}
+
 /// The gap between a `#define`'s name and a `(` is meaning, not spacing: `#define X (y)` defines `X` as
 /// `(y)`, and `#define X(y)` a function-like macro taking `y`. Tightening it turned every object-like
 /// macro with a parenthesized body into a function-like one, and the output did not compile.
