@@ -240,12 +240,26 @@ fn a_statement_expression_body_keeps_what_follows_it() {
 /// Found by the 200k property run on the branch that made the body claimable; before that the body was
 /// passed through, which masked the loss.
 ///
-/// Each input is asserted byte-identical, not merely to still hold a `\`: with the guard deleted, only a
-/// *claimable* body reaches the split, and the other two shapes keep their `\` through `emit_define`'s
-/// verbatim fallback either way. `(})` pins the `toks[name]` arm and `(x)` alone the `toks[name + 1]`
-/// arm; `NAME 1` and `(x) x + 1` assert passthrough and pin no arm.
+/// Only a *claimable* body reaches the split, so only an input with one pins the guard — everything else
+/// keeps its `\` through `emit_define`'s verbatim fallback whether the guard is there or not. With #77's
+/// fourth item deferred, the claimable shapes are a whole call and a whole statement expression, which
+/// makes `f(x)` the input that pins the `toks[name + 1]` arm and `f()` the one that pins `toks[name]`.
+/// `#define NAME\` + `f(x)` splices to a function-like `NAMEf(x)`, and without the guard it came out as
+/// the object-like `#define NAME f(x)` — a different macro, which `main` still writes.
+///
+/// The other four assert passthrough and pin no arm. They are kept because passthrough is worth holding,
+/// not because they cover the guard, and were asserted with `contains('\\')` until the review found that
+/// two of them stayed green with the guard deleted. All of them would.
 #[test]
 fn a_continued_macro_name_is_not_a_name_to_split() {
+    // Claimable, so these reach the split and fail if the guard goes.
+    assert_eq!(format("#define NAME\\\nf(x)\n"), "#define NAME\\\nf(x)\n");
+    assert_eq!(format("#define\\\nf()\n"), "#define\\\nf()\n");
+    assert_eq!(
+        format("#define NAME\\\n({ x; })\n"),
+        "#define NAME\\\n({ x; })\n"
+    );
+
     // The only input without a trailing newline; formatting adds the one every other line has (§2.1).
     assert_eq!(format("#define\\\n(})"), "#define\\\n(})\n");
     for src in [

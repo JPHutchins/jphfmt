@@ -397,12 +397,11 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
     // with nothing between them, so `#define NAME\` + `(x)` defines the function-like `NAME(x)`,
     // while the `(x)` reads here as an object-like body. Only the adjacent one — `#define NAME \` +
     // `(x)` splices to a space, and `NAME` really is object-like there.
-    if is_backslash(&toks[name]) || toks.get(name + 1).is_some_and(is_backslash) {
+    let after_name = toks.get(name + 1);
+    if is_backslash(&toks[name]) || after_name.is_some_and(is_backslash) {
         return None;
     }
-    let function_like = toks
-        .get(name + 1)
-        .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");
+    let function_like = after_name.is_some_and(|n| n.kind == TokenKind::Punct && n.text == "(");
     // `match_bracket` scans past `end`; a `)` beyond this directive means the param list is not
     // closed within it (e.g. a newline ended the directive mid-params), so it is not a
     // function-like macro we can split — pass through verbatim.
@@ -467,17 +466,16 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
     define_body_layout(body, prefix_col, width.saturating_sub(CONTINUATION_WIDTH))
 }
 
-/// A body the walk can lay out is one whose bracket closes it: a call's `(` at index 1, or a group
-/// the author wrote at index 0 — `#define M(x) ((x) ? a : b ? c : d)`, an index, and a statement
-/// expression too, since `match_bracket` counts the parentheses and the `{` is only what the group
-/// holds ([`emit_tokens`] has the handler for it). One test rather than one per shape, because a
-/// bracket is a container like any other (#77) and the walk already lays one out; a body is passed
-/// through only because nothing here claimed it.
+/// Two shapes only: a body that is one whole call, and one that is one whole statement expression.
+/// Anything else passes through. #77's fourth item would claim every whole bracket here, and
+/// `a_define_body_that_is_one_group_passes_through` records the five ways that went wrong — a body that
+/// is one bracket is not one construct, it is whatever the macro's use makes of it, and §6 prefers
+/// passthrough.
 ///
-/// **Whole-body**, in every shape. A group with anything beside it would put the rest on the line the
-/// group's own break ends, which is a layout this has no measure for — and claiming such a body from
-/// its first two tokens while rendering only as far as the group is how `({ ... }) + 1` lost its
-/// `+ 1` (#104).
+/// **Whole-body** in both retained shapes. A group with anything beside it would put the rest on the
+/// line the group's own break ends, which is a layout this has no measure for — and claiming such a
+/// body from its first two tokens while rendering only as far as the group is how `({ ... }) + 1` lost
+/// its `+ 1` (#104).
 fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     let last = body.len().checked_sub(1)?;
     if contains_comment(body) {
