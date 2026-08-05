@@ -439,7 +439,11 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     // rewrites. Either anywhere in the construct — head included — and the width this decides from
     // is not the width the next pass measures. A tab needs no refusal: `display_width` counts the
     // columns it occupies, the same as every other measure in the pipeline.
-    if spans_lines(toks) || holds_directive(toks) {
+    //
+    // Any `#`, not only [`super::tokens::holds_directive`]'s: narrowing this to a directive broke
+    // idempotency on `]{'((.AA…'0}#A*:?` at width 57, where the `#` names nothing. Whatever a `#` here
+    // is, its spacing is not settled until the passes that own it have run (#112's review).
+    if spans_lines(toks) || toks.iter().any(|t| t.text == "#") {
         return false;
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
