@@ -756,8 +756,15 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// is that a directive's column belongs to a later pass.
 ///
 /// Neither a block comment nor a `\` continuation separates a `#` from its name: phase 2 splices the
-/// continuation and phase 3 makes the comment whitespace, both before phase 4 reads the directive, so
-/// `# /* c */ define X 1` and `#\` + `define X 1` each define `X`.
+/// continuation — the *name* too, so a `#include` split across one is still `#include` — and phase 3
+/// makes the comment
+/// whitespace, both before phase 4 reads the directive.
+///
+/// This is deliberately more inclusive than `scope_directives::parse_directive`, which scans for the
+/// keyword textually and so does not see `# /* c */ if` as one. The two disagreeing is safe only in this
+/// direction: this one refuses to lay a construct out and the scope pass declines to indent it, where the
+/// reverse would write a `#` mid-line. Not a divergence to copy into the scope pass without deciding what
+/// `# /* c */ if` should do about depth.
 ///
 /// **Both errors are possible and they are not symmetric.** A name this does not know is a false
 /// negative and writes a `#` mid-line — the defect itself — so [`names_directive`] must stay complete;
@@ -773,15 +780,33 @@ pub(super) fn holds_directive(toks: &[Token]) -> bool {
 
 /// Whether what follows a `#` on its logical line makes it a directive's.
 fn opens_directive(after: &[Token]) -> bool {
-    after
+    let line: Vec<&Token> = after
         .iter()
         .enumerate()
         .take_while(|&(k, _)| !ends_logical_line(after, k))
         .map(|(_, t)| t)
-        // A spliced newline and the `\` that splices it are both gone by phase 4, so neither is the
-        // name — only a real line end stops the scan, and that is [`ends_logical_line`]'s job.
-        .find(|t| !is_trivia(t) && !is_comment(t) && !is_backslash(t))
-        .is_none_or(|t| names_directive(t.text) || t.kind == TokenKind::Number)
+        // A spliced newline, the `\` that splices it and a comment are all gone by phase 4, so none of
+        // them is the name — only a real line end stops the scan ([`ends_logical_line`]).
+        .filter(|t| t.kind != TokenKind::Newline && !is_comment(t) && !is_backslash(t))
+        .skip_while(|t| t.kind == TokenKind::Whitespace)
+        .collect();
+    match line.first() {
+        // Nothing on the line after the `#`: the null directive.
+        None => true,
+        // A line marker's name is a number — `# 42 "gen.c"`, C11 §6.10.4.
+        Some(first) if first.kind == TokenKind::Number => true,
+        // Phase 2 splices the *name* too, so a name broken across a continuation is one name again.
+        // Whitespace ends it, which
+        // is why it is filtered out above but not skipped over: `# region x` names `region`, not
+        // `regionx`.
+        Some(_) => names_directive(
+            &line
+                .iter()
+                .take_while(|t| t.kind == TokenKind::Ident)
+                .map(|t| t.text)
+                .collect::<String>(),
+        ),
+    }
 }
 
 /// Whether `toks[k]` ends the *logical* line — a newline the preprocessor does not splice away.
@@ -817,13 +842,18 @@ fn names_directive(text: &str) -> bool {
             | "pragma"
             // Not in the standard, and all of them appear in headers a compiler is handed:
             // `include_next` and `import` guard re-inclusion, `ident` and `sccs` carry version strings,
-            // `assert`/`unassert` are GCC's retired predicates.
+            // `assert`/`unassert` are GCC's retired predicates, `system_header` suppresses warnings for
+            // the rest of the file, `using` is C++/CLI, and `region`/`endregion` are editor folds.
             | "include_next"
             | "import"
             | "ident"
             | "sccs"
             | "assert"
             | "unassert"
+            | "system_header"
+            | "using"
+            | "region"
+            | "endregion"
     )
 }
 

@@ -1908,12 +1908,48 @@ fn a_construct_does_not_measure_across_a_directive() {
         "#\\\ndefine Q 1",
         "# /* c */ define Q 1",
         "#",
+        // A second round of names the list did not have — `main` writes the `#` mid-line for every one,
+        // tight or spaced, so each is the defect and not a hypothetical. Two rounds of review found nine
+        // missing names between them, which is the cost of a list: it is only as good as its last audit,
+        // and the docstring says so.
+        "#region x",
+        "#endregion",
+        "#using <f>",
+        "#system_header",
+        // Phase 2 splices the *name* as well, so this is `#include` — the first token is only `in`.
+        "#in\\\nclude <f.h>",
     ] {
         let src = format!(
             "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
         );
         assert_eq!(format(&src), src, "{directive:?}");
     }
+
+    // Spaced, which `emit_directive` tightens, so byte-identity is the wrong assertion — what matters is
+    // that the `#` keeps its own line. Whitespace between the `#` and the name ends the name, so these
+    // also pin that `# region x` names `region` and not `regionx`.
+    for directive in ["# region x", "# endregion", "# using <f>", "# 42 \"gen.c\""] {
+        let src = format!(
+            "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
+        );
+        let once = format(&src);
+        assert!(
+            !once
+                .lines()
+                .any(|line| line.contains("if (") && line.contains('#')),
+            "{directive:?} keeps its own line: {once:?}"
+        );
+        assert_eq!(format(&once), once, "{directive:?}");
+    }
+
+    // The four guards this adds are narrow where `is_boundable` and `emit_brace` are blanket, so they
+    // carry the width-flip exposure those two were kept blanket for: `scope_directives` re-indents any
+    // line-start `#`+keyword, and a stringize the layout *moves* to a line start inside a nonzero scope
+    // is where that would first show. It does not today, and this is what says so if it ever does.
+    let scoped = "#if X\n#define STR(x) fooooooooooooooo(#x, barrrrrrrrrrrrrrr, bazzzzzzzzzzzzzzz, quxxxxxxxxxxxxxxxxxxxxxxxxxxxx)\n#endif\n";
+    let broken = format(scoped);
+    assert!(broken.contains("#x"), "the stringize survives: {broken:?}");
+    assert_eq!(format(&broken), broken, "and the result is a fixpoint");
 
     // Which line a `#` is on is what the layout decides, so the test for a directive may not read it.
     // Breaking this argument list puts the stringize `#x` at the start of a line, and a position-based
