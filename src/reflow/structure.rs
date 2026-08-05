@@ -110,7 +110,11 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(close) = match_bracket(toks, i + 1)
         {
             let inner = &toks[i + 2..close];
-            if !contains_comment(inner) && is_balanced(inner) && !has_middle_newline(inner) {
+            if !contains_comment(inner)
+                && !holds_directive(inner)
+                && is_balanced(inner)
+                && !has_middle_newline(inner)
+            {
                 emit_str(out, col, t.text);
                 let doc = build_call_body(inner, Fit::Measured);
                 emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
@@ -528,9 +532,13 @@ fn format_stmt_expr(
         return None;
     }
     let inner = &toks[open + 2..brace_close];
-    let unformattable = inner
-        .iter()
-        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
+    // A directive here too: the statements are joined one per line, and a directive joined onto the
+    // statement after it swallows that statement into the directive — `#pragma pack(1)` + `int t = 1;`
+    // came out as one line and `t` was then undeclared (#112).
+    let unformattable = holds_directive(inner)
+        || inner
+            .iter()
+            .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
     if unformattable || !is_balanced(inner) {
         return None;
     }
@@ -587,9 +595,7 @@ fn emit_brace(
         return open + 1;
     };
     let inner = &toks[open + 1..close];
-    let has_comment_or_directive = inner
-        .iter()
-        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "#"));
+    let has_comment_or_directive = contains_comment(inner) || holds_directive(inner);
     if has_comment_or_directive || !is_balanced(inner) || respaced_when_joined(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);

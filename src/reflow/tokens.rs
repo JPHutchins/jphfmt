@@ -748,6 +748,9 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// an ordinary call whose arguments still lay out. `##` is an [`TokenKind::Operator`] and never
 /// reaches the test. A `#` with no newline before it inside `toks` cannot be a directive: the
 /// construct opened on an earlier line, so that newline would be here.
+///
+/// A block comment before it does not stop it being one: translation phase 3 replaces a comment with
+/// whitespace and phase 4 then recognizes the directive, so `/* c */ #define X 1` defines `X`.
 pub(super) fn holds_directive(toks: &[Token]) -> bool {
     toks.iter().enumerate().any(|(i, t)| {
         t.kind == TokenKind::Punct
@@ -755,7 +758,7 @@ pub(super) fn holds_directive(toks: &[Token]) -> bool {
             && toks[..i]
                 .iter()
                 .rev()
-                .find(|before| before.kind != TokenKind::Whitespace)
+                .find(|before| before.kind != TokenKind::Whitespace && !is_comment(before))
                 .is_some_and(|before| before.kind == TokenKind::Newline)
     })
 }

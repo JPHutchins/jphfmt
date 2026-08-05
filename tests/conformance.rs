@@ -1841,15 +1841,18 @@ fn a_continued_literal_is_one_token_under_either_line_ending() {
 /// does not compile (#112) — `if (a == 1 #if defined(X) || b == 2 #endif) {`. `contains_comment` is
 /// the same refusal for the same reason, and directives had no counterpart to it.
 ///
-/// Two handlers reach the shape and both are needed: the control header, and the bracketed group
-/// inside it. Removing either takes `sqlite3.c` from 0 `gcc` errors back to 45. The call handler needs
-/// no guard — a directive's `#` is not trivia, so it lands in some argument's trimmed body along with
-/// the newline that precedes it, and `has_middle_newline` already declines. The call shapes below are
-/// here to keep that true rather than to test a guard.
+/// Four handlers reach the shape. The control header and the bracketed group inside it are what
+/// `sqlite3.c` needs — removing either takes it from 0 `gcc` errors back to 45. The other two were
+/// found by the review, and the multi-line shapes that made them look unreachable are why: a directive
+/// that is an argument's *whole* trimmed body has no newline left in that body, so
+/// `has_middle_newline` does not decline it and `foo(` + `#` + `)` came out as `foo(#)`. In a statement
+/// expression the statements are joined one per line, and a directive joined onto the statement after
+/// it swallows that statement — `#pragma pack(1)` + `int t = 1;` compiled to `t` undeclared.
 ///
 /// A directive begins its line; the stringize `#` of `foo(#x, y)` does not, and that call still lays
 /// out. Refusing on any `#` cost real layout: `#define STR(x) f(#x, …)` exploded its *parameter list*
-/// instead of its argument list.
+/// instead of its argument list. A block comment before it does not stop it being a directive — phase 3
+/// makes the comment whitespace and phase 4 then reads the `#`.
 #[test]
 fn a_construct_does_not_measure_across_a_directive() {
     let header = "static int f(int a, int b) {\n\tif (a == 111111111\n#if defined(__APPLE__)\n\t\t|| b == 22222222\n#endif\n\t) {\n\t\treturn 1;\n\t}\n\treturn 0;\n}\n";
@@ -1859,15 +1862,31 @@ fn a_construct_does_not_measure_across_a_directive() {
         "int x = (aaaaaaaaaaaaaaaaaaaaa\n#if defined(X)\n\t| bbbbbbbbbbbbbbbbbbbbb\n#endif\n);\n";
     assert_eq!(format(group), group, "so does the group");
 
-    // A directive anywhere in a call's arguments, wherever the newlines fall around it.
+    // A directive anywhere in a call's arguments, wherever the newlines fall around it. The last three
+    // are the ones a multi-line body hides: the directive is the argument's whole trimmed body, so
+    // nothing is left in it for `has_middle_newline` to find.
     for src in [
         "void g(void) {\n\tfoo(x,\n#if X\n\t\ty\n#endif\n\t);\n}\n",
         "void g(void) {\n\tfoo(x, y\n#if X\n#endif\n\t);\n}\n",
         "void g(void) {\n\tfoo(\n#if X\n\t\tx\n#endif\n\t);\n}\n",
         "void g(void) {\n\tfoo(x\n#if X\n\t\t, y\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(\n#\n\t);\n}\n",
+        "void g(void) {\n\tfoo(x,\n#pragma pack(1)\n\t\t);\n}\n",
+        "void g(void) {\n\tfoo(\n#error nope\n\t);\n}\n",
     ] {
         assert_eq!(format(src), src, "{src:?}");
     }
+
+    // A statement expression's statements go one per line, so a directive joined onto the next one
+    // swallows it: `#pragma pack(1) int t = 1;` left `t` undeclared where the input compiled.
+    let block = "void g(void) {\n\tint y = ({\n#pragma pack(1)\n\t\tint t = 1;\n\t\tt;\n\t});\n}\n";
+    assert_eq!(format(block), block);
+
+    // A `{}` list too, and a comment before the `#` does not make it something else.
+    let list = "int t[] = {\n#if X\n\t1,\n#endif\n\t2,\n};\n";
+    assert_eq!(format(list), list);
+    let commented = "int x = (a\n/* c */ #if X\n\t| b\n#endif\n);\n";
+    assert_eq!(format(commented), commented);
 
     // The stringize `#` is not a directive, and `##` is not even a `Punct`.
     let stringize = "#define STR(x) fooooooooooooooo(\n\t#x, \\\n\tbarrrrrrrrrrrrrrr, \\\n\tbazzzzzzzzzzzzzzz, \\\n\tquxxxxxxxxxxxxxxxxxxxxxxxxxxxx \\\n)\n";
