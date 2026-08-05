@@ -8,7 +8,10 @@ Two properties no fixture can state, over real headers rather than reductions:
 
 * **idempotent** — formatting the output returns it unchanged;
 * **compiles no worse** — ``gcc -fsyntax-only`` reports no more errors on the output than on the
-  input, and does not crash on output that the input did not crash it on.
+  input, and does not crash on output that the input did not crash it on;
+* **keeps what was written** — the output holds at least as many characters that are neither
+  whitespace nor ``\\`` as the input did. Without it a formatter that emits nothing reads as clean on
+  every file, since empty output is both a fixpoint and free of compiler errors.
 
 The second is the only check that has ever caught jphfmt's compile-breaking bugs (#88, #90, #93,
 #95, #100), and it needs real headers to be worth running: #100 corrupted 478 of 1200 corpus files
@@ -26,11 +29,13 @@ the file, because a check that passes vacuously is worse than one that is not ru
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import islice
 from pathlib import Path
 from typing import NamedTuple
@@ -40,10 +45,19 @@ GCC_TIMEOUT_S = 30
 # file as hung is worse than one that waits.
 FORMAT_TIMEOUT_S = 60
 BUILD_TIMEOUT_S = 300
-GCC_FLAGS = ("-std=c2x", "-fsyntax-only")
+# `-fdiagnostics-plain-output` drops the echoed source line under each diagnostic. Those echoes carry
+# the file's own text, so a `#error "error: x"` or a comment mentioning one counted as a diagnostic,
+# and reflowing a line onto or off an offending one changed the count with the errors unchanged.
+GCC_FLAGS = ("-std=c2x", "-fsyntax-only", "-fdiagnostics-plain-output")
+# gcc writes one diagnostic per line, `<where>: error: <what>`. Anchored so the `error:` inside a
+# message's quoted source text cannot be counted twice, and so a `note:` line is never counted.
+ERROR_LINE = re.compile(r"(?m)^\S.*?: (?:fatal )?error: ")
 # `error:` is what this counts, and gcc translates its diagnostics wherever a locale catalog is
 # installed. A localized gcc would report zero errors for every file in the corpus.
 ENGLISH = {**os.environ, "LC_ALL": "C"}
+# Whitespace is the formatter's to place, and so is a `\` continuation: a two-line macro that comes to
+# fit on one keeps every character of its body and needs no continuation to hold it together.
+OWNED = " \t\r\n\v\f\\"
 
 
 class Errors(NamedTuple):
@@ -100,12 +114,18 @@ class Regressed(NamedTuple):
 	after: Compile
 
 
+class LostContent(NamedTuple):
+	path: Path
+	before: int
+	after: int
+
+
 class Broke(NamedTuple):
 	path: Path
 	error: str
 
 
-Verdict = Unformattable | Stalled | NotIdempotent | Regressed | Broke
+Verdict = Unformattable | Stalled | NotIdempotent | Regressed | LostContent | Broke
 
 
 def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
@@ -114,8 +134,12 @@ def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
 	Depth-capped rather than recursive: `/nix/store` is deep enough that an unbounded walk does not
 	finish. Shallowest first because that is where the headers worth compiling are —
 	`<hash>-glibc-dev/include/stdio.h` is three levels down and a fixed four-level glob misses it.
+
+	Each level is sorted, because `glob` yields a directory in whatever order the filesystem does: two
+	runs would otherwise check different files and an A/B against another binary would compare two
+	different corpora.
 	"""
-	levels = (root.glob("/".join(["*"] * d)) for d in range(1, depth + 1))
+	levels = (sorted(root.glob("/".join(["*"] * d))) for d in range(1, depth + 1))
 	found = (
 		p
 		for level in levels
@@ -141,7 +165,7 @@ def compiles(source: Path, include: Path) -> Compile:
 	# would read a compiler crash as a clean compile — the very thing this checks for.
 	if gcc.returncode < 0:
 		return Crashed(-gcc.returncode)
-	return Errors(gcc.stderr.count("error:"))
+	return Errors(len(ERROR_LINE.findall(gcc.stderr)))
 
 
 def severity(result: Compile) -> tuple[int, int]:
@@ -166,21 +190,41 @@ def severity(result: Compile) -> tuple[int, int]:
 def first_difference(before: str, after: str) -> tuple[str, str]:
 	"""The first line the two disagree on, counting a line one of them does not have.
 
+	Line endings are kept, so a difference that is only a CRLF or a trailing newline names itself
+	instead of reporting two identical-looking lines.
+
 	>>> first_difference("a\\nb\\n", "a\\nc\\n")
-	('b', 'c')
+	('b\\n', 'c\\n')
 	>>> first_difference("a\\n", "a\\n")
 	('', '')
 	>>> first_difference("a\\nb\\n", "a\\n")
-	('b', '<no line>')
+	('b\\n', '<no line>')
 	>>> first_difference("a\\n", "a\\nb\\n")
-	('<no line>', 'b')
+	('<no line>', 'b\\n')
+	>>> first_difference("a\\r\\n", "a\\n")
+	('a\\r\\n', 'a\\n')
+	>>> first_difference("a\\n", "a")
+	('a\\n', 'a')
 	"""
 	missing = "<no line>"
 	lines = zip(
-		before.splitlines() + [missing] * len(after.splitlines()),
-		after.splitlines() + [missing] * len(before.splitlines()),
+		before.splitlines(keepends=True) + [missing] * len(after.splitlines()),
+		after.splitlines(keepends=True) + [missing] * len(before.splitlines()),
 	)
 	return next((pair for pair in lines if pair[0] != pair[1]), ("", ""))
+
+
+def written(text: str) -> int:
+	"""How many of `text`'s characters the formatter does not own — everything but [`OWNED`].
+
+	>>> written("a b\\tc\\n")
+	3
+	>>> written("#define M(x) \\\\\\n\\tx\\n")
+	12
+	>>> written("   \\n\\t\\\\\\n")
+	0
+	"""
+	return sum(1 for c in text if c not in OWNED)
 
 
 def format_with(binary: Path, source: Path | str) -> Formatting:
@@ -195,7 +239,10 @@ def format_with(binary: Path, source: Path | str) -> Formatting:
 			(str(binary), str(source) if isinstance(source, Path) else "/dev/stdin"),
 			input=None if isinstance(source, Path) else source,
 			capture_output=True,
-			text=True,
+			# The formatter reads and writes UTF-8; `text=True` alone would decode with the process
+			# locale, so a corpus header's non-ASCII bytes would fail to decode under a C locale and
+			# report a file the formatter handled fine.
+			encoding="utf-8",
 			timeout=FORMAT_TIMEOUT_S,
 		)
 	except subprocess.TimeoutExpired:
@@ -228,6 +275,10 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 		unstable = (as_verdict(path, again),)
 	elif again.text != once:
 		unstable = (NotIdempotent(path, *first_difference(once, again.text)),)
+	source, output = written(path.read_text(encoding="utf-8")), written(once)
+	lost: tuple[Verdict, ...] = ()
+	if output < source:
+		lost = (LostContent(path, source, output),)
 	with tempfile.TemporaryDirectory() as tmp:
 		original, formatted = Path(tmp) / "in.c", Path(tmp) / "out.c"
 		original.write_bytes(path.read_bytes())
@@ -237,7 +288,7 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 	regressed: tuple[Verdict, ...] = ()
 	if severity(after) > severity(before):
 		regressed = (Regressed(path, before, after),)
-	return unstable + regressed
+	return unstable + lost + regressed
 
 
 def checked(binary: Path, path: Path) -> tuple[Verdict, ...]:
@@ -249,8 +300,10 @@ def checked(binary: Path, path: Path) -> tuple[Verdict, ...]:
 	"""
 	try:
 		return check(binary, path)
-	except Exception as error:
-		return (Broke(path, f"{type(error).__name__}: {error}"),)
+	except Exception:
+		# The traceback, not just the message: a `Broke` is a bug in this file, and the whole point of
+		# reporting one rather than raising is that the run finishes — so it has to name its own site.
+		return (Broke(path, traceback.format_exc().strip()),)
 
 
 def unusable_gcc() -> str | None:
@@ -262,15 +315,20 @@ def unusable_gcc() -> str | None:
 	"""
 	if shutil.which("gcc") is None:
 		return "gcc is not on PATH — this check needs a C compiler"
-	probe = subprocess.run(
-		("gcc", *GCC_FLAGS, "-x", "c", "/dev/null"),
-		capture_output=True,
-		text=True,
-		env=ENGLISH,
-		timeout=GCC_TIMEOUT_S,
-	)
+	try:
+		probe = subprocess.run(
+			("gcc", *GCC_FLAGS, "-x", "c", "/dev/null"),
+			capture_output=True,
+			text=True,
+			env=ENGLISH,
+			timeout=GCC_TIMEOUT_S,
+		)
+	except subprocess.TimeoutExpired:
+		return f"gcc did not answer an empty file in {GCC_TIMEOUT_S}s"
 	if probe.returncode == 0:
 		return None
+	# The flags are the likely cause and the only one this can name; a broken install (a missing `cc1`)
+	# lands here too, and refusing is right either way.
 	return f"gcc rejects {' '.join(GCC_FLAGS)}: {probe.stderr.strip() or '(no stderr)'}"
 
 
@@ -278,8 +336,12 @@ def unbuildable() -> str | None:
 	"""Why the release binary could not be built, or `None` if it was.
 
 	Timed out like every other subprocess here: a cargo stalled on a network fetch or a held lock would
-	hang the run before it names a single file.
+	hang the run before it names a single file. `camas corpus` carries no `when=` guard and this repo
+	ships no rustup, so a machine with gcc and a corpus but no cargo is the expected one, not the
+	exceptional one — and it must say so rather than raise.
 	"""
+	if shutil.which("cargo") is None:
+		return "cargo is not on PATH — build the binary elsewhere and pass --binary --no-build"
 	try:
 		build = subprocess.run(("cargo", "build", "--release", "--quiet"), timeout=BUILD_TIMEOUT_S)
 	except subprocess.TimeoutExpired:
@@ -307,8 +369,11 @@ def report(verdict: Verdict) -> str:
 			return f"UNSTABLE  {path}\n            once: {line!r}\n           twice: {again!r}"
 		case Regressed(path, before, after):
 			return f"REGRESSED {path}\n           gcc: {describe(before)} -> {describe(after)}"
+		case LostContent(path, before, after):
+			return f"LOST      {path}\n           {before - after} of {before} characters gone"
 		case Broke(path, error):
-			return f"HARNESS   {path}\n           {error}"
+			indented = error.replace("\n", "\n           ")
+			return f"HARNESS   {path}\n           {indented}"
 
 
 def main(argv: tuple[str, ...]) -> int:
@@ -321,6 +386,9 @@ def main(argv: tuple[str, ...]) -> int:
 	cli.add_argument("--no-build", action="store_true")
 	args = cli.parse_args(argv)
 
+	if args.jobs < 1:
+		print(f"--jobs must be at least 1, not {args.jobs}", file=sys.stderr)
+		return 1
 	if (unusable := unusable_gcc()) is not None:
 		print(unusable, file=sys.stderr)
 		return 1
@@ -336,12 +404,16 @@ def main(argv: tuple[str, ...]) -> int:
 		print(f"no .c/.h files within {args.depth} levels of {args.root}", file=sys.stderr)
 		return 1
 
+	# Reported as they arrive rather than collected: the largest files take minutes each, and a run that
+	# is interrupted — or watched — should have already named everything it found.
+	clean = 0
 	with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-		per_file = tuple(pool.map(lambda p: checked(args.binary, p), files))
-
-	for verdict in (v for verdicts in per_file for v in verdicts):
-		print(report(verdict))
-	clean = sum(1 for verdicts in per_file if not verdicts)
+		pending = [pool.submit(checked, args.binary, p) for p in files]
+		for done in as_completed(pending):
+			verdicts = done.result()
+			clean += not verdicts
+			for verdict in verdicts:
+				print(report(verdict), flush=True)
 	print(f"{clean} of {len(files)} files clean")
 	return 0 if clean == len(files) else 1
 
