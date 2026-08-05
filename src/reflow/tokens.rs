@@ -745,9 +745,9 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// §6's passthrough is the whole answer, exactly as it is for a comment ([`contains_comment`]).
 ///
 /// What separates it from the stringize `#` of `foo(#x, y)` — an ordinary call whose arguments still
-/// lay out — is what *follows* it: a directive names one, or nothing follows it on its line (the null
-/// directive). Every name below is a keyword or a directive C reserves, so none can be the macro
-/// parameter a `#` stringizes. `##` is an [`TokenKind::Operator`] and never reaches the test.
+/// lay out — is what *follows* it: a directive names one, a line marker puts a number there
+/// (`# 42 "gen.c"`, C11 §6.10.4), or nothing follows it on its line (the null directive). `##` is an
+/// [`TokenKind::Operator`] and never reaches the test.
 ///
 /// Position cannot answer this. Which line a `#` is on is what the layout decides, so a predicate that
 /// reads it is not a fixpoint of the pass that owns it — and reading it cost one: the first form of this
@@ -755,22 +755,48 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// the `#` at a line start, and refused on pass 2. That is #43's defect in the guard whose whole reason
 /// is that a directive's column belongs to a later pass.
 ///
-/// A block comment does not separate a `#` from its name: translation phase 3 replaces a comment with
-/// whitespace and phase 4 then recognizes the directive, so `# /* c */ define X 1` defines `X`.
+/// Neither a block comment nor a `\` continuation separates a `#` from its name: phase 2 splices the
+/// continuation and phase 3 makes the comment whitespace, both before phase 4 reads the directive, so
+/// `# /* c */ define X 1` and `#\` + `define X 1` each define `X`.
+///
+/// **Both errors are possible and they are not symmetric.** A name this does not know is a false
+/// negative and writes a `#` mid-line — the defect itself — so [`names_directive`] must stay complete;
+/// the blanket `#` tests in `is_boundable` and `emit_brace` are a partial backstop for spans that reach
+/// them. A false positive costs only layout: `#define STR(define) f(#define, …)` names a parameter that
+/// is not a keyword, so its stringize reads as a directive and the argument list passes through instead
+/// of breaking. §6 prefers that direction, which is why the test is a name list rather than "any `#`".
 pub(super) fn holds_directive(toks: &[Token]) -> bool {
     toks.iter().enumerate().any(|(i, t)| {
-        t.kind == TokenKind::Punct
-            && t.text == "#"
-            && toks[i + 1..]
-                .iter()
-                .take_while(|after| after.kind != TokenKind::Newline)
-                .find(|after| after.kind != TokenKind::Whitespace && !is_comment(after))
-                .is_none_or(|after| names_directive(after.text))
+        t.kind == TokenKind::Punct && t.text == "#" && opens_directive(&toks[i + 1..])
     })
 }
 
-/// A preprocessing directive's name (C23 §6.10.1). Each is a keyword or reserved to the preprocessor,
-/// so a `#` before one is never the stringize operator.
+/// Whether what follows a `#` on its logical line makes it a directive's.
+fn opens_directive(after: &[Token]) -> bool {
+    after
+        .iter()
+        .enumerate()
+        .take_while(|&(k, _)| !ends_logical_line(after, k))
+        .map(|(_, t)| t)
+        // A spliced newline and the `\` that splices it are both gone by phase 4, so neither is the
+        // name — only a real line end stops the scan, and that is [`ends_logical_line`]'s job.
+        .find(|t| !is_trivia(t) && !is_comment(t) && !is_backslash(t))
+        .is_none_or(|t| names_directive(t.text) || t.kind == TokenKind::Number)
+}
+
+/// Whether `toks[k]` ends the *logical* line — a newline the preprocessor does not splice away.
+fn ends_logical_line(toks: &[Token], k: usize) -> bool {
+    toks[k].kind == TokenKind::Newline
+        && !toks[..k]
+            .iter()
+            .rev()
+            .find(|before| before.kind != TokenKind::Whitespace)
+            .is_some_and(|before| is_backslash(before))
+}
+
+/// A preprocessing directive's name: C23 §6.10.1, plus the extensions a real corpus writes. Not every
+/// one is a keyword — only `if` and `else` are — so an identifier here may legally be a macro parameter
+/// instead; see [`holds_directive`] for why that direction is the safe one to be wrong in.
 fn names_directive(text: &str) -> bool {
     matches!(
         text,
@@ -789,6 +815,15 @@ fn names_directive(text: &str) -> bool {
             | "error"
             | "warning"
             | "pragma"
+            // Not in the standard, and all of them appear in headers a compiler is handed:
+            // `include_next` and `import` guard re-inclusion, `ident` and `sccs` carry version strings,
+            // `assert`/`unassert` are GCC's retired predicates.
+            | "include_next"
+            | "import"
+            | "ident"
+            | "sccs"
+            | "assert"
+            | "unassert"
     )
 }
 

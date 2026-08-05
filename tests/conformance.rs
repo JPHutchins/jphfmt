@@ -1888,6 +1888,33 @@ fn a_construct_does_not_measure_across_a_directive() {
     let commented = "int x = (a\n/* c */ #if X\n\t| b\n#endif\n);\n";
     assert_eq!(format(commented), commented);
 
+    // Every directive a header actually writes, each alone in the span so nothing else catches it — an
+    // `#endif` would, and that is how the first form of this test passed while missing all of these. A
+    // name the list does not know is laid out across, which is the defect itself, so the list is the part
+    // that has to stay complete: the extensions are as real as the standard names, `# 42 "gen.c"` is a
+    // line marker (C11 §6.10.4) whose name is a number, and neither a comment nor a `\` splice separates
+    // a `#` from what follows it — phase 2 and phase 3 remove both before phase 4 reads the directive.
+    for directive in [
+        "#if defined(X)",
+        "#include_next <f.h>",
+        "#import \"f.h\"",
+        "#ident \"v\"",
+        "#sccs \"x\"",
+        "#assert x(y)",
+        "#unassert x",
+        // Written tight, because `emit_directive` tightens `# name` to `#name` for every directive and
+        // has since long before this — the guard sees the same `Number` after the `#` either way.
+        "#42 \"gen.c\"",
+        "#\\\ndefine Q 1",
+        "# /* c */ define Q 1",
+        "#",
+    ] {
+        let src = format!(
+            "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
+        );
+        assert_eq!(format(&src), src, "{directive:?}");
+    }
+
     // Which line a `#` is on is what the layout decides, so the test for a directive may not read it.
     // Breaking this argument list puts the stringize `#x` at the start of a line, and a position-based
     // test then called it a directive and refused on pass 2 what it laid out on pass 1.
