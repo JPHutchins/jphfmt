@@ -1669,13 +1669,16 @@ fn a_continued_literal_is_one_token_under_either_line_ending() {
 
     // The consequence, not just the lexing. An unterminated literal desynchronizes every string
     // boundary after it, so a construct further down is measured from tokens the source never wrote —
-    // here a `#define` body whose continuation lines were joined, leaving the `\` mid-line where it is
-    // a stray token that does not compile (#114). In `sqlite3.c` the literal and the macro are 60,000
-    // lines apart, which is why no reduction of the *macro* ever reproduced it.
+    // here a `#define` body whose continuation lines were joined, leaving the `\` mid-line. A stray `\`
+    // in a macro *body* only reaches the compiler when the macro is used, which `sqlite3.c` does and
+    // this reduction does not: the snippet alone compiles either way, and the errors #114 reports are
+    // from the invocation. In `sqlite3.c` the literal and the macro are 60,000 lines apart, which is why
+    // no reduction of the *macro* ever reproduced it.
+    //
+    // Also `tests/cases/continued-literal-desync`, which holds the same bytes to their exact output and
+    // runs them through the whitespace-mutant harness.
     let desync = "const char *s = \"a\\\n b\";\n#define D(P) \\\n   if( ((P)->flags&E)!=0 \\\n       && f(P) ){ goto no_mem;}\n";
-    assert!(
-        !format(desync).contains("\\ "),
-        "the continuation is not joined onto the line: {:?}",
-        format(desync)
-    );
+    let laid_out = "const char * s = \"a\\\n b\";\n#define D(P) \\\n   if ( ((P)->flags&E)!=0 \\\n\t   && f(P) ) { goto no_mem;}\n";
+    assert_eq!(format(desync), laid_out);
+    assert_eq!(format(laid_out), laid_out);
 }
