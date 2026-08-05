@@ -244,8 +244,9 @@ fn a_statement_expression_body_keeps_what_follows_it() {
 /// keeps its `\` through `emit_define`'s verbatim fallback whether the guard is there or not. With #77's
 /// fourth item deferred, the claimable shapes are a whole call and a whole statement expression, which
 /// makes `f(x)` the input that pins the `toks[name + 1]` arm and `f()` the one that pins `toks[name]`.
-/// `#define NAME\` + `f(x)` splices to a function-like `NAMEf(x)`, and without the guard it came out as
-/// the object-like `#define NAME f(x)` — a different macro, which `main` still writes.
+/// `#define NAME\` + `f(x)` splices the two names into one, defining a function-like macro that takes
+/// `x`; without the guard it came out as the object-like `#define NAME f(x)` — a different macro, which
+/// `main` still writes.
 ///
 /// The other four assert passthrough and pin no arm. They are kept because passthrough is worth holding,
 /// not because they cover the guard, and were asserted with `contains('\\')` until the review found that
