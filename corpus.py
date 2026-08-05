@@ -49,15 +49,20 @@ BUILD_TIMEOUT_S = 300
 # the file's own text, so a `#error "error: x"` or a comment mentioning one counted as a diagnostic,
 # and reflowing a line onto or off an offending one changed the count with the errors unchanged.
 GCC_FLAGS = ("-std=c2x", "-fsyntax-only", "-fdiagnostics-plain-output")
-# gcc writes one diagnostic per line, `<where>: error: <what>`. Anchored so the `error:` inside a
-# message's quoted source text cannot be counted twice, and so a `note:` line is never counted.
-ERROR_LINE = re.compile(r"(?m)^\S.*?: (?:fatal )?error: ")
+# gcc writes one diagnostic per line, `<file>:<line>[:<col>]: error: <what>`. Anchored so the `error:`
+# inside a message's quoted source text cannot be counted twice, and so a `note:` line is never counted.
+# The location is required: `cc1: fatal error: out of memory allocating …` is the tool failing, not a
+# diagnostic about the code, and counting it as one error made a run where *both* sides ran out of
+# memory read as clean.
+ERROR_LINE = re.compile(r"(?m)^\S.*?:\d+(?::\d+)?: (?:fatal )?error: ")
 # `error:` is what this counts, and gcc translates its diagnostics wherever a locale catalog is
 # installed. A localized gcc would report zero errors for every file in the corpus.
 ENGLISH = {**os.environ, "LC_ALL": "C"}
 # Whitespace is the formatter's to place, and so is a `\` continuation: a two-line macro that comes to
 # fit on one keeps every character of its body and needs no continuation to hold it together.
 OWNED = " \t\r\n\v\f\\"
+# Counted as bytes, so the two sides compare the same way whether one arrives decoded and the other not.
+OWNED_BYTES = OWNED.encode()
 
 
 class Errors(NamedTuple):
@@ -72,7 +77,11 @@ class TimedOut(NamedTuple):
 	seconds: float
 
 
-Compile = Errors | Crashed | TimedOut
+class ToolFailed(NamedTuple):
+	detail: str
+
+
+Compile = Errors | Crashed | TimedOut | ToolFailed
 
 
 class Formatted(NamedTuple):
@@ -123,6 +132,7 @@ class LostContent(NamedTuple):
 class Unmeasured(NamedTuple):
 	path: Path
 	before: Compile
+	after: Compile
 
 
 class Broke(NamedTuple):
@@ -171,11 +181,11 @@ def compiles(source: Path, include: Path) -> Compile:
 	if gcc.returncode < 0:
 		return Crashed(-gcc.returncode)
 	found = len(ERROR_LINE.findall(gcc.stderr))
-	# A nonzero exit with nothing this can count is gcc failing in a way its diagnostics do not spell —
-	# an internal error, an out-of-memory, a driver refusal. Counting alone would read it as a clean
-	# compile, which is the vacuous pass again.
+	# A nonzero exit gcc did not spell as a located diagnostic is the tool failing, not the code being
+	# wrong: an internal error, an out-of-memory, a driver refusal. Counting alone would read it as a
+	# clean compile, and `Errors(0)` as a *measured* baseline — the vacuous pass, twice over.
 	if gcc.returncode != 0 and found == 0:
-		return Crashed(0)
+		return ToolFailed(gcc.stderr.strip().splitlines()[-1] if gcc.stderr.strip() else "(no stderr)")
 	return Errors(found)
 
 
@@ -194,7 +204,7 @@ def severity(result: Compile) -> tuple[int, int]:
 	match result:
 		case Errors(count):
 			return (0, count)
-		case Crashed() | TimedOut():
+		case Crashed() | TimedOut() | ToolFailed():
 			return (1, 0)
 
 
@@ -225,8 +235,12 @@ def first_difference(before: str, after: str) -> tuple[str, str]:
 	return next((pair for pair in lines if pair[0] != pair[1]), ("", ""))
 
 
-def written(text: str) -> int:
-	"""How many of `text`'s characters the formatter does not own — everything but [`OWNED`].
+def written(text: str | bytes) -> int:
+	"""How many of `text`'s bytes the formatter does not own — everything but [`OWNED`].
+
+	Counted as bytes so the two sides compare the same way when one arrives decoded and the other does
+	not: the original is read raw, because it is being counted rather than interpreted, and a corpus
+	header that is not UTF-8 is the formatter's to report rather than this harness's to raise on.
 
 	>>> written("a b\\tc\\n")
 	3
@@ -234,8 +248,13 @@ def written(text: str) -> int:
 	12
 	>>> written("   \\n\\t\\\\\\n")
 	0
+	>>> written(b"a b\\tc\\n")
+	3
+	>>> written("\\u00e9;") == written("\\u00e9;".encode())
+	True
 	"""
-	return sum(1 for c in text if c not in OWNED)
+	data = text if isinstance(text, bytes) else text.encode()
+	return sum(1 for byte in data if byte not in OWNED_BYTES)
 
 
 def format_with(binary: Path, source: Path | str) -> Formatting:
@@ -286,7 +305,9 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 		unstable = (as_verdict(path, again),)
 	elif again.text != once:
 		unstable = (NotIdempotent(path, *first_difference(once, again.text)),)
-	source, output = written(path.read_text(encoding="utf-8")), written(once)
+	# Bytes for the original: it is being counted, not interpreted, and a corpus header that is not UTF-8
+	# is the formatter's to report rather than this harness's to raise on.
+	source, output = written(path.read_bytes()), written(once)
 	lost: tuple[Verdict, ...] = ()
 	if output < source:
 		lost = (LostContent(path, source, output),)
@@ -305,7 +326,7 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 	# saying so is the only honest verdict.
 	regressed: tuple[Verdict, ...] = ()
 	if not isinstance(before, Errors):
-		regressed = (Unmeasured(path, before),)
+		regressed = (Unmeasured(path, before, after),)
 	elif severity(after) > severity(before):
 		regressed = (Regressed(path, before, after),)
 	return unstable + lost + regressed
@@ -377,6 +398,8 @@ def describe(result: Compile) -> str:
 			return f"killed by signal {signal}"
 		case TimedOut(seconds):
 			return f"no answer in {seconds}s"
+		case ToolFailed(detail):
+			return f"gcc failed: {detail}"
 
 
 def report(verdict: Verdict) -> str:
@@ -393,8 +416,11 @@ def report(verdict: Verdict) -> str:
 			return f"REGRESSED {path}\n           gcc: {describe(before)} -> {describe(after)}"
 		case LostContent(path, before, after):
 			return f"LOST      {path}\n           {before - after} of {before} characters gone"
-		case Unmeasured(path, before):
-			return f"UNMEASURED {path}\n           gcc on the input: {describe(before)}"
+		case Unmeasured(path, before, after):
+			return (
+				f"UNMEASURED {path}\n           gcc on the input: {describe(before)}"
+				f"\n           on the output: {describe(after)}, with nothing to compare it to"
+			)
 		case Broke(path, error):
 			indented = error.replace("\n", "\n           ")
 			return f"HARNESS   {path}\n           {indented}"
@@ -414,9 +440,7 @@ def main(argv: tuple[str, ...]) -> int:
 		if value < 1:
 			print(f"--{name} must be at least 1, not {value}", file=sys.stderr)
 			return 1
-	if args.no_build and not args.binary.is_file():
-		print(f"no formatter at {args.binary} — drop --no-build or pass --binary", file=sys.stderr)
-		return 1
+
 	if (unusable := unusable_gcc()) is not None:
 		print(unusable, file=sys.stderr)
 		return 1
@@ -425,6 +449,9 @@ def main(argv: tuple[str, ...]) -> int:
 		return 1
 	if not args.no_build and (unbuilt := unbuildable()) is not None:
 		print(unbuilt, file=sys.stderr)
+		return 1
+	if not args.binary.is_file():
+		print(f"no formatter at {args.binary} — pass --binary", file=sys.stderr)
 		return 1
 
 	files = discover(args.root, args.limit, args.depth)
@@ -435,13 +462,22 @@ def main(argv: tuple[str, ...]) -> int:
 	# Reported as they arrive rather than collected: the largest files take minutes each, and a run that
 	# is interrupted — or watched — should have already named everything it found.
 	clean = 0
-	with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-		pending = [pool.submit(checked, args.binary, p) for p in files]
+	pool = ThreadPoolExecutor(max_workers=args.jobs)
+	pending = [pool.submit(checked, args.binary, p) for p in files]
+	try:
 		for done in as_completed(pending):
 			verdicts = done.result()
 			clean += not verdicts
 			for verdict in verdicts:
 				print(report(verdict), flush=True)
+	except KeyboardInterrupt:
+		# `with ThreadPoolExecutor(...)` waits for every queued file on the way out, so a Ctrl+C sat
+		# there for the rest of the run — for a corpus whose slowest file takes minutes, long enough to
+		# look like a hang. Cancel what has not started and let the running workers go.
+		pool.shutdown(wait=False, cancel_futures=True)
+		print(f"interrupted after {clean} clean of {len(files)}", file=sys.stderr)
+		return 130
+	pool.shutdown()
 	print(f"{clean} of {len(files)} files clean")
 	return 0 if clean == len(files) else 1
 
