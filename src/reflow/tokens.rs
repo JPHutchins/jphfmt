@@ -746,7 +746,8 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 ///
 /// What separates it from the stringize `#` of `foo(#x, y)` — an ordinary call whose arguments still
 /// lay out — is what *follows* it: a directive names one, a line marker puts a number there
-/// (`# 42 "gen.c"`, C11 §6.10.4), or nothing follows it on its line (the null directive). `##` is an
+/// (`# 42 "gen.c"` — the preprocessor-output form GNU emits, not C11 §6.10.4's `#line`), or nothing
+/// follows it on its line (the null directive). `##` is an
 /// [`TokenKind::Operator`] and never reaches the test.
 ///
 /// Position cannot answer this. Which line a `#` is on is what the layout decides, so a predicate that
@@ -793,7 +794,8 @@ fn opens_directive(after: &[Token]) -> bool {
     match line.first() {
         // Nothing on the line after the `#`: the null directive.
         None => true,
-        // A line marker's name is a number — `# 42 "gen.c"`, C11 §6.10.4.
+        // A line marker's name is a number — `# 42 "gen.c"`, GNU's preprocessor-output form. C11
+        // §6.10.4 spells it `#line 42`, whose name is in the list already.
         Some(first) if first.kind == TokenKind::Number => true,
         // Phase 2 splices the *name* too, so a name broken across a continuation is one name again.
         // Whitespace ends it, which
@@ -810,13 +812,13 @@ fn opens_directive(after: &[Token]) -> bool {
 }
 
 /// Whether `toks[k]` ends the *logical* line — a newline the preprocessor does not splice away.
+///
+/// Only a `\` **immediately** before it splices (C11 5.1.1.2), which is the same test
+/// [`directive_end`] makes and the reason this does not skip whitespace to find one. GCC splices
+/// `\`+space+newline too, with a warning, and neither predicate honours that extension — a limitation
+/// both share rather than two answers to one question.
 fn ends_logical_line(toks: &[Token], k: usize) -> bool {
-    toks[k].kind == TokenKind::Newline
-        && !toks[..k]
-            .iter()
-            .rev()
-            .find(|before| before.kind != TokenKind::Whitespace)
-            .is_some_and(|before| is_backslash(before))
+    toks[k].kind == TokenKind::Newline && !(k > 0 && is_backslash(&toks[k - 1]))
 }
 
 /// A preprocessing directive's name: C23 §6.10.1, plus the extensions a real corpus writes. Not every
