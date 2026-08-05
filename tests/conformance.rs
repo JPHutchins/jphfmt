@@ -1932,8 +1932,18 @@ fn a_construct_does_not_measure_across_a_directive() {
         "#endregion",
         "#using <f>",
         "#system_header",
+        // A third round found these two. Twelve names have been missing across three rounds, so the list
+        // is audited, not complete — see `holds_directive`, and #118 for the trade against refusing any
+        // `#` at all, which is measured and costs nine corpus files their comma spacing.
+        "#push_macro(\"X\")",
+        "#pop_macro(\"X\")",
         // Phase 2 splices the *name* as well, so this is `#include` — the first token is only `in`.
         "#in\\\nclude <f.h>",
+        // A comment does *not* splice a name: phase 3 makes it whitespace, so this names `in` and is not
+        // a directive by the list. Both of these are declined by the enclosing `contains_comment` before
+        // that matters, so they pin the behaviour rather than the name scan.
+        "#in/*c*/clude <f.h>",
+        "#if/*c*/defined(X)",
     ] {
         let src = format!(
             "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"

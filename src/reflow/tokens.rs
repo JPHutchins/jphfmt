@@ -767,6 +767,12 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// reverse would write a `#` mid-line. Not a divergence to copy into the scope pass without deciding what
 /// `# /* c */ if` should do about depth.
 ///
+/// **The list is audited, not complete.** Three review rounds found twelve names missing from it, and the
+/// thirteenth is a vendor extension nobody has written yet. #118 records the measured alternatives:
+/// refusing *any* `#`, which closes the class but costs nine corpus files their comma spacing, and giving
+/// the four call sites enough context to know whether they sit inside a `#define` body, which is correct
+/// in both directions and wants the same change #43 and #76 want.
+///
 /// **Both errors are possible and they are not symmetric.** A name this does not know is a false
 /// negative and writes a `#` mid-line — the defect itself — so [`names_directive`] must stay complete;
 /// the blanket `#` tests in `is_boundable` and `emit_brace` are a partial backstop for spans that reach
@@ -786,10 +792,11 @@ fn opens_directive(after: &[Token]) -> bool {
         .enumerate()
         .take_while(|&(k, _)| !ends_logical_line(after, k))
         .map(|(_, t)| t)
-        // A spliced newline, the `\` that splices it and a comment are all gone by phase 4, so none of
-        // them is the name — only a real line end stops the scan ([`ends_logical_line`]).
-        .filter(|t| t.kind != TokenKind::Newline && !is_comment(t) && !is_backslash(t))
-        .skip_while(|t| t.kind == TokenKind::Whitespace)
+        // A spliced newline and the `\` that splices it are gone by phase 2, so neither is part of the
+        // name — only a real line end stops the scan ([`ends_logical_line`]). A comment is *not* dropped:
+        // phase 3 makes it whitespace, so it may precede the name and must also end one.
+        .filter(|t| t.kind != TokenKind::Newline && !is_backslash(t))
+        .skip_while(|t| t.kind == TokenKind::Whitespace || is_comment(t))
         .collect();
     match line.first() {
         // Nothing on the line after the `#`: the null directive.
@@ -798,7 +805,7 @@ fn opens_directive(after: &[Token]) -> bool {
         // §6.10.4 spells it `#line 42`, whose name is in the list already.
         Some(first) if first.kind == TokenKind::Number => true,
         // Phase 2 splices the *name* too, so a name broken across a continuation is one name again.
-        // Whitespace ends it, which
+        // Whitespace and a comment both end it, which
         // is why it is filtered out above but not skipped over: `# region x` names `region`, not
         // `regionx`.
         Some(_) => names_directive(
@@ -856,6 +863,8 @@ fn names_directive(text: &str) -> bool {
             | "using"
             | "region"
             | "endregion"
+            | "push_macro"
+            | "pop_macro"
     )
 }
 
