@@ -227,6 +227,42 @@ fn a_statement_expression_body_keeps_what_follows_it() {
     }
 }
 
+/// A body holding a `\`-continued literal is not one to lay out. Such a literal is **one token** whose
+/// text holds the newline (#110/#111), so a rendered body already carries it — and `emit_define` re-splits
+/// at every `\n` to place the continuations, putting its ` \` *inside the literal*. Re-lexing that back
+/// into the same token compounds it, once per pass:
+///
+/// ```text
+/// #define M(x) f("a\        ->  f("a\ \      ->  f("a\ \ \
+///  b")                          b")             b")
+/// ```
+///
+/// Non-idempotent, and the macro expands to different text each time (#117). Both arms `define_body_layout`
+/// retains carried it — pre-existing on `main`, which is why it was filed rather than folded into the
+/// deferral of #77's fourth item, where the container arm had the same defect.
+///
+/// `spans_lines` is the refusal `is_boundable` and `build_bracketed_group` already make, for exactly this
+/// reason: a token carrying a line break is a literal the one-line width model cannot describe.
+#[test]
+fn a_define_body_holding_a_continued_literal_passes_through() {
+    for src in [
+        "#define M(x) f(\"a\\\n b\")\n",
+        "#define M(x) ({ f(\"a\\\n b\"); })\n",
+        "#define M(x) ({ char * s = \"a\\\n b\"; s; })\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
+    }
+
+    // What the refusal must not take with it: the same two arms, with no continued literal, still lay out.
+    let call = "#define M(x) fooooooooooooooo(aaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccccccc, dddddddddddddddd)\n";
+    assert!(format(call).contains(" \\\n"), "{:?}", format(call));
+    let block = "#define M(x) ({ int t = (x); t; })\n";
+    assert_eq!(
+        format(block),
+        "#define M(x) ({ \\\n\tint t = (x); \\\n\tt; \\\n})\n"
+    );
+}
+
 /// A `#define` whose name is a line continuation is not one to split. `split_define` flattens the
 /// continuations inside the head, so there is nothing to write this one back, and what follows it is
 /// read as the body rather than as the name — `#define \` + `(})` came out as `#define (})`, which

@@ -15,7 +15,7 @@ use super::tokens::{
     enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
     is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
     match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
-    prev_significant, respaced_when_joined, split_brace_line_comment, statement_end,
+    prev_significant, respaced_when_joined, spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -479,6 +479,15 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
 fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     let last = body.len().checked_sub(1)?;
     if contains_comment(body) {
+        return None;
+    }
+    // A `\`-continued literal is one token whose *text* holds the newline (#110/#111), so the body's
+    // rendered form already carries it — and `emit_define` re-splits at every `\n` to place the
+    // continuations, putting its ` \` inside the literal. Re-lexing that back into the same token makes
+    // it compound: `f("a\` + ` b")` became `f("a\ \` + ` b")`, then `"a\ \ \`, once per pass, and the
+    // macro expands to different text each time (#117). `spans_lines` is the refusal
+    // `is_boundable` and `build_bracketed_group` already make for the same reason.
+    if spans_lines(body) {
         return None;
     }
     if is_call_head(body, 0) && match_bracket(body, 1) == Some(last) {
