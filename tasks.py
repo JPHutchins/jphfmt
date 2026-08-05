@@ -50,6 +50,12 @@ test = Parallel(Task("nix run .#test"), Task("nix run .#test-msrv"), when=RUST)
 doc = Task("nix run .#doc", when=RUST)
 audit = Task("nix run .#audit")
 mutants = Task("cargo mutants --jobs 8")
+# Real headers, not fixtures, and a C compiler rather than the flake — so the *run* is its own task and
+# not part of `check`. Run it for any change to the layout or spacing passes; see corpus.py.
+#
+# corpus.py is in `PY_SCRIPTS` below, so its type check and doctests *are* in `check` — which is why a
+# doctest in that file may not shell out to gcc or read the corpus.
+corpus = Task("uv run --python 3.14 corpus.py")
 
 # Raw cargo, ~1s/leaf cheaper than the crane app it mirrors: the agent gate's inner loop.
 rust_fmt_check_fast = Task("cargo fmt --check -- {paths}", paths=RS)
@@ -79,7 +85,7 @@ release = Sequential(
 
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
-PY_SCRIPTS = ("release.py", ".github/workflows/mutants_report.py")
+PY_SCRIPTS = ("release.py", "corpus.py", ".github/workflows/mutants_report.py")
 
 
 def py_scripts(changed: tuple[str, ...]) -> tuple[str, ...]:

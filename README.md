@@ -89,6 +89,18 @@ source → lexer (logos, lossless: comments/whitespace are trivia tokens)
 `camas all` runs format, clippy (`-D warnings`), tests, and docs — the same
 checks CI runs.
 
+`camas corpus` formats the C already installed on the machine and holds the
+output to what the input was: idempotent, no fewer characters than the formatter
+does not place itself, and no more `gcc -fsyntax-only` errors than the input had.
+The *run* is not part of `camas all`, because it needs a corpus and a C compiler
+rather than only the flake — but **run it for any change to the layout or spacing
+passes.** Every bug jphfmt has shipped that produced non-compiling output was
+invisible to the suite and visible here.
+
+`corpus.py`'s own type check and doctests *are* in `camas all`, via `PY_SCRIPTS`.
+They must therefore need neither a compiler nor a corpus: a doctest here that
+shells out to `gcc` would fail the standard suite on every machine without one.
+
 ## Status
 
 Feature-complete for the [specification](FORMATTER_HANDOFF.md) §2: calls,
