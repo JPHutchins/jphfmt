@@ -120,12 +120,17 @@ class LostContent(NamedTuple):
 	after: int
 
 
+class Unmeasured(NamedTuple):
+	path: Path
+	before: Compile
+
+
 class Broke(NamedTuple):
 	path: Path
 	error: str
 
 
-Verdict = Unformattable | Stalled | NotIdempotent | Regressed | LostContent | Broke
+Verdict = Unformattable | Stalled | NotIdempotent | Regressed | LostContent | Unmeasured | Broke
 
 
 def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
@@ -165,7 +170,13 @@ def compiles(source: Path, include: Path) -> Compile:
 	# would read a compiler crash as a clean compile — the very thing this checks for.
 	if gcc.returncode < 0:
 		return Crashed(-gcc.returncode)
-	return Errors(len(ERROR_LINE.findall(gcc.stderr)))
+	found = len(ERROR_LINE.findall(gcc.stderr))
+	# A nonzero exit with nothing this can count is gcc failing in a way its diagnostics do not spell —
+	# an internal error, an out-of-memory, a driver refusal. Counting alone would read it as a clean
+	# compile, which is the vacuous pass again.
+	if gcc.returncode != 0 and found == 0:
+		return Crashed(0)
+	return Errors(found)
 
 
 def severity(result: Compile) -> tuple[int, int]:
@@ -280,13 +291,22 @@ def check(binary: Path, path: Path) -> tuple[Verdict, ...]:
 	if output < source:
 		lost = (LostContent(path, source, output),)
 	with tempfile.TemporaryDirectory() as tmp:
-		original, formatted = Path(tmp) / "in.c", Path(tmp) / "out.c"
+		# Not `in.c`/`out.c`: the include path is the corpus file's own directory, so a corpus that holds
+		# a file of that name would have this one shadow it and the comparison would measure the harness.
+		original = Path(tmp) / f"jphfmt-corpus-before-{path.name}"
+		formatted = Path(tmp) / f"jphfmt-corpus-after-{path.name}"
 		original.write_bytes(path.read_bytes())
-		formatted.write_text(once)
+		formatted.write_text(once, encoding="utf-8")
 		before = compiles(original, path.parent)
 		after = compiles(formatted, path.parent)
+	# `severity` puts a crash or a timeout above every error count, so a baseline that is one makes
+	# `after` unable to outrank it and every output read clean — `severity(Errors(48)) > severity(
+	# TimedOut(30))` is False. An input gcc could not measure gives no baseline to compare against, and
+	# saying so is the only honest verdict.
 	regressed: tuple[Verdict, ...] = ()
-	if severity(after) > severity(before):
+	if not isinstance(before, Errors):
+		regressed = (Unmeasured(path, before),)
+	elif severity(after) > severity(before):
 		regressed = (Regressed(path, before, after),)
 	return unstable + lost + regressed
 
@@ -361,6 +381,8 @@ def describe(result: Compile) -> str:
 
 def report(verdict: Verdict) -> str:
 	match verdict:
+		case Unformattable(path, status, stderr) if status < 0:
+			return f"SIGNAL {-status:<3} {path}\n           {stderr.strip() or '(no stderr)'}"
 		case Unformattable(path, status, stderr):
 			return f"EXIT {status:<4} {path}\n           {stderr.strip() or '(no stderr)'}"
 		case Stalled(path, seconds):
@@ -371,6 +393,8 @@ def report(verdict: Verdict) -> str:
 			return f"REGRESSED {path}\n           gcc: {describe(before)} -> {describe(after)}"
 		case LostContent(path, before, after):
 			return f"LOST      {path}\n           {before - after} of {before} characters gone"
+		case Unmeasured(path, before):
+			return f"UNMEASURED {path}\n           gcc on the input: {describe(before)}"
 		case Broke(path, error):
 			indented = error.replace("\n", "\n           ")
 			return f"HARNESS   {path}\n           {indented}"
@@ -386,8 +410,12 @@ def main(argv: tuple[str, ...]) -> int:
 	cli.add_argument("--no-build", action="store_true")
 	args = cli.parse_args(argv)
 
-	if args.jobs < 1:
-		print(f"--jobs must be at least 1, not {args.jobs}", file=sys.stderr)
+	for name, value in (("jobs", args.jobs), ("limit", args.limit), ("depth", args.depth)):
+		if value < 1:
+			print(f"--{name} must be at least 1, not {value}", file=sys.stderr)
+			return 1
+	if args.no_build and not args.binary.is_file():
+		print(f"no formatter at {args.binary} — drop --no-build or pass --binary", file=sys.stderr)
 		return 1
 	if (unusable := unusable_gcc()) is not None:
 		print(unusable, file=sys.stderr)
