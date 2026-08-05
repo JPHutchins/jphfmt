@@ -218,6 +218,17 @@ fn a_statement_expression_body_keeps_what_follows_it() {
     // Neither does anything before it make the body a statement expression to lay out.
     let leading = "#define N(x) 1 + ({ int t = (x); t; })\n";
     assert_eq!(format(leading), leading);
+
+    // Wrapping that in parentheses makes the *body* one whole group, so the container arm claims it —
+    // but the `({` inside is then no longer where the walk tests for one, and reaches
+    // `build_expr_doc`'s brace-list branch, which spaces a block as a list: `(a + ({int t = (x); t;}))`.
+    // §6 prefers passthrough over a layout no handler owns.
+    for operand in [
+        "#define X (a + ({ int t = (x); t; }))\n",
+        "#define X (({ int t = (x); t; }) + a)\n",
+    ] {
+        assert_eq!(format(operand), operand, "{operand:?}");
+    }
 }
 
 /// A `#define` whose name is a line continuation is not one to split. `split_define` flattens the
@@ -232,17 +243,21 @@ fn a_statement_expression_body_keeps_what_follows_it() {
 ///
 /// Found by the 200k property run on the branch that made the body claimable; before that the body was
 /// passed through, which masked the loss.
+///
+/// Each input is asserted byte-identical, not merely to still hold a `\`: with the guard deleted, only a
+/// *claimable* body reaches the split, and the other two shapes keep their `\` through `emit_define`'s
+/// verbatim fallback either way. `(})` pins the `toks[name]` arm and `(x)` alone the `toks[name + 1]`
+/// arm; `NAME 1` and `(x) x + 1` assert passthrough and pin no arm.
 #[test]
 fn a_continued_macro_name_is_not_a_name_to_split() {
+    // The only input without a trailing newline; formatting adds the one every other line has (§2.1).
+    assert_eq!(format("#define\\\n(})"), "#define\\\n(})\n");
     for src in [
-        "#define\\\n(})",
         "#define \\\nNAME 1\n",
         "#define NAME\\\n(x) x + 1\n",
         "#define NAME\\\n(x)\n",
     ] {
-        let once = format(src);
-        assert_eq!(format(&once), once, "{src:?}");
-        assert!(once.contains('\\'), "the continuation survives: {once:?}");
+        assert_eq!(format(src), src);
     }
 }
 

@@ -14,8 +14,8 @@ use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
     enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
     is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, prev_nontrivia, prev_significant,
-    respaced_when_joined, split_brace_line_comment, statement_end,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
+    prev_significant, respaced_when_joined, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -133,12 +133,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         }
 
         // GNU statement-expression `({ ... })` — block-indent its statements.
-        if t.kind == TokenKind::Punct
-            && t.text == "("
-            && toks
-                .get(i + 1)
-                .is_some_and(|n| n.kind == TokenKind::Punct && n.text == "{")
-        {
+        if opens_stmt_expr(toks, i) {
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             if let Some((block, next)) = format_stmt_expr(toks, i, base_level, width) {
                 emit_str(out, col, &block);
@@ -486,8 +481,25 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
 fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option<String> {
     let last = body.len().checked_sub(1)?;
     let open = usize::from(is_call_head(body, 0));
-    (!contains_comment(body) && match_bracket(body, open) == Some(last))
-        .then(|| structure(body, prefix_col, width))
+    (!contains_comment(body)
+        && match_bracket(body, open) == Some(last)
+        && !holds_nested_stmt_expr(&body[open + 1..last]))
+    .then(|| structure(body, prefix_col, width))
+}
+
+/// Whether `toks` holds a statement expression that is not the whole of it. Only the whole one is
+/// reached by [`emit_tokens`]'s own `({` handler; one with an operand beside it is swallowed by whichever
+/// handler claims the span around it, and reaches `build_expr_doc`'s `{` branch, which spaces a block as
+/// a brace list. `#define X (a + ({ int t = (x); t; }))` came out as `(a + ({int t = (x); t;}))`.
+///
+/// §6 prefers passthrough over a layout no handler owns. The body that *is* a statement expression is
+/// the shape #77 asks for and keeps its layout.
+fn holds_nested_stmt_expr(toks: &[Token]) -> bool {
+    let whole = next_nontrivia(toks, 0).is_some_and(|first| {
+        opens_stmt_expr(toks, first)
+            && match_bracket(toks, first) == prev_nontrivia(toks, toks.len())
+    });
+    !whole && (0..toks.len()).any(|i| opens_stmt_expr(toks, i))
 }
 
 /// Format a `({ ... })` statement-expression: `({` opens the line, each statement on its own line
