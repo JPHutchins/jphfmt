@@ -595,7 +595,13 @@ fn emit_brace(
         return open + 1;
     };
     let inner = &toks[open + 1..close];
-    let has_comment_or_directive = contains_comment(inner) || holds_directive(inner);
+    // The blanket `#` is load-bearing, not a stale copy of [`holds_directive`]: a `{}` list holding any
+    // `#` is one whose spacing a later pass may rewrite, and narrowing this to a directive broke
+    // idempotency on `{""/0AaA=#a*0_:…}` — laid out on pass 1, respaced on pass 2 (#112's review).
+    let has_comment_or_directive = contains_comment(inner)
+        || inner
+            .iter()
+            .any(|t| t.kind == TokenKind::Punct && t.text == "#");
     if has_comment_or_directive || !is_balanced(inner) || respaced_when_joined(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
