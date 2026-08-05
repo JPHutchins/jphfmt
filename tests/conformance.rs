@@ -1666,4 +1666,16 @@ fn a_continued_literal_is_one_token_under_either_line_ending() {
     assert_eq!(format(attribute), attribute);
     // A character literal takes the same escape.
     assert_eq!(format("char c = '\\\n';\n"), "char c = '\\\n';\n");
+
+    // The consequence, not just the lexing. An unterminated literal desynchronizes every string
+    // boundary after it, so a construct further down is measured from tokens the source never wrote —
+    // here a `#define` body whose continuation lines were joined, leaving the `\` mid-line where it is
+    // a stray token that does not compile (#114). In `sqlite3.c` the literal and the macro are 60,000
+    // lines apart, which is why no reduction of the *macro* ever reproduced it.
+    let desync = "const char *s = \"a\\\n b\";\n#define D(P) \\\n   if( ((P)->flags&E)!=0 \\\n       && f(P) ){ goto no_mem;}\n";
+    assert!(
+        !format(desync).contains("\\ "),
+        "the continuation is not joined onto the line: {:?}",
+        format(desync)
+    );
 }
