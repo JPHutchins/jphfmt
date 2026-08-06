@@ -1955,18 +1955,38 @@ fn a_chain_head_is_measured_like_its_operands() {
     // #108. The head held whatever precedes the operands — an assignment's left side — and was
     // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
     // limit outright: at width 40 the head alone is 50 columns.
-    let src =
-        "void f(void) {\n\tarr[index_of(first_argument, second_argument)] = alpha | beta;\n}\n";
-    let out = jphfmt::format_with_width(src, 40);
-    assert_eq!(
-        out,
-        "void f(void) {\n\tarr[index_of(\n\t\tfirst_argument,\n\t\tsecond_argument\n\t)] = (\n\t\talpha |\n\t\tbeta\n\t);\n}\n"
-    );
-    for line in out.lines() {
-        assert!(display_width(line) <= 40, "over the limit: {line:?}");
+    //
+    // Asserted three ways, because the layout alone is not enough: a pass-1 layout that no second
+    // pass reproduces is what #108 *is*, so an exact-output test that never formats its own output
+    // is green on the very defect it names. The review of this change found exactly that.
+    for (src, width, expected) in [
+        (
+            "void f(void) {\n\tarr[index_of(first_argument, second_argument)] = alpha | beta;\n}\n",
+            40,
+            "void f(void) {\n\tarr[index_of(\n\t\tfirst_argument,\n\t\tsecond_argument\n\t)] = alpha | beta;\n}\n",
+        ),
+        // The head breaks and the operands do not, which is the whole point: they are measured
+        // apart. Sharing one fit made the operands break whenever the head did, and the next pass —
+        // measuring each alone — disagreed.
+        (
+            "void f(void) {\n\tarr[a + b] = a | b;\n}\n",
+            18,
+            "void f(void) {\n\tarr[\n\t\ta +\n\t\tb\n\t] = a | b;\n}\n",
+        ),
+    ] {
+        let out = jphfmt::format_with_width(src, width);
+        assert_eq!(out, expected, "input {src:?} at width {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&out, width),
+            out,
+            "must be a fixpoint: {src:?} at width {width}"
+        );
+        for line in out.lines() {
+            assert!(display_width(line) <= width, "over the limit: {line:?}");
+        }
+        // Measured is not the same as broken: a head that fits is still written flat.
+        assert_eq!(jphfmt::format_with_width(src, 100), src);
     }
-    // Unmeasured is not the same as unbroken: a head that fits is still written flat.
-    assert_eq!(jphfmt::format_with_width(src, 100), src);
 }
 
 #[test]
