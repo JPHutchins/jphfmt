@@ -606,7 +606,15 @@ pub(super) fn is_chain_break(toks: &[Token], j: usize) -> bool {
 /// container this chain breaks as.
 fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     use std::cmp::Ordering;
+    // Never inside an assignment's left side. `=` binds looser than every class here, which is why
+    // it is absent from them and why [`operand_span`] reads its left side as a head instead — so an
+    // operator there is not one of these operands' separators, and cutting at one spells
+    // `0/a = A & A` as a `/` chain. That is #43: the parentheses the layout writes around `A & A`
+    // send the whole assignment back through this split on the *next* pass, where a cut the first
+    // pass never made moved the break.
+    let assigned = last_assignment(inner);
     at_depth_zero(inner)
+        .skip_while(|&(j, _)| assigned.is_some_and(|head| j <= head))
         .filter_map(|(j, t)| {
             matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
                 .then(|| CHAIN_CLASSES.iter().position(|c| c.contains(&t.text)))
@@ -712,6 +720,36 @@ pub(super) fn has_top_level(inner: &[Token], text: &str) -> bool {
 /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
 pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
     has_top_level(inner, "?")
+}
+
+/// An assignment operator: `=` and the compound forms, but not a comparison.
+fn assigns(t: &Token) -> bool {
+    (t.kind == TokenKind::Punct && t.text == "=")
+        || (t.kind == TokenKind::Operator
+            && t.text.ends_with('=')
+            && !matches!(t.text, "==" | "!=" | "<=" | ">="))
+}
+
+/// The last depth-zero assignment: everything before it is the assignment's left side, and the
+/// operands of any chain are what follows.
+fn last_assignment(toks: &[Token]) -> Option<usize> {
+    at_depth_zero(toks)
+        .filter(|(_, t)| assigns(t))
+        .map(|(j, _)| j)
+        .last()
+}
+
+/// Where an expression's operands begin: after the last depth-zero assignment, or — with no
+/// assignment anywhere — after the first depth-zero `return`. That head is not part of the
+/// expression, so the parentheses [`super::builders`] adds bound the operands alone.
+pub(super) fn operand_span(toks: &[Token]) -> usize {
+    last_assignment(toks)
+        .or_else(|| {
+            at_depth_zero(toks)
+                .find(|(_, t)| t.text == "return")
+                .map(|(j, _)| j)
+        })
+        .map_or(0, |j| j + 1)
 }
 
 /// Whether more than one `?` appears at bracket depth zero — a ternary *chain*, `a ? b : c ? d : e`.

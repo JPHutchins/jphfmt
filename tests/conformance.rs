@@ -1734,6 +1734,43 @@ fn an_operator_with_no_right_operand_is_not_a_chain_cut() {
 }
 
 #[test]
+fn a_chain_is_not_cut_inside_an_assignments_left_side() {
+    // #43. Bounding an assignment's right-hand side puts the whole assignment back through
+    // `split_chain` on the next pass, and an operator in the *left* side is not one of those
+    // operands' separators: cutting `0/a = A & A` at the `/` moved the break, and the layout
+    // alternated between the two spellings forever.
+    for (src, width) in [
+        ("A''={0/a=A&A}\"\"\" _#\ta0", 1),
+        // The same shape without the unterminated literals that reduced it.
+        ("x = {0 / a = A & A};\n", 12),
+        ("i / 2 += a | b;\n", 1),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at width {width}"
+        );
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_chain_is_still_cut_on_an_assignments_right_side() {
+    // The other half of #43's rule, and what a blanket refusal costs: everything after the last
+    // depth-zero `=` is still the chain's, so `(j = i/2)` normalizes and a long right-hand side
+    // still breaks one operand per line. Both are corpus shapes — sqlite writes the first.
+    assert_eq!(
+        format("void f(void) {\n\twhile ((j = i/2) > 0) {\n\t\tx = 1;\n\t}\n}\n"),
+        "void f(void) {\n\twhile ((j = i / 2) > 0) {\n\t\tx = 1;\n\t}\n}\n"
+    );
+    assert_eq!(
+        jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12),
+        "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n"
+    );
+}
+
+#[test]
 fn a_floating_exponent_keeps_its_sign() {
     // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
     // `1e - 5`, which does not compile — and musl's math sources are full of `0x1p-1022`.
