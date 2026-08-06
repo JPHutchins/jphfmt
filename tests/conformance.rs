@@ -1751,8 +1751,8 @@ fn a_depth_zero_chain_is_not_cut_before_an_assignment() {
         // The same shape without the unterminated literals that reduced it.
         ("x = {0 / a = A & A};\n", 12),
         // And with a compound assignment, whose left side is reached the same way. Each of the three
-        // oscillates without the fix; an input where the right side's operator binds *looser* than
-        // the left's would not, because the looseness rule already picks the right side's.
+        // was checked to oscillate on its own without the fix, not merely as a group — a loop that
+        // dies on its first input says nothing about the ones after it.
         ("x = {a / b = c ^ d};\n", 8),
     ] {
         let once = jphfmt::format_with_width(src, width);
@@ -1775,11 +1775,10 @@ fn a_chain_is_still_cut_on_an_assignments_right_side() {
     // and preserves every significant token, so neither of those catches a lost break. Ablating the
     // restriction leaves this passing — it is the *other* direction — while refusing the span
     // outright fails it, which is the mistake it exists to catch.
-    let broken = jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12);
-    assert_eq!(broken, "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n");
-    for line in broken.lines() {
-        assert!(display_width(line) <= 12, "over the limit: {line:?}");
-    }
+    assert_eq!(
+        jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12),
+        "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n"
+    );
 }
 
 /// A corpus pin, not a guard: sqlite writes `(j = i/2)` and the chain container's flat form spaces
