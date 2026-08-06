@@ -1740,6 +1740,67 @@ fn an_operator_with_no_right_operand_is_not_a_chain_cut() {
 }
 
 #[test]
+fn a_depth_zero_chain_is_not_cut_before_an_assignment() {
+    // #43. Bounding an assignment's right-hand side puts the whole assignment back through
+    // `split_chain` on the next pass, and an operator in the *left* side is not one of those
+    // operands' separators: cutting `0/a = A & A` at the `/` moved the break, and the layout
+    // alternated between the two spellings forever.
+    //
+    // Depth zero is the whole of it, and the name says so because the invariant does not hold one
+    // bracket in: `s = (a | b) = c | d` still moves its break between passes, since nothing about a
+    // depth-zero rule reaches a `|` inside parentheses and `build_bracketed_group` lays that group
+    // out on pass 2 with no idea it sits in a left side. That is #125 — it predates this, `main` at
+    // `7c62ed7` is equally unstable on it, and `(a | b)` is no lvalue so no C program reaches it.
+    // Not asserted here in either direction: pinning today's two-step settling would pin a bug.
+    for (src, width) in [
+        ("A''={0/a=A&A}\"\"\" _#\ta0", 1),
+        // The same shape without the unterminated literals that reduced it.
+        ("x = {0 / a = A & A};\n", 12),
+        // And with a compound assignment, whose left side is reached the same way. Each of the three
+        // was checked to oscillate on its own without the fix, not merely as a group — a loop that
+        // dies on its first input says nothing about the ones after it.
+        ("x = {a / b = c ^ d};\n", 8),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at width {width}"
+        );
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_chain_is_still_cut_on_an_assignments_right_side() {
+    // The other half of #43's rule, and what a blanket refusal of assignment spans would cost:
+    // everything after the last depth-zero `=` is still the chain's, so a long right-hand side still
+    // breaks one operand per line.
+    //
+    // Asserted as a layout at a width, not only as a fixpoint: a flat over-wide line is idempotent
+    // and preserves every significant token, so neither of those catches a lost break. Ablating the
+    // restriction leaves this passing — it is the *other* direction — while refusing the span
+    // outright fails it, which is the mistake it exists to catch.
+    assert_eq!(
+        jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12),
+        "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n"
+    );
+}
+
+/// A corpus pin, not a guard: sqlite writes `(j = i/2)` and the chain container's flat form spaces
+/// the `/`, so a change that stopped claiming this span would show up here as churn across real
+/// files. It passes on the merge base and under every ablation of #43's rule — including
+/// `operand_span` stubbed to zero — because what it exercises is §2.5 spacing inside a parenthesized
+/// group rather than where the cut goes. Labelled so it is not read as guarding the cut.
+#[test]
+fn a_parenthesized_assignment_keeps_its_operator_spaced() {
+    assert_eq!(
+        format("void f(void) {\n\twhile ((j = i/2) > 0) {\n\t\tx = 1;\n\t}\n}\n"),
+        "void f(void) {\n\twhile ((j = i / 2) > 0) {\n\t\tx = 1;\n\t}\n}\n"
+    );
+}
+
+#[test]
 fn a_floating_exponent_keeps_its_sign() {
     // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
     // `1e - 5`, which does not compile — and musl's math sources are full of `0x1p-1022`.

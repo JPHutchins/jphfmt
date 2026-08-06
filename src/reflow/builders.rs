@@ -12,8 +12,8 @@
 use super::tokens::{
     closes_literal_type, ends_value, has_non_trivia, has_top_level, has_top_level_question,
     holds_directive, is_balanced, is_callee_ident, is_ternary_chain, is_trivia, match_brace,
-    match_bracket, next_nontrivia, prev_nontrivia, spans_lines, split_chain, split_designators,
-    split_on_commas, split_top_level,
+    match_bracket, next_nontrivia, operand_span, prev_nontrivia, spans_lines, split_chain,
+    split_designators, split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -399,32 +399,6 @@ pub(super) const BRACKETS: Bracketing<'static> = Bracketing::Written {
     close: "]",
     pad: Pad::Tight,
 };
-
-/// An assignment operator: `=` and the compound forms, but not a comparison.
-fn assigns(t: &Token) -> bool {
-    (t.kind == TokenKind::Punct && t.text == "=")
-        || (t.kind == TokenKind::Operator
-            && t.text.ends_with('=')
-            && !matches!(t.text, "==" | "!=" | "<=" | ">="))
-}
-
-/// Where an expression's operands begin: after the last depth-zero assignment, or after a leading
-/// `return`. That head is not part of the expression, so the parentheses this module adds bound the
-/// operands alone.
-fn operand_span(toks: &[Token]) -> usize {
-    let mut depth = 0i32;
-    let mut head = None;
-    for (j, t) in toks.iter().enumerate() {
-        match t.text {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => depth -= 1,
-            _ if depth == 0 && assigns(t) => head = Some(j),
-            "return" if depth == 0 && head.is_none() => head = Some(j),
-            _ => {}
-        }
-    }
-    head.map_or(0, |j| j + 1)
-}
 
 /// Whether `toks` is one expression jphfmt may bound with parentheses of its own.
 ///

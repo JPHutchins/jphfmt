@@ -606,25 +606,46 @@ pub(super) fn is_chain_break(toks: &[Token], j: usize) -> bool {
 /// container this chain breaks as.
 fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     use std::cmp::Ordering;
+    // Never inside an assignment's left side. `=` binds looser than every class here, which is why
+    // it is absent from them and why [`operand_span`] reads its left side as a head — so an operator
+    // there is not one of these operands' separators, and cutting at one spells `0/a = A & A` as a
+    // `/` chain. That is #43: the parentheses the layout writes around `A & A` send the whole
+    // assignment back through this split on the *next* pass, where a cut the first pass never made
+    // moved the break.
+    //
+    // Only the whole-span callers reach it — `super::builders`' `build_expr_doc` and
+    // `build_clause_contents`. `build_chain_doc` strips the head with [`operand_span`] before
+    // calling, so the slice it passes holds no depth-zero assignment and this is a no-op there.
+    //
+    // [`operand_span`]'s other head, a leading `return`, is deliberately not mirrored: a `return`
+    // heads a span only by leading it, so there is never an operator before one to discard — while
+    // discarding on any depth-zero `return` would let a stray one mid-span kill a valid chain.
+    //
+    // An assignment resets the accumulator, which is the restriction stated as the one pass it is:
+    // those operators are in its left side, and no later token can put them back. One fold, so no
+    // intermediate list of candidates is built for a rule that only ever keeps the loosest.
+    let nothing = (CHAIN_CLASSES.len(), Vec::new());
     at_depth_zero(inner)
-        .filter_map(|(j, t)| {
-            matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
+        .fold(nothing, |(loosest, mut cuts), (j, t)| {
+            if assigns(t) {
+                return (CHAIN_CLASSES.len(), Vec::new());
+            }
+            let Some(class) = matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
                 .then(|| CHAIN_CLASSES.iter().position(|c| c.contains(&t.text)))
                 .flatten()
                 .filter(|_| is_binary_position(inner, j))
-                .map(|class| (class, j))
-        })
-        .fold(
-            (CHAIN_CLASSES.len(), Vec::new()),
-            |(loosest, mut cuts), (class, j)| match class.cmp(&loosest) {
+            else {
+                return (loosest, cuts);
+            };
+            match class.cmp(&loosest) {
                 Ordering::Less => (class, vec![j]),
                 Ordering::Equal => {
                     cuts.push(j);
                     (loosest, cuts)
                 }
                 Ordering::Greater => (loosest, cuts),
-            },
-        )
+            }
+        })
         .1
 }
 
@@ -712,6 +733,30 @@ pub(super) fn has_top_level(inner: &[Token], text: &str) -> bool {
 /// Whether a `?` ternary operator appears at bracket depth zero in `inner`.
 pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
     has_top_level(inner, "?")
+}
+
+/// An assignment operator: `=` and the compound forms, but not a comparison.
+fn assigns(t: &Token) -> bool {
+    (t.kind == TokenKind::Punct && t.text == "=")
+        || (t.kind == TokenKind::Operator
+            && t.text.ends_with('=')
+            && !matches!(t.text, "==" | "!=" | "<=" | ">="))
+}
+
+/// Where an expression's operands begin: after the last depth-zero assignment, or — with no
+/// assignment anywhere — after the first depth-zero `return`. That head is not part of the
+/// expression, so the parentheses [`super::builders`] adds bound the operands alone.
+///
+/// One pass, because a later assignment always wins and a `return` only counts while nothing has:
+/// the fold's own state is what says so, where asking twice would walk the span twice to answer it.
+pub(super) fn operand_span(toks: &[Token]) -> usize {
+    at_depth_zero(toks)
+        .fold(None, |head, (j, t)| match head {
+            _ if assigns(t) => Some(j),
+            None if t.text == "return" => Some(j),
+            _ => head,
+        })
+        .map_or(0, |j| j + 1)
 }
 
 /// Whether more than one `?` appears at bracket depth zero — a ternary *chain*, `a ? b : c ? d : e`.
@@ -1227,6 +1272,69 @@ mod tests {
     #[test]
     fn split_chain_mixes_one_class() {
         assert_eq!(chain_ops("a + b - c"), Some(vec!["+", "-"]));
+    }
+
+    /// The head [`operand_span`] strips, pinned at the function the cut restriction mirrors — the two
+    /// encode "what is a head", and drifting apart is what #64 cost. The `return` arm especially: it is
+    /// the half `loosest_cuts` deliberately does *not* mirror, so nothing else would notice it change.
+    #[test]
+    fn operand_span_takes_the_last_assignment_or_a_leading_return() {
+        // The operands the span leaves, rather than the index — an index moves with the trivia
+        // tokenization puts between them, and what is being asserted is where the head ends.
+        let operands = |src: &str| {
+            let toks = crate::lexer::tokenize(src);
+            toks[operand_span(&toks)..]
+                .iter()
+                .map(|t| t.text)
+                .collect::<String>()
+                .trim_start()
+                .to_owned()
+        };
+        assert_eq!(operands("x = a | b"), "a | b");
+        // The *last* assignment, however many there are.
+        assert_eq!(operands("x = y = a"), "a");
+        // A `return` heads a span only while no assignment has.
+        assert_eq!(operands("return a | b"), "a | b");
+        assert_eq!(operands("return x = a"), "a");
+        // Neither: the whole span is operands.
+        assert_eq!(operands("a | b"), "a | b");
+        // A bracketed assignment is no head — the rule is depth zero, which is #125's whole subject.
+        assert_eq!(operands("f(x = 1) | b"), "f(x = 1) | b");
+    }
+
+    /// A chain is not cut at *depth zero* before an assignment. Only the three inputs whose loosest
+    /// operator lives there can say so — everywhere else the looseness rule was already choosing the
+    /// right side's operator, which is the [`split_chain_prefers_the_right_sides_operator_anyway`]
+    /// below, kept apart because it passes with the restriction removed and guards nothing.
+    ///
+    /// Depth zero is the whole claim, which is why the conformance guard is named for it. A chain
+    /// inside parentheses that a later `=` puts in *its* left side — `s = (a | b) = c | d` — is still
+    /// cut on the second pass; that is #125, it predates this, and it is not C since `(a | b)` is no
+    /// lvalue.
+    #[test]
+    fn split_chain_cuts_only_past_the_last_assignment() {
+        assert_eq!(chain_ops("a | b = c"), None);
+        // The *last* assignment, so an operator between two of them is in the second's left side.
+        assert_eq!(chain_ops("x = a | b = c + d"), Some(vec!["+"]));
+        // A compound assignment is an assignment.
+        assert_eq!(chain_ops("a | b += c"), None);
+    }
+
+    /// What the rule looks like where it is not what decides — asserted because the shapes read as
+    /// if they were the guard and are not, which cost the review a round to establish. `0/a = A & A`
+    /// is #43's own input and cuts at the `&` either way: `&` binds looser than `/`, so a single
+    /// pass never wanted the `/`. #43 is a *two-pass* effect — pass 2 finds the `&` already inside
+    /// the parentheses pass 1 wrote, leaving only the `/` at depth zero — which nothing at this
+    /// level can see. `a_depth_zero_chain_is_not_cut_before_an_assignment` is its guard.
+    #[test]
+    fn split_chain_prefers_the_right_sides_operator_anyway() {
+        assert_eq!(chain_ops("0/a = A & A"), Some(vec!["&"]));
+        assert_eq!(chain_ops("x = a | b"), Some(vec!["|"]));
+        assert_eq!(chain_ops("x = a | b | c"), Some(vec!["|", "|"]));
+        // A depth-zero `,` refuses the whole span before the cuts are looked for.
+        assert_eq!(chain_ops("x = a | b, y = c + d"), None);
+        // A comparison that ends in `=` is no assignment.
+        assert_eq!(chain_ops("a | b == c"), Some(vec!["|"]));
     }
 
     #[test]
