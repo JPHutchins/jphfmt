@@ -808,6 +808,7 @@ fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     // those operators are in its left side, and no later token can put them back. One fold, so no
     // intermediate list of candidates is built for a rule that only ever keeps the loosest.
     let nothing = (CHAIN_CLASSES.len(), Vec::new());
+
     at_depth_zero(inner)
         .fold(nothing, |(loosest, mut cuts), (j, t)| {
             if assigns(t) {
