@@ -1307,9 +1307,10 @@ mod tests {
     /// right side's operator, which is the [`split_chain_prefers_the_right_sides_operator_anyway`]
     /// below, kept apart because it passes with the restriction removed and guards nothing.
     ///
-    /// Depth zero is the whole claim. A chain inside parentheses that a later `=` puts in *its* left
-    /// side — `s = (a | b) = c | d` — is still cut on the second pass; that is #125, it predates this,
-    /// and it is not C, since `(a | b)` is no lvalue.
+    /// Depth zero is the whole claim, which is why the conformance guard is named for it. A chain
+    /// inside parentheses that a later `=` puts in *its* left side — `s = (a | b) = c | d` — is still
+    /// cut on the second pass; that is #125, it predates this, and it is not C since `(a | b)` is no
+    /// lvalue.
     #[test]
     fn split_chain_cuts_only_past_the_last_assignment() {
         assert_eq!(chain_ops("a | b = c"), None);
@@ -1324,7 +1325,7 @@ mod tests {
     /// is #43's own input and cuts at the `&` either way: `&` binds looser than `/`, so a single
     /// pass never wanted the `/`. #43 is a *two-pass* effect — pass 2 finds the `&` already inside
     /// the parentheses pass 1 wrote, leaving only the `/` at depth zero — which nothing at this
-    /// level can see. `a_chain_is_not_cut_inside_an_assignments_left_side` is its guard.
+    /// level can see. `a_depth_zero_chain_is_not_cut_before_an_assignment` is its guard.
     #[test]
     fn split_chain_prefers_the_right_sides_operator_anyway() {
         assert_eq!(chain_ops("0/a = A & A"), Some(vec!["&"]));

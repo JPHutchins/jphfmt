@@ -1734,11 +1734,18 @@ fn an_operator_with_no_right_operand_is_not_a_chain_cut() {
 }
 
 #[test]
-fn a_chain_is_not_cut_inside_an_assignments_left_side() {
+fn a_depth_zero_chain_is_not_cut_before_an_assignment() {
     // #43. Bounding an assignment's right-hand side puts the whole assignment back through
     // `split_chain` on the next pass, and an operator in the *left* side is not one of those
     // operands' separators: cutting `0/a = A & A` at the `/` moved the break, and the layout
     // alternated between the two spellings forever.
+    //
+    // Depth zero is the whole of it, and the name says so because the invariant does not hold one
+    // bracket in: `s = (a | b) = c | d` still moves its break between passes, since nothing about a
+    // depth-zero rule reaches a `|` inside parentheses and `build_bracketed_group` lays that group
+    // out on pass 2 with no idea it sits in a left side. That is #125 — it predates this, `main` at
+    // `7c62ed7` is equally unstable on it, and `(a | b)` is no lvalue so no C program reaches it.
+    // Not asserted here in either direction: pinning today's two-step settling would pin a bug.
     for (src, width) in [
         ("A''={0/a=A&A}\"\"\" _#\ta0", 1),
         // The same shape without the unterminated literals that reduced it.
