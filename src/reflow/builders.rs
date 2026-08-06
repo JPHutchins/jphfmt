@@ -278,8 +278,7 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
 /// the claim in #76 was that the type states the rule; a `Doc` variant that could hold a `&'static
 /// str` is what would remove them, and that is the IR's change to make, not this one's.
 ///
-/// Consumed once, by value, so it is neither cloned nor compared — hence no derive but [`Debug`].
-#[derive(Debug)]
+/// Consumed once, by value, and never cloned, compared or printed — hence no derives at all.
 pub(super) enum Seps {
     Every(&'static str),
     Each(Vec<String>),
@@ -320,7 +319,12 @@ fn trailing_items(segments: Vec<Doc>, seps: Seps) -> Vec<Doc> {
             // builder here has, and a silent merge rather than a visible mistake. `chain_seps` yields
             // exactly one operator per gap and `build_cond_doc` pairs one element with none, so this
             // holds for every producer; it is asserted so the next one cannot quietly not.
-            debug_assert_eq!(
+            //
+            // A real assertion rather than a `debug_assert`, which release builds compile out: the
+            // failure it catches is *silently merged tokens*, and this file's whole subject is that
+            // losing what the author wrote must never pass quietly. One integer compare per container
+            // against a `Vec` this function already allocates is not a cost worth trading for it.
+            assert_eq!(
                 each.len(),
                 segments.len().saturating_sub(1),
                 "a separator per gap: {each:?} against {} elements",
@@ -336,7 +340,9 @@ fn trailing_items(segments: Vec<Doc>, seps: Seps) -> Vec<Doc> {
     let mut items = Vec::with_capacity(segments.len() * 3);
     for seg in segments {
         items.push(seg);
-        items.extend(trailing.next().into_iter().flatten());
+        if let Some(pair) = trailing.next() {
+            items.extend(pair);
+        }
     }
     items
 }
@@ -757,7 +763,15 @@ mod tests {
     /// is a precondition `trailing_items` asserts, not a case it handles. A shorter one leaves the
     /// elements past it juxtaposed with neither a separator nor a gap, which no construct in the
     /// language is, so there is deliberately no test asserting that output: it would pin a merge as
-    /// the expected answer where the `debug_assert_eq!` says it is a caller's mistake.
+    /// the expected answer where the `assert_eq!` says it is a caller's mistake.
+    /// And it is a real assertion, not one release builds compile away — the failure it catches is
+    /// silently merged tokens, which this suite may not let pass in the profile that ships.
+    #[test]
+    #[should_panic(expected = "a separator per gap")]
+    fn a_short_each_is_refused_in_every_profile() {
+        let _ = placed(&["a", "b", "c"], Seps::Each(vec![" |".to_owned()]));
+    }
+
     #[test]
     fn trailing_items_pairs_each_operator_with_its_own_gap() {
         let ops = Seps::Each(vec![" |".to_owned(), " &&".to_owned(), " ^".to_owned()]);
