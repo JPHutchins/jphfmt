@@ -607,11 +607,15 @@ pub(super) fn is_chain_break(toks: &[Token], j: usize) -> bool {
 fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     use std::cmp::Ordering;
     // Never inside an assignment's left side. `=` binds looser than every class here, which is why
-    // it is absent from them and why [`operand_span`] reads its left side as a head instead — so an
-    // operator there is not one of these operands' separators, and cutting at one spells
-    // `0/a = A & A` as a `/` chain. That is #43: the parentheses the layout writes around `A & A`
-    // send the whole assignment back through this split on the *next* pass, where a cut the first
-    // pass never made moved the break.
+    // it is absent from them and why [`operand_span`] reads its left side as a head — so an operator
+    // there is not one of these operands' separators, and cutting at one spells `0/a = A & A` as a
+    // `/` chain. That is #43: the parentheses the layout writes around `A & A` send the whole
+    // assignment back through this split on the *next* pass, where a cut the first pass never made
+    // moved the break.
+    //
+    // Only the whole-span callers reach it — `super::builders`' `build_expr_doc` and
+    // `build_clause_contents`. `build_chain_doc` strips the head with [`operand_span`] before
+    // calling, so the slice it passes holds no depth-zero assignment and this is a no-op there.
     let assigned = last_assignment(inner);
     at_depth_zero(inner)
         .skip_while(|&(j, _)| assigned.is_some_and(|head| j <= head))
