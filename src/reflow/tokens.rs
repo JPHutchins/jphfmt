@@ -616,16 +616,27 @@ fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     // Only the whole-span callers reach it — `super::builders`' `build_expr_doc` and
     // `build_clause_contents`. `build_chain_doc` strips the head with [`operand_span`] before
     // calling, so the slice it passes holds no depth-zero assignment and this is a no-op there.
-    let assigned = last_assignment(inner);
+    //
+    // [`operand_span`]'s other head, a leading `return`, is deliberately not mirrored: a `return`
+    // heads a span only by leading it, so there is never an operator before one to discard — while
+    // discarding on any depth-zero `return` would let a stray one mid-span kill a valid chain.
+    //
+    // An assignment discards the candidates collected before it, which is the restriction stated as
+    // the one pass it is: those operators are in its left side, and no later token can put them back.
     at_depth_zero(inner)
-        .skip_while(|&(j, _)| assigned.is_some_and(|head| j <= head))
-        .filter_map(|(j, t)| {
-            matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
+        .fold(Vec::new(), |mut candidates, (j, t)| {
+            if assigns(t) {
+                candidates.clear();
+            } else if let Some(class) = matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
                 .then(|| CHAIN_CLASSES.iter().position(|c| c.contains(&t.text)))
                 .flatten()
                 .filter(|_| is_binary_position(inner, j))
-                .map(|class| (class, j))
+            {
+                candidates.push((class, j));
+            }
+            candidates
         })
+        .into_iter()
         .fold(
             (CHAIN_CLASSES.len(), Vec::new()),
             |(loosest, mut cuts), (class, j)| match class.cmp(&loosest) {
@@ -734,24 +745,18 @@ fn assigns(t: &Token) -> bool {
             && !matches!(t.text, "==" | "!=" | "<=" | ">="))
 }
 
-/// The last depth-zero assignment: everything before it is the assignment's left side, and the
-/// operands of any chain are what follows.
-fn last_assignment(toks: &[Token]) -> Option<usize> {
-    at_depth_zero(toks)
-        .filter(|(_, t)| assigns(t))
-        .map(|(j, _)| j)
-        .last()
-}
-
 /// Where an expression's operands begin: after the last depth-zero assignment, or — with no
 /// assignment anywhere — after the first depth-zero `return`. That head is not part of the
 /// expression, so the parentheses [`super::builders`] adds bound the operands alone.
+///
+/// One pass, because a later assignment always wins and a `return` only counts while nothing has:
+/// the fold's own state is what says so, where asking twice would walk the span twice to answer it.
 pub(super) fn operand_span(toks: &[Token]) -> usize {
-    last_assignment(toks)
-        .or_else(|| {
-            at_depth_zero(toks)
-                .find(|(_, t)| t.text == "return")
-                .map(|(j, _)| j)
+    at_depth_zero(toks)
+        .fold(None, |head, (j, t)| match head {
+            _ if assigns(t) => Some(j),
+            None if t.text == "return" => Some(j),
+            _ => head,
         })
         .map_or(0, |j| j + 1)
 }
