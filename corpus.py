@@ -180,10 +180,13 @@ class Skipped(NamedTuple):
 
 
 class Corpus(NamedTuple):
-	"""What [`discover`] settled on: the files to check, and the candidates it set aside."""
+	"""What [`discover`] settled on: the files to check, the candidates it set aside, and — when it
+	returned fewer than asked for — which of the two limits stopped it. A walk that ran out and a
+	budget that ran out are different failures and must not wear the same sentence."""
 
 	files: tuple[Member, ...]
 	skipped: tuple[Skipped, ...]
+	exhausted: str | None
 
 
 def candidates(root: Path, depth: int) -> Iterator[Path]:
@@ -223,9 +226,12 @@ def discover(root: Path, limit: int, depth: int, jobs: int = 8) -> Corpus:
 		while len(kept) < limit and len(kept) + len(skipped) < budget:
 			# In order, and never more than the shortfall, so no candidate is measured that the corpus
 			# had no room for — it would burn a gcc run and inflate what [`main`] reports as set aside.
-			batch = tuple(islice(stream, min(limit - len(kept), jobs * 8)))
+			# Clamped to the budget as well as the shortfall, so the cap is the hard one its constant
+			# describes rather than one a final batch can overshoot by up to `jobs * 8 - 1`.
+			room = min(limit - len(kept), budget - len(kept) - len(skipped), jobs * 8)
+			batch = tuple(islice(stream, room))
 			if not batch:
-				break
+				return Corpus(tuple(kept), tuple(skipped), "the walk ran out of candidates")
 			for path, measured in zip(batch, pool.map(baseline, batch)):
 				if isinstance(measured, Errors):
 					kept.append(Member(path, measured))
@@ -237,7 +243,8 @@ def discover(root: Path, limit: int, depth: int, jobs: int = 8) -> Corpus:
 		# they finish or time out — these workers are not daemons, and the interpreter joins them — so
 		# this bounds the wait at one `GCC_TIMEOUT_S` rather than removing it.
 		pool.shutdown(wait=False, cancel_futures=True)
-	return Corpus(tuple(kept), tuple(skipped))
+	stopped = None if len(kept) >= limit else "the discovery budget ran out before the walk did"
+	return Corpus(tuple(kept), tuple(skipped), stopped)
 
 
 def measure(label: str, data: bytes, path: Path) -> Compile:
@@ -304,8 +311,11 @@ def compiles(source: Path, include: Path) -> Compile:
 	# From `end()`, so what is kept is gcc's message and not the location it prefixed: the file it names
 	# is the temporary copy, whose path differs every run and is not the corpus file the report names.
 	if (fatal := next((d for d in diagnostics if d.group("fatal")), None)) is not None:
-		# `or [""]`: a fatal diagnostic with an empty message and no trailing newline splits to nothing.
-		return Halted((gcc.stderr[fatal.end() :].splitlines() or [""])[0].strip())
+		# The first line with something on it: a fatal diagnostic can carry an empty message and be
+		# followed by `compilation terminated.`, where taking line zero reports `gcc gave up: ` and
+		# says nothing, and taking nothing at all raised an `IndexError` out of a discovery worker.
+		rest = (line.strip() for line in gcc.stderr[fatal.end() :].splitlines())
+		return Halted(next((line for line in rest if line), "(no message)"))
 	return Errors(found)
 
 
@@ -394,7 +404,14 @@ def format_with(binary: Path, source: Path | str) -> Formatting:
 			# The formatter reads and writes UTF-8; `text=True` alone would decode with the process
 			# locale, so a corpus header's non-ASCII bytes would fail to decode under a C locale and
 			# report a file the formatter handled fine.
+			#
+			# `surrogateescape` rather than `replace`, because this text is written back out and
+			# compared byte for byte: a corpus file may hold bytes that are not UTF-8 at all — gcc
+			# compiles several such — and the formatter is right to preserve them. Replacing them
+			# would hand `measure` different bytes than the formatter emitted and count a `written`
+			# the formatter never lost. Surrogates round-trip exactly on the way back.
 			encoding="utf-8",
+			errors="surrogateescape",
 			timeout=FORMAT_TIMEOUT_S,
 		)
 	except subprocess.TimeoutExpired:
@@ -430,11 +447,13 @@ def check(binary: Path, member: Member) -> tuple[Verdict, ...]:
 		unstable = (NotIdempotent(path, *first_difference(once, again.text)),)
 	# Bytes for the original: it is being counted, not interpreted, and a corpus header that is not UTF-8
 	# is the formatter's to report rather than this harness's to raise on.
-	source, output = written(path.read_bytes()), written(once)
+	# Back to the bytes the formatter actually emitted, for both the count and the compile.
+	emitted = once.encode("utf-8", "surrogateescape")
+	source, output = written(path.read_bytes()), written(emitted)
 	lost: tuple[Verdict, ...] = ()
 	if output < source:
 		lost = (LostContent(path, source, output),)
-	after = measure("after", once.encode(), path)
+	after = measure("after", emitted, path)
 	# `severity` puts a crash or a timeout above every error count, so a baseline that is one makes
 	# `after` unable to outrank it and every output read clean — `severity(Errors(48)) > severity(
 	# TimedOut(30))` is False. An input gcc could not measure gives no baseline to compare against, and
@@ -620,14 +639,21 @@ def main(argv: tuple[str, ...]) -> int:
 	# machine, and saying "gcc reads as C" of a timeout would misstate which of the two failed.
 	stalled = tuple(s for s in corpus.skipped if not isinstance(s.why, Halted))
 	if not files:
-		read_as_c = any(isinstance(s.why, Halted) for s in corpus.skipped)
-		why = "gcc reads as C" if read_as_c else "at all"
+		# Three different failures, and the skips say which: none found, none readable as C, or none
+		# gcc could answer for. Saying "none at all" of a tree full of files gcc timed out on would
+		# contradict the lines `describe_skips` just printed.
+		if any(isinstance(s.why, Halted) for s in corpus.skipped):
+			why = "gcc reads as C"
+		elif stalled:
+			why = "gcc could answer for"
+		else:
+			why = "at all"
 		print(f"no .c/.h files {why} within {args.depth} levels of {args.root}", file=sys.stderr)
 		return 1
 	if len(files) < args.limit:
 		print(
-			f"corpus is {len(files)} files, not the {args.limit} asked for — the walk ran out of "
-			f"candidates within {args.depth} levels of {args.root}",
+			f"corpus is {len(files)} files, not the {args.limit} asked for — "
+			f"{corpus.exhausted} within {args.depth} levels of {args.root}",
 			file=sys.stderr,
 		)
 
@@ -656,7 +682,9 @@ def main(argv: tuple[str, ...]) -> int:
 	# candidates still reports `limit of limit clean` — a full pass over whatever was left.
 	if stalled:
 		print(f"{len(stalled)} candidates gcc could not answer for; see above", file=sys.stderr)
-	return 0 if clean == len(files) and not stalled else 1
+	# A short corpus is reduced coverage, whichever limit shortened it, and a clean pass over less than
+	# was asked for is the thing this module refuses to report as a clean pass.
+	return 0 if clean == len(files) == args.limit and not stalled else 1
 
 
 if __name__ == "__main__":
