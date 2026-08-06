@@ -269,7 +269,8 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
 ///
 /// [`Each`](Seps::Each) owns its strings deliberately: [`chain_seps`] builds ` |` from the operator's
 /// text plus a leading space, so those do not exist to borrow. Every other site names its separator as
-/// a literal.
+/// a literal — except one, which names none: [`build_cond_doc`]'s single-element condition is not a
+/// list, and says so with an empty `Each` rather than a string it would never read.
 ///
 /// Which removes the *construction* and nothing further: `Doc::Text` owns its string, so
 /// [`trailing_items`] still allocates one per gap for [`Every`](Seps::Every) where the `Vec<String>`
@@ -742,6 +743,9 @@ mod tests {
     fn trailing_items_separates_between_elements_only() {
         assert_eq!(placed(&["a", "b", "c"], Seps::Every(",")), "a,~b,~c");
         assert_eq!(placed(&["a"], Seps::Every(",")), "a");
+        // The shape `build_cond_doc` emits: one element, no gap, and an `Each` naming nothing. It is
+        // the only non-chain `Each` there is, so the "however many elements" claim above rests on it.
+        assert_eq!(placed(&["a"], Seps::Each(Vec::new())), "a");
         assert_eq!(placed(&[], Seps::Every(",")), "");
         let each = Seps::Each(vec![" |".to_owned(), " &&".to_owned()]);
         assert_eq!(placed(&["a", "b", "c"], each), "a |~b &&~c");
