@@ -49,12 +49,11 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     } else {
         Bound::Parens
     };
-    let seps = vec![",".to_owned(); args.len().saturating_sub(1)];
     let elements = args
         .into_iter()
         .map(|a| build_element_doc(a, bound))
         .collect();
-    build_container(&PARENS, elements, seps, None, fit)
+    build_container(&PARENS, elements, &Seps::Every(","), None, fit)
 }
 
 /// A `{}` or `enum` body: `,`-separated elements, a trailing comma when broken, and §2.3's magic
@@ -85,10 +84,9 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
         close: "}",
         pad: if padded { Pad::Spaced } else { Pad::Tight },
     };
-    let seps = vec![",".to_owned(); elements.len() - 1];
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
-    build_container(&bracketing, docs, seps, Some(","), fit)
+    build_container(&bracketing, docs, &Seps::Every(","), Some(","), fit)
 }
 
 /// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
@@ -192,7 +190,7 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
         return build_container(
             &Bracketing::Hanging,
             segment_docs(&segments),
-            chain_seps(&ops),
+            &chain_seps(&ops),
             None,
             Fit::Measured,
         );
@@ -265,18 +263,43 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
     }
 }
 
-/// `segments` with `seps[i]` trailing segment `i`: flat `a sep b`, or one element per line with the
+/// What separates a container's elements. Two cases, and the domain has only these two: an operator
+/// chain's separator differs between elements (`a | b && c` cannot happen, but `a - b + c` can), while
+/// every other construct here repeats one string — a comma list, a ternary's ` :`, a `for` header's `;`.
+///
+/// [`Each`](Seps::Each) owns its strings deliberately: [`chain_seps`] builds ` |` from the operator's
+/// text plus a leading space, so those do not exist to borrow. Every other site names its separator as
+/// a literal and allocates nothing (#76).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Seps<'a> {
+    Every(&'a str),
+    Each(Vec<String>),
+}
+
+impl Seps<'_> {
+    /// The separator trailing element `i`, or `None` where there is no `i`th one to trail.
+    /// [`Every`](Seps::Every) has one wherever an element does, which is what makes it the *rule*
+    /// rather than a vector that happens to be the right length.
+    fn at(&self, i: usize) -> Option<&str> {
+        match self {
+            Self::Every(sep) => Some(sep),
+            Self::Each(seps) => seps.get(i).map(String::as_str),
+        }
+    }
+}
+
+/// `segments` with `seps.at(i)` trailing segment `i`: flat `a sep b`, or one element per line with the
 /// separator ending each (§2.4, §2.7).
 ///
 /// The gap after a separator is what the element following it is worth: a [`Doc::Line`] before content,
 /// a [`Doc::SoftLine`] before nothing. So an empty element takes no space in the flat form — `for (;;)`,
 /// not `for (; ; )` (#85) — while the broken form is untouched, because both break the same way.
 ///
-/// One gap per separator, and there is a separator between elements only — so a `seps` longer than the
-/// gaps has no last element to separate from, and the `zip` drops it. No caller writes one; the trailing
-/// separator a container does write is `build_container`'s own, which knows its bracket.
-fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
-    let gaps = segments
+/// One gap per separator, and there is a separator between elements only — so the last element has no
+/// gap to pair with and takes none, whichever [`Seps`] this is. The trailing separator a container does
+/// write is `build_container`'s own, which knows its bracket.
+fn trailing_items(segments: Vec<Doc>, seps: &Seps) -> Vec<Doc> {
+    let gaps: Vec<Doc> = segments
         .iter()
         .skip(1)
         .map(|next| {
@@ -286,13 +309,14 @@ fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
                 Doc::Line
             }
         })
-        .collect::<Vec<_>>();
-    let mut seps = seps.into_iter().zip(gaps);
+        .collect();
     let mut items = Vec::with_capacity(segments.len() * 3);
-    for seg in segments {
+    for (i, seg) in segments.into_iter().enumerate() {
         items.push(seg);
-        if let Some((sep, gap)) = seps.next() {
-            items.extend([Doc::text(sep), gap]);
+        if let Some(gap) = gaps.get(i)
+            && let Some(sep) = seps.at(i)
+        {
+            items.extend([Doc::text(sep), gap.clone()]);
         }
     }
     items
@@ -346,7 +370,7 @@ pub(super) enum Bracketing<'a> {
 fn build_container(
     bracketing: &Bracketing,
     elements: Vec<Doc>,
-    seps: Vec<String>,
+    seps: &Seps,
     trailing: Option<&str>,
     fit: Fit,
 ) -> Doc {
@@ -468,13 +492,7 @@ pub(super) enum Bound {
 }
 
 /// Lay `segments` out bounded per `bound`, after `head` when there is one.
-fn build_bounded_doc(
-    head: &str,
-    segments: Vec<Doc>,
-    seps: Vec<String>,
-    fit: Fit,
-    bound: Bound,
-) -> Doc {
+fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: &Seps, fit: Fit, bound: Bound) -> Doc {
     let bracketing = match bound {
         Bound::Enclosing => {
             // The enclosing bracket bounds the operands, which is only true when they are its whole
@@ -512,27 +530,31 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         return Some(build_bounded_doc(
             &head,
             segment_docs(&segments),
-            chain_seps(&ops),
+            &chain_seps(&ops),
             Fit::Measured,
             bound,
         ));
     }
     // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
     let (arms, seps, fit) = ternary_layout(operands)?;
-    Some(build_bounded_doc(&head, arms, seps, fit, bound))
+    Some(build_bounded_doc(&head, arms, &seps, fit, bound))
 }
 
-/// The trailing separators for an operator chain: ` |`, ` &&`, and so on.
-fn chain_seps(ops: &[&str]) -> Vec<String> {
-    ops.iter().map(|op| format!(" {op}")).collect()
+/// The trailing separators for an operator chain: ` |`, ` &&`, and so on. The one construct whose
+/// separators differ between elements, so the one that owns a string per gap.
+fn chain_seps(ops: &[&str]) -> Seps<'static> {
+    Seps::Each(ops.iter().map(|op| format!(" {op}")).collect())
 }
 
 /// A ternary's arms as documents with the ` :` that trails each, and whether the width decides —
 /// the whole of what the three places a ternary can appear need from one.
-fn ternary_layout(inner: &[Token]) -> Option<(Vec<Doc>, Vec<String>, Fit)> {
+fn ternary_layout(inner: &[Token]) -> Option<(Vec<Doc>, Seps<'static>, Fit)> {
     let arms = ternary_arms(inner)?;
-    let seps = vec![" :".to_owned(); arms.len() - 1];
-    Some((segment_docs(&arms), seps, Fit::of_ternary(inner)))
+    Some((
+        segment_docs(&arms),
+        Seps::Every(" :"),
+        Fit::of_ternary(inner),
+    ))
 }
 
 /// The `:`-separated arms of a ternary, or `None` if any arm is missing its operand — a stranded
@@ -581,13 +603,13 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         return Some(build_container(
             bracketing,
             segment_docs(&segments),
-            chain_seps(&ops),
+            &chain_seps(&ops),
             None,
             Fit::Measured,
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_container(bracketing, arms, seps, None, fit))
+    Some(build_container(bracketing, arms, &seps, None, fit))
 }
 
 /// A bracketed group the author wrote — `(…)` around an expression, `[…]` around an index. The
@@ -622,9 +644,8 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
     let clauses = statement_segments(inner);
-    let seps = vec![";".to_owned(); clauses.len().saturating_sub(1)];
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
-    build_container(&PARENS, docs, seps, None, Fit::Measured)
+    build_container(&PARENS, docs, &Seps::Every(";"), None, Fit::Measured)
 }
 
 /// Split a `;`-separated run into its elements — a `for` header's clauses, or a statement-expression
@@ -655,11 +676,12 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     }
     build_clause_contents(inner, &PARENS).unwrap_or_else(|| {
         // No depth-zero operator to split at, so the whole condition is one element: an overlong one
-        // still breaks away from the `if (` and the `) {` rather than overrunning them.
+        // still breaks away from the `if (` and the `) {` rather than overrunning them. One element
+        // is separated from nothing, which is the empty [`Seps::Each`] and not any repeated string.
         build_container(
             &PARENS,
             vec![build_expr_doc(inner)],
-            Vec::new(),
+            &Seps::Each(Vec::new()),
             None,
             Fit::Measured,
         )
