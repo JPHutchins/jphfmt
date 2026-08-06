@@ -46,11 +46,6 @@ GCC_TIMEOUT_S = 30
 # file as hung is worse than one that waits.
 FORMAT_TIMEOUT_S = 60
 BUILD_TIMEOUT_S = 300
-# How many candidates [`discover`] will compile per file it keeps. A root of C++ headers would
-# otherwise put the *whole* walk through gcc at up to `GCC_TIMEOUT_S` each looking for a corpus that
-# is not there; four is comfortable where 1200 kept files took 1317 candidates, and hitting it is
-# reported rather than silently returning a short corpus.
-DISCOVERY_BUDGET_PER_FILE = 4
 # `-fdiagnostics-plain-output` drops the echoed source line under each diagnostic. Those echoes carry
 # the file's own text, so a `#error "error: x"` or a comment mentioning one counted as a diagnostic,
 # and reflowing a line onto or off an offending one changed the count with the errors unchanged.
@@ -65,7 +60,10 @@ GCC_FLAGS = ("-std=c2x", "-fsyntax-only", "-fdiagnostics-plain-output")
 # the kind is read after the diagnostic's *own* location and not after any later `:<digits>:` in the
 # message — `#error "cfg.h:1: fatal error: FOE"` is an ordinary error gcc quoted, and a lazy `.*?` read
 # it as a fatal one, which would have dropped a cleanly compiling file out of the corpus. A path holding
-# a `:` would not match at all; `/nix/store` has none, and gcc quotes such a path anyway.
+# a `:` would not match at all. The copy this compiles is named to avoid one, but a diagnostic gcc
+# locates inside an *included* header still names that header's own directory — so a corpus whose
+# root path holds a `:` would undercount errors there. `/nix/store` cannot: the store forbids `:` in
+# a path component, which is why this is a stated limit rather than a guard.
 DIAGNOSTIC = re.compile(r"(?m)^[^:\n]+:\d+(?::\d+)?: (?P<fatal>fatal )?error: ")
 # `error:` is what this counts, and gcc translates its diagnostics wherever a locale catalog is
 # installed. A localized gcc would report zero errors for every file in the corpus.
@@ -215,24 +213,13 @@ def measure(label: str, data: bytes, path: Path) -> Compile:
 		# `:` out of the copy's name: [`DIAGNOSTIC`] reads gcc's own location as the text before the
 		# first `:<digits>:`, so a basename holding one made every located diagnostic unmatchable — the
 		# same file then read as `Errors(0)` when it was clean and `ToolFailed` when it was not.
-		copy = Path(tmp) / f"jphfmt-corpus-{label}-{path.name.replace(':', '_')}"
+		# Truncated from the left so the tail — the extension gcc dispatches on — survives: this prefix
+		# is 20-21 bytes, and a basename already near `NAME_MAX` would make the copy ENAMETOOLONG, which
+		# is a harness failure wearing a verdict about the file.
+		stem = path.name.replace(":", "_")
+		copy = Path(tmp) / f"jphfmt-corpus-{label}-{stem[-200:]}"
 		copy.write_bytes(data)
 		return compiles(copy, path.parent)
-
-
-def baseline(path: Path) -> Compile:
-	"""gcc on `path` as written, compiled the way [`check`] compiles the output — a copy, from a
-	temporary directory, with the original's directory on the include path. Compiling in place would
-	resolve a quoted `#include` against a directory the other side does not have.
-	"""
-	try:
-		return measure("before", path.read_bytes(), path)
-	except Exception as why:
-		# Any exception, not just `OSError`: a worker that raises takes `pool.map` and the whole run
-		# with it, before a single file is checked — the same reason `checked` converts an exception
-		# into a verdict rather than raising. An unreadable file, a full disk and a gcc whose stderr
-		# will not decode are all this harness reporting rather than this harness dying.
-		return ToolFailed(f"{type(why).__name__}: {why}")
 
 
 def compiles(source: Path, include: Path) -> Compile:
@@ -400,10 +387,13 @@ def check(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | N
 	elif again.text != once:
 		unstable = (NotIdempotent(path, *first_difference(once, again.text)),)
 	# Bytes for the original: it is being counted, not interpreted, and a corpus header that is not UTF-8
-	# is the formatter's to report rather than this harness's to raise on.
+	# is the formatter's to report rather than this harness's to raise on. Read once and used twice —
+	# for the count and for the baseline copy — so the two cannot disagree about a file that changed
+	# underneath the run, and the 360k-line amalgamations are not read twice for nothing.
+	original = path.read_bytes()
 	# Back to the bytes the formatter actually emitted, for both the count and the compile.
 	emitted = once.encode("utf-8", "surrogateescape")
-	source, output = written(path.read_bytes()), written(emitted)
+	source, output = written(original), written(emitted)
 	lost: tuple[Verdict, ...] = ()
 	if output < source:
 		lost = (LostContent(path, source, output),)
@@ -412,7 +402,7 @@ def check(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | N
 	# severity(Halted(…))` is False. That is the vacuous pass, and the answer is to compare nothing and
 	# say so, not to compare it anyway. gcc halts on 117 of this machine's 1200: a header that is not C,
 	# or C whose `#include` this cannot resolve, where both sides report the same one fatal error.
-	before = baseline(path)
+	before = measure("before", original, path)
 	if not isinstance(before, Errors):
 		return (unstable + lost, Unmeasured(path, before))
 	after = measure("after", emitted, path)
@@ -434,7 +424,12 @@ def checked(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured |
 	except Exception:
 		# The traceback, not just the message: a `Broke` is a bug in this file, and the whole point of
 		# reporting one rather than raising is that the run finishes — so it has to name its own site.
-		return ((Broke(path, traceback.format_exc().strip()),), None)
+		# Scrubbed of lone surrogates: a traceback naming a path whose bytes are not UTF-8 carries them,
+		# and `main` prints a verdict outside this net, where a strict stdout — what a piped run has —
+		# cannot encode one. Same crash class the formatter's stderr had, on the path that exists to
+		# stop crashes.
+		printable = traceback.format_exc().encode("utf-8", "replace").decode("utf-8")
+		return ((Broke(path, printable.strip()),), None)
 
 
 def unusable_gcc() -> str | None:
@@ -591,10 +586,10 @@ def main(argv: tuple[str, ...]) -> int:
 	# is interrupted — or watched — should have already named everything it found.
 	clean = 0
 	unmeasured: list[Unmeasured] = []
-	pool = ThreadPoolExecutor(max_workers=args.jobs)
+	# The pool is built inside the `try` too: constructing one spawns its workers, so a Ctrl+C in that
+	# window used to propagate with `pool` unbound — past the handler whose whole job is to shut it down.
 	try:
-		# Inside the `try`: submitting 1200 futures is not instant, and a Ctrl+C in that window used to
-		# leave the pool unshut and the interpreter joining its workers with nothing reported.
+		pool = ThreadPoolExecutor(max_workers=args.jobs)
 		pending = [pool.submit(checked, args.binary, path) for path in files]
 		for done in as_completed(pending):
 			verdicts, unmeasured_here = done.result()
@@ -607,23 +602,33 @@ def main(argv: tuple[str, ...]) -> int:
 		# there for the rest of the run — for a corpus whose slowest file takes minutes, long enough to
 		# look like a hang. Cancel what has not started and let the running workers go.
 		pool.shutdown(wait=False, cancel_futures=True)
+		for line in describe_unmeasured(tuple(unmeasured)):
+			print(line, file=sys.stderr)
 		print(f"interrupted after {clean} clean of {len(files)}", file=sys.stderr)
 		return 130
 	pool.shutdown()
 
-    # Named, and to stderr, so the verdict stream stays greppable. Every one of these was formatted and
+	# Named, and to stderr, so the verdict stream stays greppable. Every one of these was formatted and
 	# held to the properties that need no compiler; what they did not get is the compile comparison, and
 	# a run that does not say how many reports coverage it does not have.
 	for line in describe_unmeasured(tuple(unmeasured)):
 		print(line, file=sys.stderr)
+	# gcc reading a file and giving up is a verdict about the file, and 117 of this machine's 1200 are
+	# that. gcc never answering is this machine failing, and a run that counts those clean reports a
+	# pass it did not earn — the shape `Unmeasured` was a hard verdict for before the corpus stopped
+	# excluding anything.
+	stalled = tuple(u for u in unmeasured if not isinstance(u.why, Halted))
 	short = len(files) < args.limit
-	# The headline comes last and only when it is true. Printing `1200 of 1200 files clean` above a
-	# failure line, with a nonzero exit, hands anyone grepping the summary a green pass that the exit
-	# status contradicts.
-	if clean == len(files) and not short:
+	if clean == len(files) and not short and not stalled:
 		print(f"{clean} of {len(files)} files clean")
 		return 0
-	print(f"{clean} of {len(files)} files clean, and the run is not", file=sys.stderr)
+	# The headline never claims a clean pass on a failing run, and says which of the three failed it.
+	why = (
+		[f"{len(files) - clean} the checks reported on"] * (clean != len(files))
+		+ [f"{len(stalled)} gcc could not answer for"] * bool(stalled)
+		+ [f"a corpus of {len(files)} where {args.limit} was asked for"] * short
+	)
+	print(f"{clean} of {len(files)} files clean; the run fails on {', '.join(why)}", file=sys.stderr)
 	return 1
 
 
