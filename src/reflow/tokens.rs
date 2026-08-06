@@ -1271,19 +1271,33 @@ mod tests {
         assert_eq!(chain_ops("a + b - c"), Some(vec!["+", "-"]));
     }
 
+    /// The left side of a depth-zero assignment holds no cut. Only the three inputs whose *loosest*
+    /// operator lives there can say so — everywhere else the looseness rule was already choosing the
+    /// right side's operator, which is the [`split_chain_prefers_the_right_sides_operator_anyway`]
+    /// below, kept apart because it passes with the restriction removed and guards nothing.
     #[test]
     fn split_chain_cuts_only_past_the_last_assignment() {
-        // Both directions of #43's rule, where the layout cannot show them: everything after the
-        // last depth-zero `=` is still the chain's, and nothing before it is.
+        assert_eq!(chain_ops("a | b = c"), None);
+        // The *last* assignment, so an operator between two of them is in the second's left side.
+        assert_eq!(chain_ops("x = a | b = c + d"), Some(vec!["+"]));
+        // A compound assignment is an assignment.
+        assert_eq!(chain_ops("a | b += c"), None);
+    }
+
+    /// What the rule looks like where it is not what decides — asserted because the shapes read as
+    /// if they were the guard and are not, which cost the review a round to establish. `0/a = A & A`
+    /// is #43's own input and cuts at the `&` either way: `&` binds looser than `/`, so a single
+    /// pass never wanted the `/`. #43 is a *two-pass* effect — pass 2 finds the `&` already inside
+    /// the parentheses pass 1 wrote, leaving only the `/` at depth zero — which nothing at this
+    /// level can see. `a_chain_is_not_cut_inside_an_assignments_left_side` is its guard.
+    #[test]
+    fn split_chain_prefers_the_right_sides_operator_anyway() {
+        assert_eq!(chain_ops("0/a = A & A"), Some(vec!["&"]));
         assert_eq!(chain_ops("x = a | b"), Some(vec!["|"]));
         assert_eq!(chain_ops("x = a | b | c"), Some(vec!["|", "|"]));
-        assert_eq!(chain_ops("a | b = c"), None);
-        assert_eq!(chain_ops("0/a = A & A"), Some(vec!["&"]));
-        // The *last* one, so an operator between two assignments is in the second's left side.
-        assert_eq!(chain_ops("x = a | b, y = c + d"), None); // a depth-zero `,` refuses first
-        assert_eq!(chain_ops("x = a | b = c + d"), Some(vec!["+"]));
-        // A compound assignment is an assignment; a comparison that ends in `=` is not.
-        assert_eq!(chain_ops("a | b += c"), None);
+        // A depth-zero `,` refuses the whole span before the cuts are looked for.
+        assert_eq!(chain_ops("x = a | b, y = c + d"), None);
+        // A comparison that ends in `=` is no assignment.
         assert_eq!(chain_ops("a | b == c"), Some(vec!["|"]));
     }
 

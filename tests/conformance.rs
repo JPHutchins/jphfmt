@@ -1743,7 +1743,10 @@ fn a_chain_is_not_cut_inside_an_assignments_left_side() {
         ("A''={0/a=A&A}\"\"\" _#\ta0", 1),
         // The same shape without the unterminated literals that reduced it.
         ("x = {0 / a = A & A};\n", 12),
-        ("i / 2 += a | b;\n", 1),
+        // And with a compound assignment, whose left side is reached the same way. Each of the three
+        // oscillates without the fix; an input where the right side's operator binds *looser* than
+        // the left's would not, because the looseness rule already picks the right side's.
+        ("x = {a / b = c ^ d};\n", 8),
     ] {
         let once = jphfmt::format_with_width(src, width);
         assert_eq!(
@@ -1774,22 +1777,48 @@ fn a_chain_is_still_cut_on_an_assignments_right_side() {
 }
 
 #[test]
-fn a_declarator_is_not_a_chain_to_break_at_its_ampersand() {
-    // The measured cost of #43's rule, pinned so it is a decision rather than an accident. C++'s
-    // `const T & v = expr` puts a reference declarator's `&` at depth zero before the default
-    // argument's `=`, and it is the span's only chain-class token. Refusing to cut there means the
-    // parameter cannot break, and a long one overruns §8.5 — for widths 45 to 64 on this input,
-    // where the merge base fitted it.
+fn a_declarator_is_not_a_chain_to_break_at() {
+    // The measured cost of #43's rule, pinned so it is a decision rather than an accident, and over
+    // every shape the review found it reaching rather than only the first one measured.
     //
-    // Kept anyway. Breaking a *declaration* at its declarator reads the `&` as a bitwise and, which
-    // is §6's ambiguity exactly — the same reason `space_pointers` leaves `a*b` alone — and the same
-    // rule was already rewriting the author's `T&` to `T &`. No token-level test separates this `&`
-    // from the `/` of `0/a = A & A`, so restoring one restores the other and reopens #43.
-    let src = "void f(const VeryLongTypeName & v = some_long_function_call_result());\n";
-    assert_eq!(
-        jphfmt::format_with_width(src, 40),
-        "void f(\n\tconst VeryLongTypeName & v = some_long_function_call_result()\n);\n"
-    );
+    // Each of these is valid C++ whose declarator holds the span's only chain-class token before the
+    // default argument's `=`: a reference `&`, an rvalue reference `&&`, and a template's `<`…`>`
+    // (an *unqualified* one — `std::vector` is refused earlier, by the depth-zero `:` of `::`, which
+    // is why the 1200-file corpus A/B reported only the first). Refusing to cut there means the
+    // parameter cannot break, and a long one overruns §8.5 where the merge base fitted it: widths
+    // 45-64 for the first, 15-22 for the second, 27-45 for the third.
+    //
+    // Kept anyway, because the break the merge base takes is not a neutral one. It reads a
+    // declarator as a binary operator — §6's ambiguity exactly, the same reason `space_pointers`
+    // leaves `a*b` alone — and it *respaces the declaration to match*, writing `T &` for the
+    // author's `T&` and `vector < T >` for `vector<T>`. No token-level test separates any of these
+    // from the `/` of `0/a = A & A`, so restoring one restores that too and reopens #43.
+    for (src, width, expected) in [
+        (
+            "void f(const VeryLongTypeName & v = some_long_function_call_result());\n",
+            40,
+            "void f(\n\tconst VeryLongTypeName & v = some_long_function_call_result()\n);\n",
+        ),
+        (
+            "void g(VeryLong && v = f());\n",
+            14,
+            "void g(\n\tVeryLong && v = f()\n);\n",
+        ),
+        (
+            "void h(vector<VeryLongTypeName> v = make_me_one());\n",
+            18,
+            "void h(\n\tvector<VeryLongTypeName> v = make_me_one()\n);\n",
+        ),
+    ] {
+        let out = jphfmt::format_with_width(src, width);
+        assert_eq!(out, expected, "input {src:?} at width {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&out, width),
+            out,
+            "must be a fixpoint: {src:?}"
+        );
+        assert_eq!(significant(&out), significant(src));
+    }
 }
 
 #[test]
