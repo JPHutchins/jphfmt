@@ -49,12 +49,11 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     } else {
         Bound::Parens
     };
-    let seps = vec![",".to_owned(); args.len().saturating_sub(1)];
     let elements = args
         .into_iter()
         .map(|a| build_element_doc(a, bound))
         .collect();
-    build_container(&PARENS, elements, seps, None, fit)
+    build_container(&PARENS, elements, Seps::Every(","), None, fit)
 }
 
 /// A `{}` or `enum` body: `,`-separated elements, a trailing comma when broken, and §2.3's magic
@@ -85,10 +84,9 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
         close: "}",
         pad: if padded { Pad::Spaced } else { Pad::Tight },
     };
-    let seps = vec![",".to_owned(); elements.len() - 1];
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
-    build_container(&bracketing, docs, seps, Some(","), fit)
+    build_container(&bracketing, docs, Seps::Every(","), Some(","), fit)
 }
 
 /// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
@@ -265,34 +263,85 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
     }
 }
 
-/// `segments` with `seps[i]` trailing segment `i`: flat `a sep b`, or one element per line with the
-/// separator ending each (§2.4, §2.7).
+/// What separates a container's elements. Two cases, and the domain has only these two: an operator
+/// chain's separator differs between elements (`a | b && c` cannot happen, but `a - b + c` can), while
+/// every other construct here repeats one string — a comma list, a ternary's ` :`, a `for` header's `;`.
+///
+/// [`Each`](Seps::Each) owns its strings deliberately: [`chain_seps`] builds ` |` from the operator's
+/// text plus a leading space, so those do not exist to borrow. Every other site names its separator as
+/// a literal — except one, which names none: [`build_cond_doc`]'s single-element condition is not a
+/// list, and says so with an empty `Each` rather than a string it would never read.
+///
+/// Which removes the *construction* and nothing further: `Doc::Text` owns its string, so
+/// [`trailing_items`] still allocates one per gap for [`Every`](Seps::Every) where the `Vec<String>`
+/// this replaced allocated the same count at the call site and moved them. The count is unchanged and
+/// the claim in #76 was that the type states the rule; a `Doc` variant that could hold a `&'static
+/// str` is what would remove them, and that is the IR's change to make, not this one's.
+///
+/// Consumed once, by value, and never cloned, compared or printed — hence no derives at all.
+pub(super) enum Seps {
+    Every(&'static str),
+    Each(Vec<String>),
+}
+
+/// `segments` with a separator from `seps` trailing each one but the last: flat `a sep b`, or one
+/// element per line with the separator ending each (§2.4, §2.7).
 ///
 /// The gap after a separator is what the element following it is worth: a [`Doc::Line`] before content,
 /// a [`Doc::SoftLine`] before nothing. So an empty element takes no space in the flat form — `for (;;)`,
 /// not `for (; ; )` (#85) — while the broken form is untouched, because both break the same way.
 ///
-/// One gap per separator, and there is a separator between elements only — so a `seps` longer than the
-/// gaps has no last element to separate from, and the `zip` drops it. No caller writes one; the trailing
-/// separator a container does write is `build_container`'s own, which knows its bracket.
-fn trailing_items(segments: Vec<Doc>, seps: Vec<String>) -> Vec<Doc> {
-    let gaps = segments
-        .iter()
-        .skip(1)
-        .map(|next| {
-            if next.is_empty() {
-                Doc::SoftLine
-            } else {
-                Doc::Line
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut seps = seps.into_iter().zip(gaps);
+/// A gap exists only *between* elements, so pairing the separators with the gaps is what says the last
+/// element takes none — one rule, holding for both [`Seps`] and for a container of one, rather than a
+/// bound each variant has to carry. The trailing separator a container does write is
+/// `build_container`'s own, which knows its bracket.
+///
+/// Takes `seps` by value so [`Seps::Each`]'s strings move into their [`Doc::Text`]: they were built by
+/// [`chain_seps`] one allocation each, and borrowing them here would have bought a second.
+///
+/// The empty-element rule reads [`Doc::is_empty`], which answers `false` for a [`Doc::Group`] however
+/// empty its contents — so an element that is a group around nothing takes a [`Doc::Line`] and a space
+/// the flat form does not need. No builder here produces one; the guarantee is `for (;;)`'s, and it
+/// holds for the text and concat elements that reach this.
+fn trailing_items(segments: Vec<Doc>, seps: Seps) -> Vec<Doc> {
+    let gaps = segments.iter().skip(1).map(|next| {
+        if next.is_empty() {
+            Doc::SoftLine
+        } else {
+            Doc::Line
+        }
+    });
+    let mut trailing = match seps {
+        Seps::Every(sep) => gaps.map(|gap| [Doc::text(sep), gap]).collect::<Vec<_>>(),
+        Seps::Each(each) => {
+            // One per gap, not "as many as there are": a short `Each` would leave the elements past
+            // it juxtaposed with neither a separator *nor* a gap — `a |bc` — which is a construct no
+            // builder here has, and a silent merge rather than a visible mistake. `chain_seps` yields
+            // exactly one operator per gap and `build_cond_doc` pairs one element with none, so this
+            // holds for every producer; it is asserted so the next one cannot quietly not.
+            //
+            // A real assertion rather than a `debug_assert`, which release builds compile out: the
+            // failure it catches is *silently merged tokens*, and this file's whole subject is that
+            // losing what the author wrote must never pass quietly. One integer compare per container
+            // against a `Vec` this function already allocates is not a cost worth trading for it.
+            assert_eq!(
+                each.len(),
+                segments.len().saturating_sub(1),
+                "a separator per gap: {each:?} against {} elements",
+                segments.len()
+            );
+            each.into_iter()
+                .zip(gaps)
+                .map(|(sep, gap)| [Doc::Text(sep), gap])
+                .collect()
+        }
+    }
+    .into_iter();
     let mut items = Vec::with_capacity(segments.len() * 3);
     for seg in segments {
         items.push(seg);
-        if let Some((sep, gap)) = seps.next() {
-            items.extend([Doc::text(sep), gap]);
+        if let Some(pair) = trailing.next() {
+            items.extend(pair);
         }
     }
     items
@@ -346,7 +395,7 @@ pub(super) enum Bracketing<'a> {
 fn build_container(
     bracketing: &Bracketing,
     elements: Vec<Doc>,
-    seps: Vec<String>,
+    seps: Seps,
     trailing: Option<&str>,
     fit: Fit,
 ) -> Doc {
@@ -468,13 +517,7 @@ pub(super) enum Bound {
 }
 
 /// Lay `segments` out bounded per `bound`, after `head` when there is one.
-fn build_bounded_doc(
-    head: &str,
-    segments: Vec<Doc>,
-    seps: Vec<String>,
-    fit: Fit,
-    bound: Bound,
-) -> Doc {
+fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Seps, fit: Fit, bound: Bound) -> Doc {
     let bracketing = match bound {
         Bound::Enclosing => {
             // The enclosing bracket bounds the operands, which is only true when they are its whole
@@ -522,17 +565,21 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     Some(build_bounded_doc(&head, arms, seps, fit, bound))
 }
 
-/// The trailing separators for an operator chain: ` |`, ` &&`, and so on.
-fn chain_seps(ops: &[&str]) -> Vec<String> {
-    ops.iter().map(|op| format!(" {op}")).collect()
+/// The trailing separators for an operator chain: ` |`, ` &&`, and so on. The one construct whose
+/// separators differ between elements, so the one that owns a string per gap.
+fn chain_seps(ops: &[&str]) -> Seps {
+    Seps::Each(ops.iter().map(|op| format!(" {op}")).collect())
 }
 
 /// A ternary's arms as documents with the ` :` that trails each, and whether the width decides —
 /// the whole of what the three places a ternary can appear need from one.
-fn ternary_layout(inner: &[Token]) -> Option<(Vec<Doc>, Vec<String>, Fit)> {
+fn ternary_layout(inner: &[Token]) -> Option<(Vec<Doc>, Seps, Fit)> {
     let arms = ternary_arms(inner)?;
-    let seps = vec![" :".to_owned(); arms.len() - 1];
-    Some((segment_docs(&arms), seps, Fit::of_ternary(inner)))
+    Some((
+        segment_docs(&arms),
+        Seps::Every(" :"),
+        Fit::of_ternary(inner),
+    ))
 }
 
 /// The `:`-separated arms of a ternary, or `None` if any arm is missing its operand — a stranded
@@ -622,9 +669,8 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
         return Doc::Text(format!("({})", render_segment(inner)));
     }
     let clauses = statement_segments(inner);
-    let seps = vec![";".to_owned(); clauses.len().saturating_sub(1)];
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
-    build_container(&PARENS, docs, seps, None, Fit::Measured)
+    build_container(&PARENS, docs, Seps::Every(";"), None, Fit::Measured)
 }
 
 /// Split a `;`-separated run into its elements — a `for` header's clauses, or a statement-expression
@@ -655,11 +701,17 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     }
     build_clause_contents(inner, &PARENS).unwrap_or_else(|| {
         // No depth-zero operator to split at, so the whole condition is one element: an overlong one
-        // still breaks away from the `if (` and the `) {` rather than overrunning them.
+        // still breaks away from the `if (` and the `) {` rather than overrunning them. A condition is
+        // not a list, so it names no separator — where a call's sole argument still writes
+        // [`Seps::Every`] because a comma list of one is still a comma list.
+        //
+        // The empty [`Seps::Each`] says that for *this* element and no others, and the `vec!` below is
+        // where that holds: a second element would be juxtaposed against the first with nothing
+        // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
             &PARENS,
             vec![build_expr_doc(inner)],
-            Vec::new(),
+            Seps::Each(Vec::new()),
             None,
             Fit::Measured,
         )
@@ -672,6 +724,58 @@ mod tests {
 
     fn tok(kind: TokenKind, text: &'static str) -> Token<'static> {
         Token { kind, text }
+    }
+
+    /// The separators and gaps `trailing_items` emitted, as text — `~` for a [`Doc::Line`] and `.` for
+    /// a [`Doc::SoftLine`], so where a gap went is visible and not only that one did. Neither marker
+    /// appears in any separator, so what is a gap and what is a separator cannot be confused.
+    fn placed(segments: &[&str], seps: Seps) -> String {
+        trailing_items(segments.iter().map(|s| Doc::text(*s)).collect(), seps)
+            .iter()
+            .map(|item| match item {
+                Doc::Text(text) => text.clone(),
+                Doc::Line => "~".to_owned(),
+                Doc::SoftLine => ".".to_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// The one invariant the whole of [`Seps`] rests on: a separator goes in every *gap*, and a gap
+    /// exists only between elements — so the last element takes none, whichever variant this is and
+    /// however many elements there are. Asserted here because the `camas corpus` A/B that verified the
+    /// conversion is a manual task, not part of the gate CI runs.
+    #[test]
+    fn trailing_items_separates_between_elements_only() {
+        assert_eq!(placed(&["a", "b", "c"], Seps::Every(",")), "a,~b,~c");
+        assert_eq!(placed(&["a"], Seps::Every(",")), "a");
+        // The shape `build_cond_doc` emits: one element, no gap, and an `Each` naming nothing. It is
+        // the only non-chain `Each` there is, so the "however many elements" claim above rests on it.
+        assert_eq!(placed(&["a"], Seps::Each(Vec::new())), "a");
+        assert_eq!(placed(&[], Seps::Every(",")), "");
+        let each = Seps::Each(vec![" |".to_owned(), " &&".to_owned()]);
+        assert_eq!(placed(&["a", "b", "c"], each), "a |~b &&~c");
+        // An empty element takes a `SoftLine` rather than a `Line`, so `for (;;)` is not `for (; ; )`.
+        assert_eq!(placed(&["a", "", "c"], Seps::Every(";")), "a;.;~c");
+    }
+
+    /// An [`Seps::Each`] as long as its gaps, which is the only shape there is one for — the length
+    /// is a precondition `trailing_items` asserts, not a case it handles. A shorter one leaves the
+    /// elements past it juxtaposed with neither a separator nor a gap, which no construct in the
+    /// language is, so there is deliberately no test asserting that output: it would pin a merge as
+    /// the expected answer where the `assert_eq!` says it is a caller's mistake.
+    /// And it is a real assertion, not one release builds compile away — the failure it catches is
+    /// silently merged tokens, which this suite may not let pass in the profile that ships.
+    #[test]
+    #[should_panic(expected = "a separator per gap")]
+    fn a_short_each_is_refused_in_every_profile() {
+        let _ = placed(&["a", "b", "c"], Seps::Each(vec![" |".to_owned()]));
+    }
+
+    #[test]
+    fn trailing_items_pairs_each_operator_with_its_own_gap() {
+        let ops = Seps::Each(vec![" |".to_owned(), " &&".to_owned(), " ^".to_owned()]);
+        assert_eq!(placed(&["a", "b", "c", "d"], ops), "a |~b &&~c ^~d");
     }
 
     #[test]
