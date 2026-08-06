@@ -313,11 +313,23 @@ fn trailing_items(segments: Vec<Doc>, seps: Seps) -> Vec<Doc> {
     });
     let mut trailing = match seps {
         Seps::Every(sep) => gaps.map(|gap| [Doc::text(sep), gap]).collect::<Vec<_>>(),
-        Seps::Each(each) => each
-            .into_iter()
-            .zip(gaps)
-            .map(|(sep, gap)| [Doc::Text(sep), gap])
-            .collect(),
+        Seps::Each(each) => {
+            // One per gap, not "as many as there are": a short `Each` would leave the elements past
+            // it juxtaposed with neither a separator *nor* a gap — `a |bc` — which is a construct no
+            // builder here has, and a silent merge rather than a visible mistake. `chain_seps` yields
+            // exactly one operator per gap and `build_cond_doc` pairs one element with none, so this
+            // holds for every producer; it is asserted so the next one cannot quietly not.
+            debug_assert_eq!(
+                each.len(),
+                segments.len().saturating_sub(1),
+                "a separator per gap: {each:?} against {} elements",
+                segments.len()
+            );
+            each.into_iter()
+                .zip(gaps)
+                .map(|(sep, gap)| [Doc::Text(sep), gap])
+                .collect()
+        }
     }
     .into_iter();
     let mut items = Vec::with_capacity(segments.len() * 3);
@@ -737,13 +749,15 @@ mod tests {
         assert_eq!(placed(&["a", "", "c"], Seps::Every(";")), "a;.;~c");
     }
 
-    /// `Each` shorter than the gaps runs out, and the elements past it are simply juxtaposed. No
-    /// caller writes one — `chain_seps` yields exactly one operator per gap — but the pairing is what
-    /// decides it, so it is asserted rather than assumed.
+    /// An [`Seps::Each`] as long as its gaps, which is the only shape there is one for — the length
+    /// is a precondition `trailing_items` asserts, not a case it handles. A shorter one leaves the
+    /// elements past it juxtaposed with neither a separator nor a gap, which no construct in the
+    /// language is, so there is deliberately no test asserting that output: it would pin a merge as
+    /// the expected answer where the `debug_assert_eq!` says it is a caller's mistake.
     #[test]
-    fn trailing_items_stops_where_an_each_runs_out() {
-        let short = Seps::Each(vec![" |".to_owned()]);
-        assert_eq!(placed(&["a", "b", "c"], short), "a |~bc");
+    fn trailing_items_pairs_each_operator_with_its_own_gap() {
+        let ops = Seps::Each(vec![" |".to_owned(), " &&".to_owned(), " ^".to_owned()]);
+        assert_eq!(placed(&["a", "b", "c", "d"], ops), "a |~b &&~c ^~d");
     }
 
     #[test]
