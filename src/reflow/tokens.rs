@@ -733,6 +733,141 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
         .any(|t| !is_trivia(t) && t.text.contains(['\n', '\r']))
 }
 
+/// Whether `toks` holds a preprocessor directive's `#`. The lines a directive spans are not the
+/// construct's to lay out — its own column belongs to `scope_directives`, and the tokens on either
+/// side of it are the preprocessor's alternatives rather than one expression. A handler that measures
+/// across one writes the `#` mid-line, and the output does not compile (#112):
+///
+/// ```c
+/// if (a == 1 #if defined(X) || b == 2 #endif) {
+/// ```
+///
+/// §6's passthrough is the whole answer, exactly as it is for a comment ([`contains_comment`]).
+///
+/// What separates it from the stringize `#` of `foo(#x, y)` — an ordinary call whose arguments still
+/// lay out — is what *follows* it: a directive names one, a line marker puts a number there
+/// (`# 42 "gen.c"` — the preprocessor-output form GNU emits, not C11 §6.10.4's `#line`), or nothing
+/// follows it on its line (the null directive). `##` is an
+/// [`TokenKind::Operator`] and never reaches the test.
+///
+/// Position cannot answer this. Which line a `#` is on is what the layout decides, so a predicate that
+/// reads it is not a fixpoint of the pass that owns it — and reading it cost one: the first form of this
+/// asked whether the `#` began its line, so a group holding `A[A&#0` was laid out on pass 1, which put
+/// the `#` at a line start, and refused on pass 2. That is #43's defect in the guard whose whole reason
+/// is that a directive's column belongs to a later pass.
+///
+/// Neither a block comment nor a `\` continuation separates a `#` from its name: phase 2 splices the
+/// continuation — the *name* too, so a `#include` split across one is still `#include` — and phase 3
+/// makes the comment
+/// whitespace, both before phase 4 reads the directive.
+///
+/// This is deliberately more inclusive than `scope_directives::parse_directive`, which scans for the
+/// keyword textually and so does not see `# /* c */ if` as one. The two disagreeing is safe only in this
+/// direction: this one refuses to lay a construct out and the scope pass declines to indent it, where the
+/// reverse would write a `#` mid-line. Not a divergence to copy into the scope pass without deciding what
+/// `# /* c */ if` should do about depth.
+///
+/// **The list is audited, not complete.** Three review rounds found twelve names missing from it, and the
+/// thirteenth is a vendor extension nobody has written yet. #118 records the measured alternatives:
+/// refusing *any* `#`, which closes the class but costs nine corpus files their comma spacing, and giving
+/// the four call sites enough context to know whether they sit inside a `#define` body, which is correct
+/// in both directions and wants the same change #43 and #76 want.
+///
+/// **Both errors are possible and they are not symmetric.** A name this does not know is a false
+/// negative and writes a `#` mid-line — the defect itself — so [`names_directive`] must stay complete;
+/// the blanket `#` tests in `is_boundable` and `emit_brace` are a partial backstop for spans that reach
+/// them. A false positive costs only layout: `#define STR(define) f(#define, …)` names a parameter that
+/// is not a keyword, so its stringize reads as a directive and the argument list passes through instead
+/// of breaking. §6 prefers that direction, which is why the test is a name list rather than "any `#`".
+pub(super) fn holds_directive(toks: &[Token]) -> bool {
+    toks.iter().enumerate().any(|(i, t)| {
+        t.kind == TokenKind::Punct && t.text == "#" && opens_directive(&toks[i + 1..])
+    })
+}
+
+/// Whether what follows a `#` on its logical line makes it a directive's.
+fn opens_directive(after: &[Token]) -> bool {
+    let line: Vec<&Token> = after
+        .iter()
+        .enumerate()
+        .take_while(|&(k, _)| !ends_logical_line(after, k))
+        .map(|(_, t)| t)
+        // A spliced newline and the `\` that splices it are gone by phase 2, so neither is part of the
+        // name — only a real line end stops the scan ([`ends_logical_line`]). A comment is *not* dropped:
+        // phase 3 makes it whitespace, so it may precede the name and must also end one.
+        .filter(|t| t.kind != TokenKind::Newline && !is_backslash(t))
+        .skip_while(|t| t.kind == TokenKind::Whitespace || is_comment(t))
+        .collect();
+    match line.first() {
+        // Nothing on the line after the `#`: the null directive.
+        None => true,
+        // A line marker's name is a number — `# 42 "gen.c"`, GNU's preprocessor-output form. C11
+        // §6.10.4 spells it `#line 42`, whose name is in the list already.
+        Some(first) if first.kind == TokenKind::Number => true,
+        // Phase 2 splices the *name* too, so a name broken across a continuation is one name again.
+        // Whitespace and a comment both end it, which
+        // is why it is filtered out above but not skipped over: `# region x` names `region`, not
+        // `regionx`.
+        Some(_) => names_directive(
+            &line
+                .iter()
+                .take_while(|t| t.kind == TokenKind::Ident)
+                .map(|t| t.text)
+                .collect::<String>(),
+        ),
+    }
+}
+
+/// Whether `toks[k]` ends the *logical* line — a newline the preprocessor does not splice away.
+///
+/// Only a `\` **immediately** before it splices (C11 5.1.1.2), which is the same test
+/// [`directive_end`] makes and the reason this does not skip whitespace to find one. GCC splices
+/// `\`+space+newline too, with a warning, and neither predicate honours that extension — a limitation
+/// both share rather than two answers to one question.
+fn ends_logical_line(toks: &[Token], k: usize) -> bool {
+    toks[k].kind == TokenKind::Newline && !(k > 0 && is_backslash(&toks[k - 1]))
+}
+
+/// A preprocessing directive's name: C23 §6.10.1, plus the extensions a real corpus writes. Not every
+/// one is a keyword — only `if` and `else` are — so an identifier here may legally be a macro parameter
+/// instead; see [`holds_directive`] for why that direction is the safe one to be wrong in.
+fn names_directive(text: &str) -> bool {
+    matches!(
+        text,
+        "if" | "ifdef"
+            | "ifndef"
+            | "elif"
+            | "elifdef"
+            | "elifndef"
+            | "else"
+            | "endif"
+            | "define"
+            | "undef"
+            | "include"
+            | "embed"
+            | "line"
+            | "error"
+            | "warning"
+            | "pragma"
+            // Not in the standard, and all of them appear in headers a compiler is handed:
+            // `include_next` and `import` guard re-inclusion, `ident` and `sccs` carry version strings,
+            // `assert`/`unassert` are GCC's retired predicates, `system_header` suppresses warnings for
+            // the rest of the file, `using` is C++/CLI, and `region`/`endregion` are editor folds.
+            | "include_next"
+            | "import"
+            | "ident"
+            | "sccs"
+            | "assert"
+            | "unassert"
+            | "system_header"
+            | "using"
+            | "region"
+            | "endregion"
+            | "push_macro"
+            | "pop_macro"
+    )
+}
+
 /// Whether a comma-separated call argument has a newline in its body (after stripping leading
 /// and trailing trivia). Such arguments would render differently on subsequent passes because
 /// `build_expr_doc` collapses the newline into a space, which can then be reinterpreted by

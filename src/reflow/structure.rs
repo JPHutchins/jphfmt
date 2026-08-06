@@ -12,10 +12,11 @@ use super::builders::{
 use super::scope::scoped;
 use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
-    enum_body_brace, has_middle_newline, has_non_trivia, is_backslash, is_balanced, is_call_head,
-    is_chain_break, is_comment, is_control_keyword, is_excluded_callee, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
-    prev_significant, respaced_when_joined, spans_lines, split_brace_line_comment, statement_end,
+    enum_body_brace, has_middle_newline, has_non_trivia, holds_directive, is_backslash,
+    is_balanced, is_call_head, is_chain_break, is_comment, is_control_keyword, is_excluded_callee,
+    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
+    opens_stmt_expr, prev_nontrivia, prev_significant, respaced_when_joined, spans_lines,
+    split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -77,6 +78,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(open) = next_paren(toks, i)
             && let Some(close) = match_bracket(toks, open)
             && !contains_comment(&toks[open + 1..close])
+            && !holds_directive(&toks[open + 1..close])
             && is_balanced(&toks[open + 1..close])
         {
             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
@@ -108,7 +110,11 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(close) = match_bracket(toks, i + 1)
         {
             let inner = &toks[i + 2..close];
-            if !contains_comment(inner) && is_balanced(inner) && !has_middle_newline(inner) {
+            if !contains_comment(inner)
+                && !holds_directive(inner)
+                && is_balanced(inner)
+                && !has_middle_newline(inner)
+            {
                 emit_str(out, col, t.text);
                 let doc = build_call_body(inner, Fit::Measured);
                 emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
@@ -526,9 +532,13 @@ fn format_stmt_expr(
         return None;
     }
     let inner = &toks[open + 2..brace_close];
-    let unformattable = inner
-        .iter()
-        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
+    // A directive here too: the statements are joined one per line, and a directive joined onto the
+    // statement after it swallows that statement into the directive — `#pragma pack(1)` + `int t = 1;`
+    // came out as one line and `t` was then undeclared (#112).
+    let unformattable = holds_directive(inner)
+        || inner
+            .iter()
+            .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
     if unformattable || !is_balanced(inner) {
         return None;
     }
@@ -585,9 +595,13 @@ fn emit_brace(
         return open + 1;
     };
     let inner = &toks[open + 1..close];
-    let has_comment_or_directive = inner
-        .iter()
-        .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "#"));
+    // The blanket `#` is load-bearing, not a stale copy of [`holds_directive`]: a `{}` list holding any
+    // `#` is one whose spacing a later pass may rewrite, and narrowing this to a directive broke
+    // idempotency on `{""/0AaA=#a*0_:…}` — laid out on pass 1, respaced on pass 2 (#112's review).
+    let has_comment_or_directive = contains_comment(inner)
+        || inner
+            .iter()
+            .any(|t| t.kind == TokenKind::Punct && t.text == "#");
     if has_comment_or_directive || !is_balanced(inner) || respaced_when_joined(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);

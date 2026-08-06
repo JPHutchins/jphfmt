@@ -1835,3 +1835,172 @@ fn a_continued_literal_is_one_token_under_either_line_ending() {
     assert_eq!(format(desync), laid_out);
     assert_eq!(format(laid_out), laid_out);
 }
+
+/// The lines a `#if` spans are the preprocessor's alternatives, not one expression. A construct that
+/// measures across one lays the directive out as its own content and writes the `#` mid-line, which
+/// does not compile (#112) — `if (a == 1 #if defined(X) || b == 2 #endif) {`. `contains_comment` is
+/// the same refusal for the same reason, and directives had no counterpart to it.
+///
+/// Four handlers reach the shape. The control header and the bracketed group inside it are what
+/// `sqlite3.c` needs — removing either takes it from 0 `gcc` errors back to 45. The other two were
+/// found by the review, and the multi-line shapes that made them look unreachable are why: a directive
+/// that is an argument's *whole* trimmed body has no newline left in that body, so
+/// `has_middle_newline` does not decline it and `foo(` + `#` + `)` came out as `foo(#)`. In a statement
+/// expression the statements are joined one per line, and a directive joined onto the statement after
+/// it swallows that statement — `#pragma pack(1)` + `int t = 1;` compiled to `t` undeclared.
+///
+/// A directive begins its line; the stringize `#` of `foo(#x, y)` does not, and that call still lays
+/// out. Refusing on any `#` cost real layout: `#define STR(x) f(#x, …)` exploded its *parameter list*
+/// instead of its argument list. A block comment before it does not stop it being a directive — phase 3
+/// makes the comment whitespace and phase 4 then reads the `#`.
+#[test]
+fn a_construct_does_not_measure_across_a_directive() {
+    let header = "static int f(int a, int b) {\n\tif (a == 111111111\n#if defined(__APPLE__)\n\t\t|| b == 22222222\n#endif\n\t) {\n\t\treturn 1;\n\t}\n\treturn 0;\n}\n";
+    assert_eq!(format(header), header, "the header passes through");
+
+    let group =
+        "int x = (aaaaaaaaaaaaaaaaaaaaa\n#if defined(X)\n\t| bbbbbbbbbbbbbbbbbbbbb\n#endif\n);\n";
+    assert_eq!(format(group), group, "so does the group");
+
+    // Only these three pin the call handler's guard — verified by ablating it. A directive that is the
+    // argument's *whole* trimmed body leaves no newline in that body, so `has_middle_newline` does not
+    // decline and `foo(` + `#` + `)` came out as `foo(#)`.
+    for src in [
+        "void g(void) {\n\tfoo(\n#\n\t);\n}\n",
+        "void g(void) {\n\tfoo(x,\n#pragma pack(1)\n\t\t);\n}\n",
+        "void g(void) {\n\tfoo(\n#error nope\n\t);\n}\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
+    }
+
+    // These four are already declined by `has_middle_newline` and pass with the call guard removed, so
+    // they assert passthrough rather than the guard. Kept because that is the coverage that makes the
+    // three above the *only* reachable shapes — but the comment used to claim they pinned the guard, and
+    // ablation says otherwise.
+    for src in [
+        "void g(void) {\n\tfoo(x,\n#if X\n\t\ty\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(x, y\n#if X\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(\n#if X\n\t\tx\n#endif\n\t);\n}\n",
+        "void g(void) {\n\tfoo(x\n#if X\n\t\t, y\n#endif\n\t);\n}\n",
+    ] {
+        assert_eq!(format(src), src, "{src:?}");
+    }
+
+    // A statement expression's statements go one per line, so a directive joined onto the next one
+    // swallows it: `#pragma pack(1) int t = 1;` left `t` undeclared where the input compiled.
+    let block = "void g(void) {\n\tint y = ({\n#pragma pack(1)\n\t\tint t = 1;\n\t\tt;\n\t});\n}\n";
+    assert_eq!(format(block), block);
+
+    // A `{}` list too — `emit_brace`'s blanket `#`, not this PR's guard.
+    let list = "int t[] = {\n#if X\n\t1,\n#endif\n\t2,\n};\n";
+    assert_eq!(format(list), list);
+
+    // A comment before the `#` does not make it something else. This one is declined by the enclosing
+    // `contains_comment` guards before `holds_directive`'s comment-skip is consulted, so it pins the
+    // *behaviour* and not the skip — ablating `build_bracketed_group`'s guard leaves it green. The plain
+    // group above is what pins that guard.
+    let commented = "int x = (a\n/* c */ #if X\n\t| b\n#endif\n);\n";
+    assert_eq!(format(commented), commented);
+
+    // **Every name in `names_directive`, each alone in the span**, because an `#endif` elsewhere in the
+    // span catches the construct on its own and that is how earlier forms of this test passed while
+    // missing twelve names. Ablating any single name must fail here: a name the list does not know is laid
+    // out across and the `#` written mid-line, which is the defect this test exists for.
+    for directive in [
+        "#if defined(X)",
+        "#ifdef X",
+        "#ifndef X",
+        "#elif defined(X)",
+        "#elifdef X",
+        "#elifndef X",
+        "#else",
+        "#endif",
+        "#define Q 1",
+        "#undef Q",
+        "#include <f.h>",
+        "#embed \"f.bin\"",
+        "#line 42",
+        "#error nope",
+        "#warning hi",
+        "#pragma pack(1)",
+        "#include_next <f.h>",
+        "#import \"f.h\"",
+        "#ident \"v\"",
+        "#sccs \"x\"",
+        "#assert x(y)",
+        "#unassert x",
+        "#system_header",
+        "#using <f>",
+        "#region x",
+        "#endregion",
+        "#push_macro(\"X\")",
+        "#pop_macro(\"X\")",
+        // Not names: a line marker's number (GNU's preprocessor-output form, not C11 §6.10.4's `#line`),
+        // the null directive, a name phase 2 splices back together, and a name phase 3 does not — a
+        // comment ends one where a continuation does not.
+        "#42 \"gen.c\"",
+        "#",
+        "#\\\ndefine Q 1",
+        "# /* c */ define Q 1",
+        "#in\\\nclude <f.h>",
+        "#in/*c*/clude <f.h>",
+        "#if/*c*/defined(X)",
+    ] {
+        let src = format!(
+            "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
+        );
+        assert_eq!(format(&src), src, "{directive:?}");
+    }
+
+    // Spaced, which `DirectiveLine::emit` tightens, so byte-identity is the wrong assertion — what matters is
+    // that the `#` keeps its own line. Whitespace between the `#` and the name ends the name, so these
+    // also pin that `# region x` names `region` and not `regionx`.
+    for directive in ["# region x", "# endregion", "# using <f>", "# 42 \"gen.c\""] {
+        let src = format!(
+            "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
+        );
+        let once = format(&src);
+        assert!(
+            !once
+                .lines()
+                .any(|line| line.contains("if (") && line.contains('#')),
+            "{directive:?} keeps its own line: {once:?}"
+        );
+        assert_eq!(format(&once), once, "{directive:?}");
+    }
+
+    // A stringize inside a nonzero `#if` scope, where the narrow guards' width-flip exposure would show
+    // if it showed anywhere: `scope_directives` re-indents a line-start `#`+keyword, so a `#x` the layout
+    // moved there could be measured at one width and rewritten to another. **It does not reach that
+    // re-indentation** — the scope pass skips continuation lines, and the `#x` is on one — so this
+    // asserts stability of the shape rather than exercising the mechanism. Closing the mechanism needs a
+    // `#x` at a line start that is *not* a continuation, which no valid input this pass sees produces.
+    let scoped = "#if X\n#define STR(x) fooooooooooooooo(#x, barrrrrrrrrrrrrrr, bazzzzzzzzzzzzzzz, quxxxxxxxxxxxxxxxxxxxxxxxxxxxx)\n#endif\n";
+    let broken = format(scoped);
+    assert!(broken.contains("#x"), "the stringize survives: {broken:?}");
+    assert_eq!(format(&broken), broken, "and the result is a fixpoint");
+
+    // Which line a `#` is on is what the layout decides, so the test for a directive may not read it.
+    // Breaking this argument list puts the stringize `#x` at the start of a line, and a position-based
+    // test then called it a directive and refused on pass 2 what it laid out on pass 1.
+    let moved = "#define STR(x) fooooooooooooooo(#x, barrrrrrrrrrrrrrr, bazzzzzzzzzzzzzzz, quxxxxxxxxxxxxxxxxxxxxxxxxxxxx)\n";
+    let broken = format(moved);
+    assert!(
+        broken.contains("\n\t#x, \\\n"),
+        "the `#` lands at a line start: {broken:?}"
+    );
+    assert_eq!(format(&broken), broken, "and is still not a directive");
+
+    // The stringize `#` is not a directive, and `##` is not even a `Punct`. Already-broken input, so the
+    // assertion is byte-identity: `starts_with` alone left the `#x` and the fixpoint unchecked.
+    let stringize = "#define STR(x) fooooooooooooooo(\n\t#x, \\\n\tbarrrrrrrrrrrrrrr, \\\n\tbazzzzzzzzzzzzzzz, \\\n\tquxxxxxxxxxxxxxxxxxxxxxxxxxxxx \\\n)\n";
+    assert_eq!(
+        format(stringize),
+        stringize,
+        "the argument list stays broken, and the stringize with it"
+    );
+    assert_eq!(
+        format("#define CAT(a, b) a##b\n"),
+        "#define CAT(a, b) a##b\n"
+    );
+}
