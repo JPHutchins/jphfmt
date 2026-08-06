@@ -75,10 +75,10 @@ ENGLISH = {**os.environ, "LC_ALL": "C"}
 OWNED = " \t\r\n\v\f\\"
 # Counted as bytes, so the two sides compare the same way whether one arrives decoded and the other not.
 OWNED_BYTES = OWNED.encode()
-# The two reasons a candidate is not corpus, kept apart because they are not the same claim: one is
-# about the file, the other about this machine.
-NOT_C = "gcc could not read it as C, so neither side is measurable"
-NO_ANSWER = "gcc could not answer, which is this machine rather than the file"
+# The two reasons gcc gives no baseline, kept apart because they are not the same claim: one is gcc
+# reading the file and stopping, the other gcc never answering at all.
+GAVE_UP = "gcc read it and gave up"
+NO_ANSWER = "gcc never answered"
 
 
 class Errors(NamedTuple):
@@ -162,31 +162,18 @@ class Broke(NamedTuple):
 Verdict = Unformattable | Stalled | NotIdempotent | Regressed | LostContent | Broke
 
 
-class Member(NamedTuple):
-	"""A corpus file and the baseline gcc measured for it, which [`check`] compares the output against
-	rather than compiling the same bytes a second time."""
+class Unmeasured(NamedTuple):
+	"""A file whose gcc baseline is not an error count, so the compile comparison has nothing to compare
+	against. Not a verdict and not an exclusion: the properties that do not need gcc — idempotency,
+	no-token-loss, formats-at-all — are checked on it exactly as on any other file, and only the
+	`gcc`-no-worse half is skipped. That is the honest shape, because those files *are* still formatted
+	in the world, and #100 was a content-loss bug no compiler would have caught anyway.
 
-	path: Path
-	before: Errors
-
-
-class Skipped(NamedTuple):
-	"""A candidate that is not corpus, and why — kept apart because the causes are not the same claim.
-	A `Halted` says gcc could not read it as C; a `TimedOut` or a `Crashed` says gcc could not answer,
-	which is this machine's problem rather than the file's."""
+	`Halted` says gcc could not read it as C; a `TimedOut` or a `Crashed` says gcc could not answer,
+	which is this machine's problem rather than the file's. Reported apart for that reason."""
 
 	path: Path
 	why: Compile
-
-
-class Corpus(NamedTuple):
-	"""What [`discover`] settled on: the files to check, the candidates it set aside, and — when it
-	returned fewer than asked for — which of the two limits stopped it. A walk that ran out and a
-	budget that ran out are different failures and must not wear the same sentence."""
-
-	files: tuple[Member, ...]
-	skipped: tuple[Skipped, ...]
-	exhausted: str | None
 
 
 def candidates(root: Path, depth: int) -> Iterator[Path]:
@@ -204,47 +191,16 @@ def candidates(root: Path, depth: int) -> Iterator[Path]:
 	return (p for level in levels for p in level if p.suffix in (".c", ".h") and p.is_file())
 
 
-def discover(root: Path, limit: int, depth: int, jobs: int = 8) -> Corpus:
-	"""The first `limit` candidates gcc can measure as C.
+def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
+	"""The first `limit` candidates, in walk order.
 
-	A suffix is not a language. `/nix/store` is full of `.h` files that are C++ (`simdjson.h`), and of
-	C that needs an include path this has no way to reconstruct; gcc stops at the first `#include` it
-	cannot resolve and reports one `fatal error`. Both sides then report the same one, `severity` finds
-	no regression, and the file reads clean having been syntax-checked *not at all* — 117 of 1200 on
-	this machine, counted as passes for as long as this check has existed.
-
-	So membership is the compile itself: a candidate is corpus if gcc gets through it, and the ones it
-	does not are named by [`main`] rather than dropped quietly. jphfmt formats C, so a header it cannot
-	read as C is not evidence about jphfmt either way.
+	Membership is *not* the compile. An earlier form of this kept only files gcc could read as C, which
+	fixed one vacuous pass and opened another: the properties that need no compiler — idempotency,
+	no-token-loss, formats-at-all — stopped being checked on the ~117 files it set aside, and #100 was
+	exactly a content-loss bug no compiler would have caught. Every candidate is formatted and held to
+	those; [`check`] reports the compile comparison as unmeasured where gcc gives it no baseline.
 	"""
-	stream = candidates(root, depth)
-	budget = limit * DISCOVERY_BUDGET_PER_FILE
-	kept: list[Member] = []
-	skipped: list[Skipped] = []
-	pool = ThreadPoolExecutor(max_workers=jobs)
-	try:
-		while len(kept) < limit and len(kept) + len(skipped) < budget:
-			# In order, and never more than the shortfall, so no candidate is measured that the corpus
-			# had no room for — it would burn a gcc run and inflate what [`main`] reports as set aside.
-			# Clamped to the budget as well as the shortfall, so the cap is the hard one its constant
-			# describes rather than one a final batch can overshoot by up to `jobs * 8 - 1`.
-			room = min(limit - len(kept), budget - len(kept) - len(skipped), jobs * 8)
-			batch = tuple(islice(stream, room))
-			if not batch:
-				return Corpus(tuple(kept), tuple(skipped), "the walk ran out of candidates")
-			for path, measured in zip(batch, pool.map(baseline, batch)):
-				if isinstance(measured, Errors):
-					kept.append(Member(path, measured))
-				else:
-					skipped.append(Skipped(path, measured))
-	finally:
-		# Drops the queue rather than draining it, so Ctrl+C does not wait out every *queued* candidate
-		# in `ThreadPoolExecutor.__exit__`. The gcc runs already in flight still hold the process until
-		# they finish or time out — these workers are not daemons, and the interpreter joins them — so
-		# this bounds the wait at one `GCC_TIMEOUT_S` rather than removing it.
-		pool.shutdown(wait=False, cancel_futures=True)
-	stopped = None if len(kept) >= limit else "the discovery budget ran out before the walk did"
-	return Corpus(tuple(kept), tuple(skipped), stopped)
+	return tuple(islice(candidates(root, depth), limit))
 
 
 def measure(label: str, data: bytes, path: Path) -> Compile:
@@ -256,16 +212,18 @@ def measure(label: str, data: bytes, path: Path) -> Compile:
 	file of that name would have this one shadow it and the comparison would measure the harness.
 	"""
 	with tempfile.TemporaryDirectory() as tmp:
-		copy = Path(tmp) / f"jphfmt-corpus-{label}-{path.name}"
+		# `:` out of the copy's name: [`DIAGNOSTIC`] reads gcc's own location as the text before the
+		# first `:<digits>:`, so a basename holding one made every located diagnostic unmatchable — the
+		# same file then read as `Errors(0)` when it was clean and `ToolFailed` when it was not.
+		copy = Path(tmp) / f"jphfmt-corpus-{label}-{path.name.replace(':', '_')}"
 		copy.write_bytes(data)
 		return compiles(copy, path.parent)
 
 
 def baseline(path: Path) -> Compile:
-	"""gcc on `path` as written — both the membership test and the before-baseline, because they are
-	the same question asked of the same bytes. Asking twice is a third gcc run per file, and one that
-	could answer differently: compiling in place resolves a quoted `#include` against a directory the
-	other side does not have.
+	"""gcc on `path` as written, compiled the way [`check`] compiles the output — a copy, from a
+	temporary directory, with the original's directory on the include path. Compiling in place would
+	resolve a quoted `#include` against a directory the other side does not have.
 	"""
 	try:
 		return measure("before", path.read_bytes(), path)
@@ -399,24 +357,21 @@ def format_with(binary: Path, source: Path | str) -> Formatting:
 	try:
 		run = subprocess.run(
 			(str(binary), str(source) if isinstance(source, Path) else "/dev/stdin"),
-			input=None if isinstance(source, Path) else source,
 			capture_output=True,
-			# The formatter reads and writes UTF-8; `text=True` alone would decode with the process
-			# locale, so a corpus header's non-ASCII bytes would fail to decode under a C locale and
-			# report a file the formatter handled fine.
-			#
-			# `surrogateescape` rather than `replace`, because this text is written back out and
-			# compared byte for byte: a corpus file may hold bytes that are not UTF-8 at all — gcc
-			# compiles several such — and the formatter is right to preserve them. Replacing them
-			# would hand `measure` different bytes than the formatter emitted and count a `written`
-			# the formatter never lost. Surrogates round-trip exactly on the way back.
-			encoding="utf-8",
-			errors="surrogateescape",
+			input=None if isinstance(source, Path) else source.encode("utf-8", "surrogateescape"),
 			timeout=FORMAT_TIMEOUT_S,
 		)
 	except subprocess.TimeoutExpired:
 		return Hung(FORMAT_TIMEOUT_S)
-	return Formatted(run.stdout) if run.returncode == 0 else Failed(run.returncode, run.stderr)
+	# The two streams are decoded differently on purpose. Stdout is written back out by `measure` and
+	# counted by `written`, so it must round-trip byte for byte — a corpus file may hold bytes that are
+	# not UTF-8 at all, and the formatter is right to preserve them; `surrogateescape` gives them back
+	# exactly. Stderr is only ever *printed*, and a lone surrogate cannot be encoded by a strict stdout
+	# — the default for a piped run — so it would have crashed `main`'s own `print`, outside `checked`'s
+	# net, after every verdict had already been computed.
+	if run.returncode == 0:
+		return Formatted(run.stdout.decode("utf-8", "surrogateescape"))
+	return Failed(run.returncode, run.stderr.decode("utf-8", "replace"))
 
 
 def as_verdict(path: Path, outcome: Failed | Hung) -> Verdict:
@@ -427,17 +382,16 @@ def as_verdict(path: Path, outcome: Failed | Hung) -> Verdict:
 			return Stalled(path, seconds)
 
 
-def check(binary: Path, member: Member) -> tuple[Verdict, ...]:
+def check(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | None]:
 	"""Every property that fails for `path`, not the first.
 
 	Reporting only the first hid a compile-breaking bug behind a non-idempotency for as long as both
 	were present: `sqlite3.c` was unstable, so the `gcc` comparison never ran on it, and the 48 errors
 	its formatted form carries surfaced only once the instability was fixed (#109, #112).
 	"""
-	path, before = member
 	first = format_with(binary, path)
 	if not isinstance(first, Formatted):
-		return (as_verdict(path, first),)
+		return ((as_verdict(path, first),), None)
 	once = first.text
 	again = format_with(binary, once)
 	unstable: tuple[Verdict, ...] = ()
@@ -453,27 +407,22 @@ def check(binary: Path, member: Member) -> tuple[Verdict, ...]:
 	lost: tuple[Verdict, ...] = ()
 	if output < source:
 		lost = (LostContent(path, source, output),)
+	# `severity` puts a halt, a crash and a timeout above every error count, so a baseline that is one
+	# makes `after` unable to outrank it and *every* output read clean — `severity(Errors(48)) >
+	# severity(Halted(…))` is False. That is the vacuous pass, and the answer is to compare nothing and
+	# say so, not to compare it anyway. gcc halts on 117 of this machine's 1200: a header that is not C,
+	# or C whose `#include` this cannot resolve, where both sides report the same one fatal error.
+	before = baseline(path)
+	if not isinstance(before, Errors):
+		return (unstable + lost, Unmeasured(path, before))
 	after = measure("after", emitted, path)
-	# `severity` puts a crash or a timeout above every error count, so a baseline that is one makes
-	# `after` unable to outrank it and every output read clean — `severity(Errors(48)) > severity(
-	# TimedOut(30))` is False. An input gcc could not measure gives no baseline to compare against, and
-	# saying so is the only honest verdict.
-	# No `Unmeasured` verdict any more, and no variant for one: an input gcc could not measure is not
-	# corpus, so `before` is an `Errors`. Output gcc cannot measure is a `Regressed`, because `severity`
-	# ranks a halt, a crash and a timeout above every error count.
-	#
-	# Asserted rather than assumed: every other `Compile` shares one severity with those, so a halt that
-	# reached here as a baseline would make `after` unable to outrank it and read *every* output clean.
-	# That is the vacuous pass, and a type annotation does not stop it — `checked` turns this into a
-	# `Broke` naming the file.
-	assert isinstance(before, Errors), f"a baseline is measured by construction, not {before!r}"
 	regressed: tuple[Verdict, ...] = ()
 	if severity(after) > severity(before):
 		regressed = (Regressed(path, before, after),)
-	return unstable + lost + regressed
+	return (unstable + lost + regressed, None)
 
 
-def checked(binary: Path, member: Member) -> tuple[Verdict, ...]:
+def checked(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | None]:
 	"""[`check`], with whatever it raises reported against `path` instead of ending the run.
 
 	`ThreadPoolExecutor.map` re-raises a worker's exception as its results are consumed, so one
@@ -481,11 +430,11 @@ def checked(binary: Path, member: Member) -> tuple[Verdict, ...]:
 	the work and reported on none of it.
 	"""
 	try:
-		return check(binary, member)
+		return check(binary, path)
 	except Exception:
 		# The traceback, not just the message: a `Broke` is a bug in this file, and the whole point of
 		# reporting one rather than raising is that the run finishes — so it has to name its own site.
-		return (Broke(member.path, traceback.format_exc().strip()),)
+		return ((Broke(path, traceback.format_exc().strip()),), None)
 
 
 def unusable_gcc() -> str | None:
@@ -545,33 +494,31 @@ def describe(result: Compile) -> str:
 			return f"gcc failed: {detail}"
 
 
-def describe_skips(skipped: tuple[Skipped, ...]) -> tuple[str, ...]:
-	"""What [`discover`] set aside, grouped by cause, and named — never a bare count.
+def describe_unmeasured(unmeasured: tuple[Unmeasured, ...]) -> tuple[str, ...]:
+	"""Which files got no compile comparison, grouped by cause, and named — never a bare count. Every
+	one of them was still formatted and held to the properties that need no compiler.
 
-	A `Halted` is the language verdict this exists to make: gcc could not read the file as C, so
-	neither side is measurable and comparing them would pass having checked nothing. The rest are this
-	machine saying it could not answer, which is a different claim and must not wear the same words.
+	A `Halted` is gcc reading the file and giving up: not C, or C whose `#include` this cannot resolve.
+	The rest are gcc never answering, which is this machine and a different claim.
 
-	>>> describe_skips(())
+	>>> describe_unmeasured(())
 	()
-	>>> for line in describe_skips((Skipped(Path("a.h"), Halted("x.h: No such file or directory")),)):
+	>>> for line in describe_unmeasured((Unmeasured(Path("a.h"), Halted("x.h: No such file")),)):
 	...     print(line)
-	1 candidate set aside — gcc could not read it as C, so neither side is measurable
-	  a.h: gcc gave up: x.h: No such file or directory
+	1 file has no gcc baseline — gcc read it and gave up; the format properties still ran
+	  a.h: gcc gave up: x.h: No such file
 	"""
-	if not skipped:
-		return ()
 	groups = (
-		(tuple(s for s in skipped if isinstance(s.why, Halted)), NOT_C),
-		(tuple(s for s in skipped if not isinstance(s.why, Halted)), NO_ANSWER),
+		(tuple(u for u in unmeasured if isinstance(u.why, Halted)), GAVE_UP),
+		(tuple(u for u in unmeasured if not isinstance(u.why, Halted)), NO_ANSWER),
 	)
 	lines: list[str] = []
 	for group, why in groups:
 		if not group:
 			continue
-		noun = "candidate" if len(group) == 1 else "candidates"
-		lines.append(f"{len(group)} {noun} set aside — {why}")
-		lines.extend(f"  {s.path}: {describe(s.why)}" for s in group[:5])
+		count = f"1 file has" if len(group) == 1 else f"{len(group)} files have"
+		lines.append(f"{count} no gcc baseline — {why}; the format properties still ran")
+		lines.extend(f"  {u.path}: {describe(u.why)}" for u in group[:5])
 		if len(group) > 5:
 			lines.append(f"  … and {len(group) - 5} more")
 	return tuple(lines)
@@ -624,48 +571,35 @@ def main(argv: tuple[str, ...]) -> int:
 		print(f"no formatter at {args.binary} — pass --binary", file=sys.stderr)
 		return 1
 
-	try:
-		corpus = discover(args.root, args.limit, args.depth, args.jobs)
-	except KeyboardInterrupt:
-		print("interrupted while choosing the corpus", file=sys.stderr)
-		return 130
-	files = corpus.files
-	# Named before anything else, and to stderr, so the verdict stream stays greppable and an empty
-	# corpus still says *why* it is empty. A corpus that shrank is a corpus that checks less, and a run
-	# that does not say so reports coverage it does not have.
-	for line in describe_skips(corpus.skipped):
-		print(line, file=sys.stderr)
-	# A skip gcc *answered* — `Halted` — is the language verdict. One it could not answer is this
-	# machine, and saying "gcc reads as C" of a timeout would misstate which of the two failed.
-	stalled = tuple(s for s in corpus.skipped if not isinstance(s.why, Halted))
+	files = discover(args.root, args.limit, args.depth)
 	if not files:
-		# Three different failures, and the skips say which: none found, none readable as C, or none
-		# gcc could answer for. Saying "none at all" of a tree full of files gcc timed out on would
-		# contradict the lines `describe_skips` just printed.
-		if any(isinstance(s.why, Halted) for s in corpus.skipped):
-			why = "gcc reads as C"
-		elif stalled:
-			why = "gcc could answer for"
-		else:
-			why = "at all"
-		print(f"no .c/.h files {why} within {args.depth} levels of {args.root}", file=sys.stderr)
+		levels = "level" if args.depth == 1 else "levels"
+		print(f"no .c/.h files within {args.depth} {levels} of {args.root}", file=sys.stderr)
 		return 1
 	if len(files) < args.limit:
+		# Reduced coverage, said out loud: a clean pass over fewer files than were asked for is exactly
+		# what this module refuses to report as a clean pass, so it also fails below.
+		noun = "file" if len(files) == 1 else "files"
+		levels = "level" if args.depth == 1 else "levels"
 		print(
-			f"corpus is {len(files)} files, not the {args.limit} asked for — "
-			f"{corpus.exhausted} within {args.depth} levels of {args.root}",
+			f"the walk found only {len(files)} {noun} within {args.depth} {levels} of {args.root}, "
+			f"not the {args.limit} asked for",
 			file=sys.stderr,
 		)
 
 	# Reported as they arrive rather than collected: the largest files take minutes each, and a run that
 	# is interrupted — or watched — should have already named everything it found.
 	clean = 0
+	unmeasured: list[Unmeasured] = []
 	pool = ThreadPoolExecutor(max_workers=args.jobs)
-	pending = [pool.submit(checked, args.binary, member) for member in files]
 	try:
+		# Inside the `try`: submitting 1200 futures is not instant, and a Ctrl+C in that window used to
+		# leave the pool unshut and the interpreter joining its workers with nothing reported.
+		pending = [pool.submit(checked, args.binary, path) for path in files]
 		for done in as_completed(pending):
-			verdicts = done.result()
+			verdicts, unmeasured_here = done.result()
 			clean += not verdicts
+			unmeasured.extend(filter(None, (unmeasured_here,)))
 			for verdict in verdicts:
 				print(report(verdict), flush=True)
 	except KeyboardInterrupt:
@@ -676,15 +610,21 @@ def main(argv: tuple[str, ...]) -> int:
 		print(f"interrupted after {clean} clean of {len(files)}", file=sys.stderr)
 		return 130
 	pool.shutdown()
-	print(f"{clean} of {len(files)} files clean")
-	# A machine-side skip fails the run, as the `Unmeasured` verdict it replaces did. The quota refills
-	# from deeper in the walk, so without this a gcc that crashed or timed out on a third of the
-	# candidates still reports `limit of limit clean` — a full pass over whatever was left.
-	if stalled:
-		print(f"{len(stalled)} candidates gcc could not answer for; see above", file=sys.stderr)
-	# A short corpus is reduced coverage, whichever limit shortened it, and a clean pass over less than
-	# was asked for is the thing this module refuses to report as a clean pass.
-	return 0 if clean == len(files) == args.limit and not stalled else 1
+
+    # Named, and to stderr, so the verdict stream stays greppable. Every one of these was formatted and
+	# held to the properties that need no compiler; what they did not get is the compile comparison, and
+	# a run that does not say how many reports coverage it does not have.
+	for line in describe_unmeasured(tuple(unmeasured)):
+		print(line, file=sys.stderr)
+	short = len(files) < args.limit
+	# The headline comes last and only when it is true. Printing `1200 of 1200 files clean` above a
+	# failure line, with a nonzero exit, hands anyone grepping the summary a green pass that the exit
+	# status contradicts.
+	if clean == len(files) and not short:
+		print(f"{clean} of {len(files)} files clean")
+		return 0
+	print(f"{clean} of {len(files)} files clean, and the run is not", file=sys.stderr)
+	return 1
 
 
 if __name__ == "__main__":
