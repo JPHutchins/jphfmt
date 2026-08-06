@@ -53,7 +53,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
         .into_iter()
         .map(|a| build_element_doc(a, bound))
         .collect();
-    build_container(&PARENS, elements, &Seps::Every(","), None, fit)
+    build_container(&PARENS, elements, Seps::Every(","), None, fit)
 }
 
 /// A `{}` or `enum` body: `,`-separated elements, a trailing comma when broken, and §2.3's magic
@@ -86,7 +86,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     };
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
-    build_container(&bracketing, docs, &Seps::Every(","), Some(","), fit)
+    build_container(&bracketing, docs, Seps::Every(","), Some(","), fit)
 }
 
 /// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
@@ -190,7 +190,7 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
         return build_container(
             &Bracketing::Hanging,
             segment_docs(&segments),
-            &chain_seps(&ops),
+            chain_seps(&ops),
             None,
             Fit::Measured,
         );
@@ -287,7 +287,15 @@ pub(super) enum Seps {
 /// element takes none — one rule, holding for both [`Seps`] and for a container of one, rather than a
 /// bound each variant has to carry. The trailing separator a container does write is
 /// `build_container`'s own, which knows its bracket.
-fn trailing_items(segments: Vec<Doc>, seps: &Seps) -> Vec<Doc> {
+///
+/// Takes `seps` by value so [`Seps::Each`]'s strings move into their [`Doc::Text`]: they were built by
+/// [`chain_seps`] one allocation each, and borrowing them here would have bought a second.
+///
+/// The empty-element rule reads [`Doc::is_empty`], which answers `false` for a [`Doc::Group`] however
+/// empty its contents — so an element that is a group around nothing takes a [`Doc::Line`] and a space
+/// the flat form does not need. No builder here produces one; the guarantee is `for (;;)`'s, and it
+/// holds for the text and concat elements that reach this.
+fn trailing_items(segments: Vec<Doc>, seps: Seps) -> Vec<Doc> {
     let gaps = segments.iter().skip(1).map(|next| {
         if next.is_empty() {
             Doc::SoftLine
@@ -296,18 +304,20 @@ fn trailing_items(segments: Vec<Doc>, seps: &Seps) -> Vec<Doc> {
         }
     });
     let mut trailing = match seps {
-        Seps::Every(sep) => gaps.map(|gap| [Doc::text(*sep), gap]).collect::<Vec<_>>(),
+        Seps::Every(sep) => gaps.map(|gap| [Doc::text(sep), gap]).collect::<Vec<_>>(),
         Seps::Each(each) => each
-            .iter()
+            .into_iter()
             .zip(gaps)
-            .map(|(sep, gap)| [Doc::text(sep), gap])
+            .map(|(sep, gap)| [Doc::Text(sep), gap])
             .collect(),
     }
     .into_iter();
-    segments
-        .into_iter()
-        .flat_map(|seg| std::iter::once(seg).chain(trailing.next().into_iter().flatten()))
-        .collect()
+    let mut items = Vec::with_capacity(segments.len() * 3);
+    for seg in segments {
+        items.push(seg);
+        items.extend(trailing.next().into_iter().flatten());
+    }
+    items
 }
 
 /// A bracket's inner space in the flat form: `{1, 2}` and `f(a, b)` against `enum { A, B }`.
@@ -358,7 +368,7 @@ pub(super) enum Bracketing<'a> {
 fn build_container(
     bracketing: &Bracketing,
     elements: Vec<Doc>,
-    seps: &Seps,
+    seps: Seps,
     trailing: Option<&str>,
     fit: Fit,
 ) -> Doc {
@@ -480,7 +490,7 @@ pub(super) enum Bound {
 }
 
 /// Lay `segments` out bounded per `bound`, after `head` when there is one.
-fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: &Seps, fit: Fit, bound: Bound) -> Doc {
+fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Seps, fit: Fit, bound: Bound) -> Doc {
     let bracketing = match bound {
         Bound::Enclosing => {
             // The enclosing bracket bounds the operands, which is only true when they are its whole
@@ -518,14 +528,14 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         return Some(build_bounded_doc(
             &head,
             segment_docs(&segments),
-            &chain_seps(&ops),
+            chain_seps(&ops),
             Fit::Measured,
             bound,
         ));
     }
     // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
     let (arms, seps, fit) = ternary_layout(operands)?;
-    Some(build_bounded_doc(&head, arms, &seps, fit, bound))
+    Some(build_bounded_doc(&head, arms, seps, fit, bound))
 }
 
 /// The trailing separators for an operator chain: ` |`, ` &&`, and so on. The one construct whose
@@ -591,13 +601,13 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         return Some(build_container(
             bracketing,
             segment_docs(&segments),
-            &chain_seps(&ops),
+            chain_seps(&ops),
             None,
             Fit::Measured,
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_container(bracketing, arms, &seps, None, fit))
+    Some(build_container(bracketing, arms, seps, None, fit))
 }
 
 /// A bracketed group the author wrote — `(…)` around an expression, `[…]` around an index. The
@@ -633,7 +643,7 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     }
     let clauses = statement_segments(inner);
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
-    build_container(&PARENS, docs, &Seps::Every(";"), None, Fit::Measured)
+    build_container(&PARENS, docs, Seps::Every(";"), None, Fit::Measured)
 }
 
 /// Split a `;`-separated run into its elements — a `for` header's clauses, or a statement-expression
@@ -667,10 +677,14 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         // still breaks away from the `if (` and the `) {` rather than overrunning them. A condition is
         // not a list, so it names no separator — where a call's sole argument still writes
         // [`Seps::Every`] because a comma list of one is still a comma list.
+        //
+        // The empty [`Seps::Each`] says that for *this* element and no others, and the `vec!` below is
+        // where that holds: a second element would be juxtaposed against the first with nothing
+        // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
             &PARENS,
             vec![build_expr_doc(inner)],
-            &Seps::Each(Vec::new()),
+            Seps::Each(Vec::new()),
             None,
             Fit::Measured,
         )
@@ -688,7 +702,7 @@ mod tests {
     /// The separators and gaps `trailing_items` emitted, as text — `~` for a [`Doc::Line`] and `.` for
     /// a [`Doc::SoftLine`], so where a gap went is visible and not only that one did. Neither marker
     /// appears in any separator, so what is a gap and what is a separator cannot be confused.
-    fn placed(segments: &[&str], seps: &Seps) -> String {
+    fn placed(segments: &[&str], seps: Seps) -> String {
         trailing_items(segments.iter().map(|s| Doc::text(*s)).collect(), seps)
             .iter()
             .map(|item| match item {
@@ -706,13 +720,13 @@ mod tests {
     /// conversion is a manual task, not part of the gate CI runs.
     #[test]
     fn trailing_items_separates_between_elements_only() {
-        assert_eq!(placed(&["a", "b", "c"], &Seps::Every(",")), "a,~b,~c");
-        assert_eq!(placed(&["a"], &Seps::Every(",")), "a");
-        assert_eq!(placed(&[], &Seps::Every(",")), "");
+        assert_eq!(placed(&["a", "b", "c"], Seps::Every(",")), "a,~b,~c");
+        assert_eq!(placed(&["a"], Seps::Every(",")), "a");
+        assert_eq!(placed(&[], Seps::Every(",")), "");
         let each = Seps::Each(vec![" |".to_owned(), " &&".to_owned()]);
-        assert_eq!(placed(&["a", "b", "c"], &each), "a |~b &&~c");
+        assert_eq!(placed(&["a", "b", "c"], each), "a |~b &&~c");
         // An empty element takes a `SoftLine` rather than a `Line`, so `for (;;)` is not `for (; ; )`.
-        assert_eq!(placed(&["a", "", "c"], &Seps::Every(";")), "a;.;~c");
+        assert_eq!(placed(&["a", "", "c"], Seps::Every(";")), "a;.;~c");
     }
 
     /// `Each` shorter than the gaps runs out, and the elements past it are simply juxtaposed. No
@@ -721,7 +735,7 @@ mod tests {
     #[test]
     fn trailing_items_stops_where_an_each_runs_out() {
         let short = Seps::Each(vec![" |".to_owned()]);
-        assert_eq!(placed(&["a", "b", "c"], &short), "a |~bc");
+        assert_eq!(placed(&["a", "b", "c"], short), "a |~bc");
     }
 
     #[test]
