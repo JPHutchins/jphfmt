@@ -621,33 +621,31 @@ fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     // heads a span only by leading it, so there is never an operator before one to discard — while
     // discarding on any depth-zero `return` would let a stray one mid-span kill a valid chain.
     //
-    // An assignment discards the candidates collected before it, which is the restriction stated as
-    // the one pass it is: those operators are in its left side, and no later token can put them back.
+    // An assignment resets the accumulator, which is the restriction stated as the one pass it is:
+    // those operators are in its left side, and no later token can put them back. One fold, so no
+    // intermediate list of candidates is built for a rule that only ever keeps the loosest.
+    let nothing = (CHAIN_CLASSES.len(), Vec::new());
     at_depth_zero(inner)
-        .fold(Vec::new(), |mut candidates, (j, t)| {
+        .fold(nothing, |(loosest, mut cuts), (j, t)| {
             if assigns(t) {
-                candidates.clear();
-            } else if let Some(class) = matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
+                return (CHAIN_CLASSES.len(), Vec::new());
+            }
+            let Some(class) = matches!(t.kind, TokenKind::Operator | TokenKind::Punct)
                 .then(|| CHAIN_CLASSES.iter().position(|c| c.contains(&t.text)))
                 .flatten()
                 .filter(|_| is_binary_position(inner, j))
-            {
-                candidates.push((class, j));
-            }
-            candidates
-        })
-        .into_iter()
-        .fold(
-            (CHAIN_CLASSES.len(), Vec::new()),
-            |(loosest, mut cuts), (class, j)| match class.cmp(&loosest) {
+            else {
+                return (loosest, cuts);
+            };
+            match class.cmp(&loosest) {
                 Ordering::Less => (class, vec![j]),
                 Ordering::Equal => {
                     cuts.push(j);
                     (loosest, cuts)
                 }
                 Ordering::Greater => (loosest, cuts),
-            },
-        )
+            }
+        })
         .1
 }
 
@@ -1276,10 +1274,42 @@ mod tests {
         assert_eq!(chain_ops("a + b - c"), Some(vec!["+", "-"]));
     }
 
-    /// The left side of a depth-zero assignment holds no cut. Only the three inputs whose *loosest*
+    /// The head [`operand_span`] strips, pinned at the function the cut restriction mirrors — the two
+    /// encode "what is a head", and drifting apart is what #64 cost. The `return` arm especially: it is
+    /// the half `loosest_cuts` deliberately does *not* mirror, so nothing else would notice it change.
+    #[test]
+    fn operand_span_takes_the_last_assignment_or_a_leading_return() {
+        // The operands the span leaves, rather than the index — an index moves with the trivia
+        // tokenization puts between them, and what is being asserted is where the head ends.
+        let operands = |src: &str| {
+            let toks = crate::lexer::tokenize(src);
+            toks[operand_span(&toks)..]
+                .iter()
+                .map(|t| t.text)
+                .collect::<String>()
+                .trim_start()
+                .to_owned()
+        };
+        assert_eq!(operands("x = a | b"), "a | b");
+        // The *last* assignment, however many there are.
+        assert_eq!(operands("x = y = a"), "a");
+        // A `return` heads a span only while no assignment has.
+        assert_eq!(operands("return a | b"), "a | b");
+        assert_eq!(operands("return x = a"), "a");
+        // Neither: the whole span is operands.
+        assert_eq!(operands("a | b"), "a | b");
+        // A bracketed assignment is no head — the rule is depth zero, which is #125's whole subject.
+        assert_eq!(operands("f(x = 1) | b"), "f(x = 1) | b");
+    }
+
+    /// A chain is not cut at *depth zero* before an assignment. Only the three inputs whose loosest
     /// operator lives there can say so — everywhere else the looseness rule was already choosing the
     /// right side's operator, which is the [`split_chain_prefers_the_right_sides_operator_anyway`]
     /// below, kept apart because it passes with the restriction removed and guards nothing.
+    ///
+    /// Depth zero is the whole claim. A chain inside parentheses that a later `=` puts in *its* left
+    /// side — `s = (a | b) = c | d` — is still cut on the second pass; that is #125, it predates this,
+    /// and it is not C, since `(a | b)` is no lvalue.
     #[test]
     fn split_chain_cuts_only_past_the_last_assignment() {
         assert_eq!(chain_ops("a | b = c"), None);
