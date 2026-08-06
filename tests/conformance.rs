@@ -1793,6 +1793,60 @@ fn a_declarator_is_not_a_chain_to_break_at_its_ampersand() {
 }
 
 #[test]
+fn a_chain_head_is_measured_like_its_operands() {
+    // #108. The head held whatever precedes the operands — an assignment's left side — and was
+    // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
+    // limit outright: at width 40 the head alone is 50 columns.
+    //
+    // Asserted three ways, because the layout alone is not enough: a pass-1 layout that no second
+    // pass reproduces is what #108 *is*, so an exact-output test that never formats its own output
+    // is green on the very defect it names. The review of this change found exactly that.
+    for (src, width, expected) in [
+        (
+            "void f(void) {\n\tarr[index_of(first_argument, second_argument)] = alpha | beta;\n}\n",
+            40,
+            "void f(void) {\n\tarr[index_of(\n\t\tfirst_argument,\n\t\tsecond_argument\n\t)] = alpha | beta;\n}\n",
+        ),
+        // The head breaks and the operands do not, which is the whole point: they are measured
+        // apart. Sharing one fit made the operands break whenever the head did, and the next pass —
+        // measuring each alone — disagreed.
+        (
+            "void f(void) {\n\tarr[a + b] = a | b;\n}\n",
+            18,
+            "void f(void) {\n\tarr[\n\t\ta +\n\t\tb\n\t] = a | b;\n}\n",
+        ),
+    ] {
+        let out = jphfmt::format_with_width(src, width);
+        assert_eq!(out, expected, "input {src:?} at width {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&out, width),
+            out,
+            "must be a fixpoint: {src:?} at width {width}"
+        );
+        for line in out.lines() {
+            assert!(display_width(line) <= width, "over the limit: {line:?}");
+        }
+        // Measured is not the same as broken: a head that fits is still written flat.
+        assert_eq!(jphfmt::format_with_width(src, 100), src);
+    }
+}
+
+#[test]
+fn a_call_in_a_chain_head_is_laid_out_on_the_first_pass() {
+    // #108's other half. A head rendered flat is laid out anyway on the *next* pass — the operands
+    // below it have broken by then, so the span reaches a handler that does measure it — and the
+    // two passes disagreed about the same tokens.
+    for (src, width) in [("0(A<0)=0:??;", 1), ("a\tA(*)''00 .=a<A;", 1)] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at width {width}"
+        );
+    }
+}
+
+#[test]
 fn a_floating_exponent_keeps_its_sign() {
     // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
     // `1e - 5`, which does not compile — and musl's math sources are full of `0x1p-1022`.
