@@ -1902,46 +1902,47 @@ fn a_construct_does_not_measure_across_a_directive() {
     let commented = "int x = (a\n/* c */ #if X\n\t| b\n#endif\n);\n";
     assert_eq!(format(commented), commented);
 
-    // Every directive a header actually writes, each alone in the span so nothing else catches it — an
-    // `#endif` would, and that is how the first form of this test passed while missing all of these. A
-    // name the list does not know is laid out across, which is the defect itself, so the list is the part
-    // that has to stay complete: the extensions are as real as the standard names, `# 42 "gen.c"` is a
-    // line marker whose name is a number — GNU's preprocessor-output form, not C11 §6.10.4's `#line` —
-    // and neither a comment nor a `\` splice separates
-    // a `#` from what follows it — phase 2 and phase 3 remove both before phase 4 reads the directive.
+    // **Every name in `names_directive`, each alone in the span**, because an `#endif` elsewhere in the
+    // span catches the construct on its own and that is how earlier forms of this test passed while
+    // missing twelve names. Ablating any single name must fail here: a name the list does not know is laid
+    // out across and the `#` written mid-line, which is the defect this test exists for.
     for directive in [
         "#if defined(X)",
+        "#ifdef X",
+        "#ifndef X",
+        "#elif defined(X)",
+        "#elifdef X",
+        "#elifndef X",
+        "#else",
+        "#endif",
+        "#define Q 1",
+        "#undef Q",
+        "#include <f.h>",
+        "#embed \"f.bin\"",
+        "#line 42",
+        "#error nope",
+        "#warning hi",
+        "#pragma pack(1)",
         "#include_next <f.h>",
         "#import \"f.h\"",
         "#ident \"v\"",
         "#sccs \"x\"",
         "#assert x(y)",
         "#unassert x",
-        // Written tight, because `scope_directives`' `DirectiveLine::emit` rewrites the gap after a `#`
-        // for every directive, and has since long before this — the guard sees the same `Number` either
-        // way, so the tight form exercises it identically.
-        "#42 \"gen.c\"",
-        "#\\\ndefine Q 1",
-        "# /* c */ define Q 1",
-        "#",
-        // A second round of names the list did not have — `main` writes the `#` mid-line for every one,
-        // tight or spaced, so each is the defect and not a hypothetical. Two rounds of review found nine
-        // missing names between them, which is the cost of a list: it is only as good as its last audit,
-        // and the docstring says so.
+        "#system_header",
+        "#using <f>",
         "#region x",
         "#endregion",
-        "#using <f>",
-        "#system_header",
-        // A third round found these two. Twelve names have been missing across three rounds, so the list
-        // is audited, not complete — see `holds_directive`, and #118 for the trade against refusing any
-        // `#` at all, which is measured and costs nine corpus files their comma spacing.
         "#push_macro(\"X\")",
         "#pop_macro(\"X\")",
-        // Phase 2 splices the *name* as well, so this is `#include` — the first token is only `in`.
+        // Not names: a line marker's number (GNU's preprocessor-output form, not C11 §6.10.4's `#line`),
+        // the null directive, a name phase 2 splices back together, and a name phase 3 does not — a
+        // comment ends one where a continuation does not.
+        "#42 \"gen.c\"",
+        "#",
+        "#\\\ndefine Q 1",
+        "# /* c */ define Q 1",
         "#in\\\nclude <f.h>",
-        // A comment does *not* splice a name: phase 3 makes it whitespace, so this names `in` and is not
-        // a directive by the list. Both of these are declined by the enclosing `contains_comment` before
-        // that matters, so they pin the behaviour rather than the name scan.
         "#in/*c*/clude <f.h>",
         "#if/*c*/defined(X)",
     ] {
