@@ -1767,20 +1767,32 @@ fn a_depth_zero_chain_is_not_cut_before_an_assignment() {
 
 #[test]
 fn a_chain_is_still_cut_on_an_assignments_right_side() {
-    // The other half of #43's rule, and what a blanket refusal costs: everything after the last
-    // depth-zero `=` is still the chain's, so `(j = i/2)` normalizes and a long right-hand side
-    // still breaks one operand per line. Both are corpus shapes — sqlite writes the first.
-    assert_eq!(
-        format("void f(void) {\n\twhile ((j = i/2) > 0) {\n\t\tx = 1;\n\t}\n}\n"),
-        "void f(void) {\n\twhile ((j = i / 2) > 0) {\n\t\tx = 1;\n\t}\n}\n"
-    );
+    // The other half of #43's rule, and what a blanket refusal of assignment spans would cost:
+    // everything after the last depth-zero `=` is still the chain's, so a long right-hand side still
+    // breaks one operand per line.
+    //
     // Asserted as a layout at a width, not only as a fixpoint: a flat over-wide line is idempotent
-    // and preserves every significant token, so neither of those catches a lost break.
+    // and preserves every significant token, so neither of those catches a lost break. Ablating the
+    // restriction leaves this passing — it is the *other* direction — while refusing the span
+    // outright fails it, which is the mistake it exists to catch.
     let broken = jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12);
     assert_eq!(broken, "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n");
     for line in broken.lines() {
         assert!(display_width(line) <= 12, "over the limit: {line:?}");
     }
+}
+
+/// A corpus pin, not a guard: sqlite writes `(j = i/2)` and the chain container's flat form spaces
+/// the `/`, so a change that stopped claiming this span would show up here as churn across real
+/// files. It passes on the merge base and under every ablation of #43's rule — including
+/// `operand_span` stubbed to zero — because what it exercises is §2.5 spacing inside a parenthesized
+/// group rather than where the cut goes. Labelled so it is not read as guarding the cut.
+#[test]
+fn a_parenthesized_assignment_keeps_its_operator_spaced() {
+    assert_eq!(
+        format("void f(void) {\n\twhile ((j = i/2) > 0) {\n\t\tx = 1;\n\t}\n}\n"),
+        "void f(void) {\n\twhile ((j = i / 2) > 0) {\n\t\tx = 1;\n\t}\n}\n"
+    );
 }
 
 #[test]
