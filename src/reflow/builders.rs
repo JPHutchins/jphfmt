@@ -372,11 +372,16 @@ fn build_container(
             pad.doc(),
             Doc::text(*close),
         ])),
-        Bracketing::OnBreak { head } => fit.wrap(Doc::concat(
+        // The head sits *outside* the group the operands break as. Inside it, the head's own groups
+        // would be measured together with the operands and break whenever the operands did — while
+        // the next pass, reading the parentheses this wrote, measures each of them alone and reaches
+        // the other answer. A head that is text cannot show that; a head that is a document can, so
+        // the two must not share a fit.
+        Bracketing::OnBreak { head } => Doc::concat(
             (!head.is_empty())
                 .then(|| Doc::concat([head.clone(), Doc::text(" ")]))
                 .into_iter()
-                .chain([
+                .chain([fit.wrap(Doc::concat([
                     Doc::IfBreak {
                         broken: "(".to_owned(),
                         flat: String::new(),
@@ -387,8 +392,8 @@ fn build_container(
                         broken: ")".to_owned(),
                         flat: String::new(),
                     },
-                ]),
-        )),
+                ]))]),
+        ),
     }
 }
 
