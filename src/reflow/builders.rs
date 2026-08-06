@@ -269,8 +269,16 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
 ///
 /// [`Each`](Seps::Each) owns its strings deliberately: [`chain_seps`] builds ` |` from the operator's
 /// text plus a leading space, so those do not exist to borrow. Every other site names its separator as
-/// a literal and allocates nothing (#76).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// a literal.
+///
+/// Which removes the *construction* and nothing further: `Doc::Text` owns its string, so
+/// [`trailing_items`] still allocates one per gap for [`Every`](Seps::Every) where the `Vec<String>`
+/// this replaced allocated the same count at the call site and moved them. The count is unchanged and
+/// the claim in #76 was that the type states the rule; a `Doc` variant that could hold a `&'static
+/// str` is what would remove them, and that is the IR's change to make, not this one's.
+///
+/// Consumed once, by value, so it is neither cloned nor compared — hence no derive but [`Debug`].
+#[derive(Debug)]
 pub(super) enum Seps {
     Every(&'static str),
     Each(Vec<String>),
