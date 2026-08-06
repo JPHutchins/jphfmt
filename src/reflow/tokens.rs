@@ -1272,6 +1272,22 @@ mod tests {
     }
 
     #[test]
+    fn split_chain_cuts_only_past_the_last_assignment() {
+        // Both directions of #43's rule, where the layout cannot show them: everything after the
+        // last depth-zero `=` is still the chain's, and nothing before it is.
+        assert_eq!(chain_ops("x = a | b"), Some(vec!["|"]));
+        assert_eq!(chain_ops("x = a | b | c"), Some(vec!["|", "|"]));
+        assert_eq!(chain_ops("a | b = c"), None);
+        assert_eq!(chain_ops("0/a = A & A"), Some(vec!["&"]));
+        // The *last* one, so an operator between two assignments is in the second's left side.
+        assert_eq!(chain_ops("x = a | b, y = c + d"), None); // a depth-zero `,` refuses first
+        assert_eq!(chain_ops("x = a | b = c + d"), Some(vec!["+"]));
+        // A compound assignment is an assignment; a comparison that ends in `=` is not.
+        assert_eq!(chain_ops("a | b += c"), None);
+        assert_eq!(chain_ops("a | b == c"), Some(vec!["|"]));
+    }
+
+    #[test]
     fn split_chain_ignores_a_nested_operator() {
         assert_eq!(chain_ops("f(a | b)"), None);
         assert_eq!(chain_ops("(a | b)"), None);

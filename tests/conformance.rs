@@ -1764,9 +1764,31 @@ fn a_chain_is_still_cut_on_an_assignments_right_side() {
         format("void f(void) {\n\twhile ((j = i/2) > 0) {\n\t\tx = 1;\n\t}\n}\n"),
         "void f(void) {\n\twhile ((j = i / 2) > 0) {\n\t\tx = 1;\n\t}\n}\n"
     );
+    // Asserted as a layout at a width, not only as a fixpoint: a flat over-wide line is idempotent
+    // and preserves every significant token, so neither of those catches a lost break.
+    let broken = jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12);
+    assert_eq!(broken, "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n");
+    for line in broken.lines() {
+        assert!(display_width(line) <= 12, "over the limit: {line:?}");
+    }
+}
+
+#[test]
+fn a_declarator_is_not_a_chain_to_break_at_its_ampersand() {
+    // The measured cost of #43's rule, pinned so it is a decision rather than an accident. C++'s
+    // `const T & v = expr` puts a reference declarator's `&` at depth zero before the default
+    // argument's `=`, and it is the span's only chain-class token. Refusing to cut there means the
+    // parameter cannot break, and a long one overruns §8.5 — for widths 45 to 64 on this input,
+    // where the merge base fitted it.
+    //
+    // Kept anyway. Breaking a *declaration* at its declarator reads the `&` as a bitwise and, which
+    // is §6's ambiguity exactly — the same reason `space_pointers` leaves `a*b` alone — and the same
+    // rule was already rewriting the author's `T&` to `T &`. No token-level test separates this `&`
+    // from the `/` of `0/a = A & A`, so restoring one restores the other and reopens #43.
+    let src = "void f(const VeryLongTypeName & v = some_long_function_call_result());\n";
     assert_eq!(
-        jphfmt::format_with_width("x = aaaa | bbbb | cccc;\n", 12),
-        "x = (\n\taaaa |\n\tbbbb |\n\tcccc\n);\n"
+        jphfmt::format_with_width(src, 40),
+        "void f(\n\tconst VeryLongTypeName & v = some_long_function_call_result()\n);\n"
     );
 }
 
