@@ -36,6 +36,7 @@ import sys
 import tempfile
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Iterator
 from itertools import islice
 from pathlib import Path
 from typing import NamedTuple
@@ -55,6 +56,9 @@ GCC_FLAGS = ("-std=c2x", "-fsyntax-only", "-fdiagnostics-plain-output")
 # diagnostic about the code, and counting it as one error made a run where *both* sides ran out of
 # memory read as clean.
 ERROR_LINE = re.compile(r"(?m)^\S.*?:\d+(?::\d+)?: (?:fatal )?error: ")
+# The subset that ends the compilation. Anchored the same way, so a `fatal error:` quoted inside a
+# message is not mistaken for one gcc raised.
+FATAL_LINE = re.compile(r"(?m)^\S.*?:\d+(?::\d+)?: fatal error: ")
 # `error:` is what this counts, and gcc translates its diagnostics wherever a locale catalog is
 # installed. A localized gcc would report zero errors for every file in the corpus.
 ENGLISH = {**os.environ, "LC_ALL": "C"}
@@ -69,6 +73,15 @@ class Errors(NamedTuple):
 	count: int
 
 
+class Halted(NamedTuple):
+	"""gcc stopped at a fatal error, so what it reported is where it gave up rather than how the file
+	compiles. A missing `#include`, or a header that is not C — `simdjson.h` stops at `<cstddef>` and
+	reports exactly one error, which the input and the output share, so the comparison passes having
+	syntax-checked nothing."""
+
+	detail: str
+
+
 class Crashed(NamedTuple):
 	signal: int
 
@@ -81,7 +94,7 @@ class ToolFailed(NamedTuple):
 	detail: str
 
 
-Compile = Errors | Crashed | TimedOut | ToolFailed
+Compile = Errors | Halted | Crashed | TimedOut | ToolFailed
 
 
 class Formatted(NamedTuple):
@@ -143,8 +156,15 @@ class Broke(NamedTuple):
 Verdict = Unformattable | Stalled | NotIdempotent | Regressed | LostContent | Unmeasured | Broke
 
 
-def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
-	"""The first `limit` C files at most `depth` levels under `root`, shallowest first.
+class Corpus(NamedTuple):
+	"""What [`discover`] settled on: the files to check, and the candidates gcc could not read as C."""
+
+	files: tuple[Path, ...]
+	skipped: tuple[Path, ...]
+
+
+def candidates(root: Path, depth: int) -> Iterator[Path]:
+	"""Every `.c`/`.h` file at most `depth` levels under `root`, shallowest first.
 
 	Depth-capped rather than recursive: `/nix/store` is deep enough that an unbounded walk does not
 	finish. Shallowest first because that is where the headers worth compiling are —
@@ -155,13 +175,39 @@ def discover(root: Path, limit: int, depth: int) -> tuple[Path, ...]:
 	different corpora.
 	"""
 	levels = (sorted(root.glob("/".join(["*"] * d))) for d in range(1, depth + 1))
-	found = (
-		p
-		for level in levels
-		for p in level
-		if p.suffix in (".c", ".h") and p.is_file()
-	)
-	return tuple(islice(found, limit))
+	return (p for level in levels for p in level if p.suffix in (".c", ".h") and p.is_file())
+
+
+def discover(root: Path, limit: int, depth: int, jobs: int = 8) -> Corpus:
+	"""The first `limit` candidates gcc can measure as C.
+
+	A suffix is not a language. `/nix/store` is full of `.h` files that are C++ (`simdjson.h`), and of
+	C that needs an include path this has no way to reconstruct; gcc stops at the first `#include` it
+	cannot resolve and reports one `fatal error`. Both sides then report the same one, `severity` finds
+	no regression, and the file reads clean having been syntax-checked *not at all* — 117 of 1200 on
+	this machine, counted as passes for as long as this check has existed.
+
+	So membership is the compile itself: a candidate is corpus if gcc gets through it, and the ones it
+	does not are named by [`main`] rather than dropped quietly. jphfmt formats C, so a header it cannot
+	read as C is not evidence about jphfmt either way.
+	"""
+	stream = candidates(root, depth)
+	kept: list[Path] = []
+	skipped: list[Path] = []
+	with ThreadPoolExecutor(max_workers=jobs) as pool:
+		while len(kept) < limit:
+			# In order, in batches, so the set is the same on two runs and an A/B compares one corpus.
+			batch = tuple(islice(stream, jobs * 8))
+			if not batch:
+				break
+			for path, ok in zip(batch, pool.map(measurable, batch)):
+				(kept if ok else skipped).append(path)
+	return Corpus(tuple(kept[:limit]), tuple(skipped))
+
+
+def measurable(path: Path) -> bool:
+	"""Whether gcc gets through `path` as C — the membership test [`discover`] applies."""
+	return isinstance(compiles(path, path.parent), Errors)
 
 
 def compiles(source: Path, include: Path) -> Compile:
@@ -186,6 +232,11 @@ def compiles(source: Path, include: Path) -> Compile:
 	# clean compile, and `Errors(0)` as a *measured* baseline — the vacuous pass, twice over.
 	if gcc.returncode != 0 and found == 0:
 		return ToolFailed(gcc.stderr.strip().splitlines()[-1] if gcc.stderr.strip() else "(no stderr)")
+	# A `fatal error` is where gcc stopped, not what it found: everything after it went unread, so the
+	# count describes the prefix it managed rather than the file. Both sides report the same one and the
+	# comparison passes having checked nothing — the vacuous pass this whole harness exists to refuse.
+	if (fatal := FATAL_LINE.search(gcc.stderr)) is not None:
+		return Halted(gcc.stderr[fatal.start() :].splitlines()[0].strip())
 	return Errors(found)
 
 
@@ -196,6 +247,8 @@ def severity(result: Compile) -> tuple[int, int]:
 	True
 	>>> severity(Errors(999)) < severity(Crashed(11))
 	True
+	>>> severity(Errors(999)) < severity(Halted("x.h:1:10: fatal error: y.h: No such file"))
+	True
 	>>> severity(Crashed(11)) == severity(TimedOut(30))
 	True
 	>>> severity(Errors(5)) == severity(Errors(5))
@@ -204,7 +257,7 @@ def severity(result: Compile) -> tuple[int, int]:
 	match result:
 		case Errors(count):
 			return (0, count)
-		case Crashed() | TimedOut() | ToolFailed():
+		case Halted() | Crashed() | TimedOut() | ToolFailed():
 			return (1, 0)
 
 
@@ -394,6 +447,8 @@ def describe(result: Compile) -> str:
 	match result:
 		case Errors(count):
 			return f"{count} errors"
+		case Halted(detail):
+			return f"gcc gave up: {detail}"
 		case Crashed(signal):
 			return f"killed by signal {signal}"
 		case TimedOut(seconds):
@@ -454,10 +509,18 @@ def main(argv: tuple[str, ...]) -> int:
 		print(f"no formatter at {args.binary} — pass --binary", file=sys.stderr)
 		return 1
 
-	files = discover(args.root, args.limit, args.depth)
+	corpus = discover(args.root, args.limit, args.depth, args.jobs)
+	files = corpus.files
 	if not files:
-		print(f"no .c/.h files within {args.depth} levels of {args.root}", file=sys.stderr)
+		print(f"no .c/.h files gcc reads as C within {args.depth} levels of {args.root}", file=sys.stderr)
 		return 1
+	# Named, not dropped quietly: a corpus that shrank because gcc stopped reading is a corpus that
+	# checks less, and a run that does not say so reports coverage it does not have.
+	if corpus.skipped:
+		print(f"{len(corpus.skipped)} candidates skipped — gcc cannot read them as C, so neither side")
+		print("is measurable and a comparison would pass having checked nothing. First few:")
+		for path in corpus.skipped[:5]:
+			print(f"  {path}")
 
 	# Reported as they arrive rather than collected: the largest files take minutes each, and a run that
 	# is interrupted — or watched — should have already named everything it found.
