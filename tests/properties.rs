@@ -8,9 +8,11 @@ use proptest::prelude::*;
 use support::{kept, ordered};
 
 /// Strings of C-relevant characters (brackets, operators, comments, strings, whitespace), which
-/// exercise the structurer far more than uniform random bytes would.
+/// exercise the structurer far more than uniform random bytes would. The charset is [`jphfmt::PROPTEST_C_ISH`],
+/// shared with the reflow module's spacing-fixpoint search so a widened generator is a widened search
+/// everywhere.
 fn c_ish() -> impl Strategy<Value = String> {
-    proptest::string::string_regex("[a-zA-Z0-9_(){}\\[\\];,*=<>?:&|+/.# \"'\\n\\t]{0,200}").unwrap()
+    proptest::string::string_regex(jphfmt::PROPTEST_C_ISH).unwrap()
 }
 
 /// Multi-character pieces of C — the tokens a handler dispatches on, and the bracket pairs that open
@@ -20,7 +22,8 @@ fn c_ish() -> impl Strategy<Value = String> {
 const PIECES: &[&str] = &[
     "({", "})", "{", "}", "(", ")", "[", "]", "[[", "]]", ";", ",", "x", "0", "\"\"", "''", "=",
     "+", "?", ":", " ", "\n", "\t", "\\\n", "f", "if", "for", "while", "switch", "case", "return",
-    "sizeof", "#define", "/*c*/", "//c\n", "*", "&", "|", "->", ".", "<<", "&&", "||",
+    "sizeof", "#define", "/*c*/", "//c\n", "*", "&", "|", "->", ".", "<<", "&&", "||", "int",
+    "struct", "union", "enum",
 ];
 
 fn pieced() -> impl Strategy<Value = String> {

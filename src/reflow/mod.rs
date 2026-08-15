@@ -27,6 +27,11 @@ use crate::lexer::{TokenKind, tokenize};
 /// Default column limit (§8.5).
 pub const DEFAULT_WIDTH: usize = 100;
 
+/// The C-ish input charset both property suites generate from — one spelling, so a widened generator
+/// in one place is a widened search everywhere.
+#[doc(hidden)]
+pub const PROPTEST_C_ISH: &str = "[a-zA-Z0-9_(){}\\[\\];,*=<>?:&|+/.# \"'\\n\\t]{0,200}";
+
 /// Format C source with the default column limit ([`DEFAULT_WIDTH`]). Idempotent.
 ///
 /// ```
@@ -156,7 +161,7 @@ fn retab(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_WIDTH, format_with_width, spacing::space_tokens};
+    use super::{DEFAULT_WIDTH, PROPTEST_C_ISH, format_with_width, spacing::space_tokens};
     use proptest::prelude::*;
 
     /// The formatter's output must be a fixpoint of the spacing pass *alone*.
@@ -220,14 +225,14 @@ mod tests {
         }
     }
 
-    /// Strings of C-relevant characters — the generator `tests/properties.rs` uses, mirrored here
-    /// because that binary cannot see [`space_tokens`].
+    /// Strings of C-relevant characters — the same charset `tests/properties.rs` generates from,
+    /// spelled once in [`PROPTEST_C_ISH`].
     fn c_ish() -> impl Strategy<Value = String> {
-        proptest::string::string_regex("[a-zA-Z0-9_(){}\\[\\];,*=<>?:&|+/.# \"'\\n\\t]{0,200}")
-            .unwrap()
+        proptest::string::string_regex(PROPTEST_C_ISH).unwrap()
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200_000))]
         #[test]
         fn the_output_is_a_spacing_fixpoint_over_random_input(s in c_ish(), width in 1usize..=120) {
             prop_assert!(

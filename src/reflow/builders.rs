@@ -10,11 +10,12 @@
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    at_depth_zero, closes_literal_type, ends_value, has_non_trivia, has_top_level,
-    has_top_level_question, holds_directive, is_balanced, is_bit_field_colon, is_callee_ident,
-    is_ternary_chain, is_trivia, match_brace, match_bracket, next_nontrivia, operand_span,
-    prev_nontrivia, respaced_when_joined, segments_at, spans_lines, split_chain, split_designators,
-    split_on_commas, split_top_level,
+    closes_literal_type, element_join_respaced, has_middle_newline, has_non_trivia, has_top_level,
+    has_top_level_question, holds_directive, is_balanced, is_bit_field_colon, is_call_head_pair,
+    is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket, next_nontrivia,
+    opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
+    respaced_when_joined_top, segments_at, spans_lines, split_chain, split_designators,
+    split_on_commas, split_top_level, split_top_level_with_cuts, star_gap_respaced,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -24,6 +25,13 @@ use crate::lexer::{Token, TokenKind};
 /// to break its parameters before this is built.
 pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     if !is_balanced(inner) {
+        return render_passthrough("(", inner, ")");
+    }
+    // The structure pass's call handler refuses a call whose arguments hold a break, and the calls
+    // that reach here nested need the same contract: collapsing the break joins what the author
+    // separated, and a later pass may respace the join — `f(a\n:0)` to `f(a :0)`, which
+    // `space_bit_fields` tightens (#121's search).
+    if has_middle_newline(inner) {
         return render_passthrough("(", inner, ")");
     }
     let args = split_on_commas(inner);
@@ -41,6 +49,12 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
         } else {
             render_passthrough("(", inner, ")")
         };
+    }
+    // A separator cannot open an argument: laying `f(a, ;)` out would put the `,` gap before a `;`
+    // that `space_semicolons` tightens on the next pass — the same refusal the brace and ternary
+    // layouts make (#121's search).
+    if args.iter().any(|arg| opens_with_separator(arg)) {
+        return render_passthrough("(", inner, ")");
     }
     // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
     // no pair of its own; with siblings, unbounded arms read as further arguments. A `{}` element is
@@ -79,7 +93,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     // hole: nothing is being held apart, and collapsing it to `{}` is what the suite already excuses.
     let holed = segments.iter().rev().skip(1).any(|s| !has_non_trivia(s))
         && segments.iter().any(|s| has_non_trivia(s));
-    if holed {
+    if holed || segments.iter().any(|s| opens_with_separator(s)) {
         return render_passthrough("{", inner, "}");
     }
     let elements: Vec<&[Token]> = segments.into_iter().filter(|s| has_non_trivia(s)).collect();
@@ -91,7 +105,8 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
         &Bracketing::Written {
             open: "{",
             close: "}",
-            pad: if padded { Pad::Spaced } else { Pad::Tight },
+            open_pad: if padded { Pad::Spaced } else { Pad::Tight },
+            close_pad: if padded { Pad::Spaced } else { Pad::Tight },
         },
     );
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
@@ -115,7 +130,7 @@ fn build_juxtaposed_doc(element: &[Token]) -> Doc {
     )
 }
 
-/// Whether the nearest non-trivia token before `open` names a callee ([`is_callee_ident`]). Unlike
+/// Whether the nearest non-trivia token before `open` names a callee ([`super::tokens::is_callee_ident`]). Unlike
 /// [`super::tokens::is_call_head`], trivia (including a newline) between the ident and `(` is
 /// tolerated: [`build_expr_doc`] must flatten such a gap to nothing (§2.5's tight `foo(`) rather
 /// than a collapsed space, since a collapsed space is itself same-line and would be tightened by
@@ -130,11 +145,7 @@ fn build_juxtaposed_doc(element: &[Token]) -> Doc {
 /// Only whitespace/newline trivia is skipped, never comments: a commented `foo /* c */ (a)` stops
 /// the walk, but the structure pass rejects comment-bearing constructs before they reach here.
 fn call_head_before(toks: &[Token], open: usize) -> bool {
-    let mut k = open;
-    while k > 0 && is_trivia(&toks[k - 1]) {
-        k -= 1;
-    }
-    k > 0 && is_callee_ident(&toks[k - 1])
+    is_call_head_pair(toks, open)
 }
 
 /// Build one element/argument: collapsed text, with any nested `{...}` or nested call `f(...)`
@@ -144,6 +155,26 @@ fn call_head_before(toks: &[Token], open: usize) -> bool {
 /// [`build_expr_doc`], which never adds a token — a bounded operand would gain another pair as its
 /// indent deepened, one per pass.
 fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
+    // The terminal fallback's collapse is the one path without a refusal: a bare `Ident : Number`
+    // break reaches it on the for-clause and statement-expression paths, and joining it writes the
+    // shape `space_bit_fields` tightens. The author's text, newline included, is the fixpoint the
+    // refusal cannot write — the arms the group and call handlers already join to the canonical
+    // tight form take no refusal here. The edges are trimmed to the non-trivia core: a container's
+    // own separator owns those gaps, and the previous pass's indentation is trivia this pass would
+    // otherwise double.
+    if element_join_respaced(toks) {
+        let first = toks.iter().position(|t| !is_trivia(t)).unwrap_or(0);
+        let last = toks
+            .iter()
+            .rposition(|t| !is_trivia(t))
+            .unwrap_or(toks.len());
+        return Doc::text(
+            toks[first..=last]
+                .iter()
+                .map(|t| t.text)
+                .collect::<String>(),
+        );
+    }
     if is_balanced(toks)
         && let Some(bounded) = build_chain_doc(toks, headless)
     {
@@ -166,8 +197,15 @@ pub(super) fn group_bracketing(t: &Token) -> Option<&'static Bracketing<'static>
 /// `space` is whether a pending gap becomes one. A bracket §2.5 writes tight drops it instead: a call's
 /// `(` against its callee, and whatever [`tight_against_previous`] recognizes.
 fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, space: bool) {
-    if space && *pending && !text.is_empty() {
-        text.push(' ');
+    // A pending gap survives the flush even when the text before it was already pushed as a part —
+    // a call's callee is its own part, and the space its `{` takes (`a() {`) is the spacing pass's,
+    // not this flush's to drop (#121's search).
+    if space && *pending {
+        if !text.is_empty() {
+            text.push(' ');
+        } else if !parts.is_empty() {
+            parts.push(Doc::text(" "));
+        }
     }
     *pending = false;
     if !text.is_empty() {
@@ -178,16 +216,12 @@ fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, sp
 /// Whether the bracket at `open` is written tight against what precedes it (§2.5): a subscript's `[`
 /// against the value it indexes, or a compound literal's `{` against its `(T)`.
 ///
-/// The mirror of [`call_head_before`], and load-bearing for the same reason — see its doc. Reads the next
-/// *significant* token for the `[[` carve-out, because `space_subscripts` reads a trivia-stripped list and
-/// the two must see the same thing.
+/// The mirror of [`call_head_before`], and load-bearing for the same reason — see its doc. The `[`
+/// arm is the shared predicate, the one spelling of what `space_subscripts` tightens.
 fn tight_against_previous(toks: &[Token], open: usize) -> bool {
     let previous = prev_nontrivia(toks, open);
     match toks.get(open).map(|t| t.text) {
-        Some("[") => {
-            next_nontrivia(toks, open + 1).is_none_or(|next| toks[next].text != "[")
-                && previous.is_some_and(|k| ends_value(&toks[k]))
-        }
+        Some("[") => is_subscript(toks, open),
         Some("{") => previous.is_some_and(|k| toks[k].text == ")" && closes_literal_type(toks, k)),
         _ => false,
     }
@@ -242,15 +276,40 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
         } else if t.kind == TokenKind::Punct
             && let Some(bracketing) = group_bracketing(&t)
             && let Some(close) = match_bracket(toks, j)
-            && let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing)
         {
-            flush_pending(
-                &mut text,
-                &mut parts,
-                &mut pending_space,
-                !tight_against_previous(toks, j),
-            );
-            parts.push(group);
+            if let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing) {
+                flush_pending(
+                    &mut text,
+                    &mut parts,
+                    &mut pending_space,
+                    !tight_against_previous(toks, j),
+                );
+                parts.push(group);
+            } else if respaced_when_joined_top(&toks[j + 1..close]) {
+                // The group was refused, and joining its own break would hand the spacing pass a
+                // shape it respaces — keep the author's text, newline included, instead of collapsing
+                // it: the same refusal the chain head makes, one bracket in (#121's class). A nested
+                // break is the nested group's own to refuse.
+                flush_pending(
+                    &mut text,
+                    &mut parts,
+                    &mut pending_space,
+                    !tight_against_previous(toks, j),
+                );
+                text.push_str(&toks[j..=close].iter().map(|t| t.text).collect::<String>());
+            } else {
+                // The group was refused for a reason this text does not model; let the generic arm
+                // collapse it, as before. A same-line `=` against a bracket needs no pad of its own:
+                // `space_equals` runs first and pre-spaces every same-line `=`, and the collapse
+                // preserves that trivia, so this pass cannot write the tight form (#121's search).
+                if pending_space && !tight_against_previous(toks, j) {
+                    text.push(' ');
+                }
+                pending_space = false;
+                text.push_str(t.text);
+                j += 1;
+                continue;
+            }
             j = close + 1;
         } else {
             // A bracket the author left a gap before is still tight (§2.5), even when it has nothing to
@@ -387,7 +446,8 @@ pub(super) enum Bracketing<'a> {
     Written {
         open: &'static str,
         close: &'static str,
-        pad: Pad,
+        open_pad: Pad,
+        close_pad: Pad,
     },
     /// Brackets that appear only on the break, after `head` when there is one — the only tokens
     /// jphfmt writes, legal because the elements are already an implicit container.
@@ -419,10 +479,15 @@ fn build_container(
     match bracketing {
         Bracketing::Enclosing => fit.wrap(Doc::concat(items)),
         Bracketing::Hanging => fit.wrap(Doc::nest(Doc::concat(items))),
-        Bracketing::Written { open, close, pad } => fit.wrap(Doc::concat([
+        Bracketing::Written {
+            open,
+            close,
+            open_pad,
+            close_pad,
+        } => fit.wrap(Doc::concat([
             Doc::text(*open),
-            nested(pad.doc(), items),
-            pad.doc(),
+            nested(open_pad.doc(), items),
+            close_pad.doc(),
             Doc::text(*close),
         ])),
         Bracketing::OnBreak { head } => fit.wrap(Doc::concat(
@@ -449,48 +514,80 @@ fn build_container(
 pub(super) const PARENS: Bracketing<'static> = Bracketing::Written {
     open: "(",
     close: ")",
-    pad: Pad::Tight,
+    open_pad: Pad::Tight,
+    close_pad: Pad::Tight,
 };
 
 /// The author's `[…]` around an index.
 pub(super) const BRACKETS: Bracketing<'static> = Bracketing::Written {
     open: "[",
     close: "]",
-    pad: Pad::Tight,
+    open_pad: Pad::Tight,
+    close_pad: Pad::Tight,
 };
 
-/// Whether the pad around `inner` flattens spaced: `space_equals` writes a space on both sides of
-/// every same-line `=`, pad or no pad, so a tight pad beside one would be respaced on the next pass —
-/// `a(= "")` is not a fixpoint of the spacing pass, `a( = "")` is.
-fn needs_spaced_pad(inner: &[Token]) -> bool {
-    [next_nontrivia(inner, 0), prev_nontrivia(inner, inner.len())]
-        .into_iter()
-        .flatten()
-        .any(|k| inner[k].text == "=")
+/// Whether an edge's pad flattens spaced: `space_equals` writes a space on both sides of every
+/// same-line `=`, pad or no pad, so a tight pad beside one would be respaced on the next pass —
+/// `a(= "")` is not a fixpoint of the spacing pass, `a( = "")` is. Each edge answers for its own
+/// token, so a `=` on one edge spaces that edge alone and the other keeps §2.5's tight form.
+fn edge_needs_pad(inner: &[Token], edge: Option<usize>) -> bool {
+    edge.is_some_and(|k| inner[k].text == "=")
 }
 
-/// `bracketing`'s spelling, with the pad [`needs_spaced_pad`] decides.
+/// `bracketing`'s spelling, with the pads the edge tokens decide.
 fn pad_for<'a>(inner: &[Token], bracketing: &Bracketing<'a>) -> Bracketing<'a> {
-    let Bracketing::Written { open, close, pad } = bracketing else {
+    let Bracketing::Written {
+        open,
+        close,
+        open_pad,
+        close_pad,
+    } = bracketing
+    else {
         return bracketing.clone();
     };
     Bracketing::Written {
         open,
         close,
-        pad: if needs_spaced_pad(inner) {
+        open_pad: if edge_needs_pad(inner, next_nontrivia(inner, 0)) {
             Pad::Spaced
         } else {
-            *pad
+            *open_pad
+        },
+        close_pad: if edge_needs_pad(inner, prev_nontrivia(inner, inner.len())) {
+            Pad::Spaced
+        } else {
+            *close_pad
         },
     }
 }
 
-/// `open`/`close` around `inner`'s collapsed text, with the pad [`needs_spaced_pad`] decides — the
+/// `open`/`close` around `inner`'s collapsed text, with the pads the edge tokens decide — the
 /// passthrough a hole or an imbalance takes instead of a layout, which must agree with the spacing
 /// pass exactly as a laid-out container's pad does.
 fn render_passthrough(open: &str, inner: &[Token], close: &str) -> Doc {
-    let pad = if needs_spaced_pad(inner) { " " } else { "" };
-    Doc::Text(format!("{open}{pad}{}{pad}{close}", render_segment(inner)))
+    // A passthrough is the author's text: when it holds a line break, collapsing it would join what
+    // the author separated, and a later pass may respace the join — the same refusal the layouts
+    // make, spelled as the author's own text, which already carries the spacing the pass wrote
+    // (#121's class). Only the collapsed form takes a pad of its own: `space_equals` runs first and
+    // pre-spaces every same-line `=` edge, so the verbatim form cannot write the tight one.
+    let (text, open_pad, close_pad) = if inner.iter().any(|t| t.kind == TokenKind::Newline) {
+        (inner.iter().map(|t| t.text).collect(), "", "")
+    } else {
+        (
+            render_segment(inner),
+            if edge_needs_pad(inner, next_nontrivia(inner, 0)) {
+                " "
+            } else {
+                ""
+            },
+            if edge_needs_pad(inner, prev_nontrivia(inner, inner.len())) {
+                " "
+            } else {
+                ""
+            },
+        )
+    };
+    Doc::Text(format!("{open}{open_pad}{text}{close_pad}{close}"))
 }
 
 /// Whether `toks` is one expression jphfmt may bound with parentheses of its own.
@@ -602,6 +699,13 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         Bound::Parens
     };
     if let Some((segments, ops)) = split_chain(operands) {
+        // A segment's collapse joins the break its span holds, so a segment that would join a
+        // respaced pair is refused the way the head is — the canonical reading, since a segment's
+        // group and call arms join those shapes themselves, and a nested construct inside the
+        // segment refuses its own breaks (#121's search).
+        if segments.iter().any(|s| element_join_respaced(s)) {
+            return None;
+        }
         return Some(build_bounded_doc(
             &head,
             segment_docs(&segments),
@@ -640,15 +744,28 @@ fn ternary_arms<'a, 'src>(inner: &'a [Token<'src>]) -> Option<Vec<&'a [Token<'sr
     }
     // A `:` the spacing pass reads as a bit-field's is not an arm separator: laying these arms out
     // would write ` : ` where that pass writes `: `, and its output would be respaced (#121's search).
-    let cuts: Vec<usize> = at_depth_zero(inner)
-        .filter(|&(_, t)| t.kind == TokenKind::Punct && t.text == ":")
-        .map(|(j, _)| j)
-        .collect();
-    if cuts.iter().any(|&j| is_bit_field_colon(inner, j)) {
+    // A label's colon whose statement opens with a number reads as the same shape, and is refused
+    // with the rest — passing the whole statement through is the §6 cost of the over-broad reading.
+    // A `*` arm's gap to a `:` is respaced the same way when the star reads as a declarator's —
+    // `*:?` laid out as `* :` respaces to `*:` — so such an arm is refused too.
+    let (_, all_cuts) =
+        split_top_level_with_cuts(inner, |t| t.kind == TokenKind::Punct && t.text == ":");
+    if all_cuts
+        .iter()
+        .any(|&j| is_bit_field_colon(inner, j) || star_gap_respaced(inner, j))
+    {
         return None;
     }
-    let arms = segments_at(inner, &cuts);
-    (arms.len() >= 2 && arms.iter().all(|s| has_non_trivia(s))).then_some(arms)
+    let arms = segments_at(inner, &all_cuts);
+    // A separator cannot open an arm: laying `? : ;` out would put the ` :` gap before a `;` that
+    // `space_semicolons` tightens on the next pass, and this pass's output would be respaced — the
+    // same class, one separator over (#121's search). An arm that would join a respaced pair is
+    // refused the way a chain's segment is.
+    (arms.len() >= 2
+        && arms.iter().all(|s| has_non_trivia(s))
+        && arms.iter().all(|s| !opens_with_separator(s))
+        && arms.iter().all(|s| !element_join_respaced(s)))
+    .then_some(arms)
 }
 
 /// Each segment as its own expression, paired with the separators that trail them.
@@ -684,6 +801,12 @@ fn render_segment(toks: &[Token]) -> String {
 /// neither is a fixpoint.
 fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
+        // The gate the other segment consumers have, the canonical reading: a segment whose
+        // collapse would join a respaced pair is refused, and the caller's own fallback keeps the
+        // break (#121's search).
+        if segments.iter().any(|s| element_join_respaced(s)) {
+            return None;
+        }
         return Some(build_container(
             bracketing,
             segment_docs(&segments),
@@ -775,7 +898,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
             &pad_for(inner, &PARENS),
-            vec![build_expr_doc(inner)],
+            vec![build_element_doc(inner, Bound::Enclosing)],
             Seps::Each(Vec::new()),
             None,
             Fit::Measured,
