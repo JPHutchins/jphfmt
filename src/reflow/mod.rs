@@ -157,6 +157,7 @@ fn retab(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_WIDTH, format_with_width, spacing::space_tokens};
+    use proptest::prelude::*;
 
     /// The formatter's output must be a fixpoint of the spacing pass *alone*.
     ///
@@ -171,8 +172,9 @@ mod tests {
     /// an odd width to happen. It is also not a superset — #100 and #102 are pass-boundary bugs this
     /// cannot see, because their outputs *are* fixpoints of the spacing pass.
     ///
-    /// Fixtures only, for now. As a property over random input it finds #43 in a few thousand cases,
-    /// so it can be searched rather than sampled once that is fixed.
+    /// Fixtures in [`the_output_is_a_fixpoint_of_the_spacing_pass`];
+    /// [`the_output_is_a_spacing_fixpoint_over_random_input`] searches the same property over random
+    /// input, which is what stood between this class and a standing search before #43 was fixed.
     fn is_a_spacing_fixpoint(src: &str, width: usize) -> Result<(), String> {
         let out = format_with_width(src, width);
         let respaced = space_tokens(&out);
@@ -215,6 +217,23 @@ mod tests {
             if let Err(why) = is_a_spacing_fixpoint(&src, DEFAULT_WIDTH) {
                 panic!("{}: {why}", path.display());
             }
+        }
+    }
+
+    /// Strings of C-relevant characters — the generator `tests/properties.rs` uses, mirrored here
+    /// because that binary cannot see [`space_tokens`].
+    fn c_ish() -> impl Strategy<Value = String> {
+        proptest::string::string_regex("[a-zA-Z0-9_(){}\\[\\];,*=<>?:&|+/.# \"'\\n\\t]{0,200}")
+            .unwrap()
+    }
+
+    proptest! {
+        #[test]
+        fn the_output_is_a_spacing_fixpoint_over_random_input(s in c_ish(), width in 1usize..=120) {
+            prop_assert!(
+                is_a_spacing_fixpoint(&s, width).is_ok(),
+                "not a spacing fixpoint at width {width}: {s:?}"
+            );
         }
     }
 }

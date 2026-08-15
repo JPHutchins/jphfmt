@@ -10,10 +10,11 @@
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    closes_literal_type, ends_value, has_non_trivia, has_top_level, has_top_level_question,
-    holds_directive, is_balanced, is_callee_ident, is_ternary_chain, is_trivia, match_brace,
-    match_bracket, next_nontrivia, operand_span, prev_nontrivia, spans_lines, split_chain,
-    split_designators, split_on_commas, split_top_level,
+    at_depth_zero, closes_literal_type, ends_value, has_non_trivia, has_top_level,
+    has_top_level_question, holds_directive, is_balanced, is_bit_field_colon, is_callee_ident,
+    is_ternary_chain, is_trivia, match_brace, match_bracket, next_nontrivia, operand_span,
+    prev_nontrivia, respaced_when_joined, segments_at, spans_lines, split_chain, split_designators,
+    split_on_commas, split_top_level,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -23,7 +24,7 @@ use crate::lexer::{Token, TokenKind};
 /// to break its parameters before this is built.
 pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     if !is_balanced(inner) {
-        return Doc::Text(format!("({})", render_segment(inner)));
+        return render_passthrough("(", inner, ")");
     }
     let args = split_on_commas(inner);
     // An empty element is a hole a macro invocation spells with a bare comma — `PICK(x, , y)`, valid C99
@@ -38,7 +39,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
         return if args.len() == 1 {
             Doc::text("()")
         } else {
-            Doc::Text(format!("({})", render_segment(inner)))
+            render_passthrough("(", inner, ")")
         };
     }
     // A sole argument's span is exactly the span of these parens, so a chain of arms inside it needs
@@ -53,7 +54,13 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
         .into_iter()
         .map(|a| build_element_doc(a, bound))
         .collect();
-    build_container(&PARENS, elements, Seps::Every(","), None, fit)
+    build_container(
+        &pad_for(inner, &PARENS),
+        elements,
+        Seps::Every(","),
+        None,
+        fit,
+    )
 }
 
 /// A `{}` or `enum` body: `,`-separated elements, a trailing comma when broken, and §2.3's magic
@@ -61,7 +68,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
 /// `padded` is the flat form's inner space, `enum { A, B }` against `{1, 2}`.
 pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     if !is_balanced(inner) {
-        return Doc::Text(format!("{{{}}}", render_segment(inner)));
+        return render_passthrough("{", inner, "}");
     }
     let segments = split_on_commas(inner);
     let magic = segments.len() > 1 && segments.last().is_some_and(|s| s.iter().all(is_trivia));
@@ -73,17 +80,20 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     let holed = segments.iter().rev().skip(1).any(|s| !has_non_trivia(s))
         && segments.iter().any(|s| has_non_trivia(s));
     if holed {
-        return Doc::Text(format!("{{{}}}", render_segment(inner)));
+        return render_passthrough("{", inner, "}");
     }
     let elements: Vec<&[Token]> = segments.into_iter().filter(|s| has_non_trivia(s)).collect();
     if elements.is_empty() {
         return Doc::text("{}");
     }
-    let bracketing = Bracketing::Written {
-        open: "{",
-        close: "}",
-        pad: if padded { Pad::Spaced } else { Pad::Tight },
-    };
+    let bracketing = pad_for(
+        inner,
+        &Bracketing::Written {
+            open: "{",
+            close: "}",
+            pad: if padded { Pad::Spaced } else { Pad::Tight },
+        },
+    );
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
     build_container(&bracketing, docs, Seps::Every(","), Some(","), fit)
@@ -449,6 +459,40 @@ pub(super) const BRACKETS: Bracketing<'static> = Bracketing::Written {
     pad: Pad::Tight,
 };
 
+/// Whether the pad around `inner` flattens spaced: `space_equals` writes a space on both sides of
+/// every same-line `=`, pad or no pad, so a tight pad beside one would be respaced on the next pass —
+/// `a(= "")` is not a fixpoint of the spacing pass, `a( = "")` is.
+fn needs_spaced_pad(inner: &[Token]) -> bool {
+    [next_nontrivia(inner, 0), prev_nontrivia(inner, inner.len())]
+        .into_iter()
+        .flatten()
+        .any(|k| inner[k].text == "=")
+}
+
+/// `bracketing`'s spelling, with the pad [`needs_spaced_pad`] decides.
+fn pad_for<'a>(inner: &[Token], bracketing: &Bracketing<'a>) -> Bracketing<'a> {
+    let Bracketing::Written { open, close, pad } = bracketing else {
+        return bracketing.clone();
+    };
+    Bracketing::Written {
+        open,
+        close,
+        pad: if needs_spaced_pad(inner) {
+            Pad::Spaced
+        } else {
+            *pad
+        },
+    }
+}
+
+/// `open`/`close` around `inner`'s collapsed text, with the pad [`needs_spaced_pad`] decides — the
+/// passthrough a hole or an imbalance takes instead of a layout, which must agree with the spacing
+/// pass exactly as a laid-out container's pad does.
+fn render_passthrough(open: &str, inner: &[Token], close: &str) -> Doc {
+    let pad = if needs_spaced_pad(inner) { " " } else { "" };
+    Doc::Text(format!("{open}{pad}{}{pad}{close}", render_segment(inner)))
+}
+
 /// Whether `toks` is one expression jphfmt may bound with parentheses of its own.
 ///
 /// A depth-zero `,` means it is a list — a second declarator, or a comma expression — and
@@ -541,6 +585,12 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     if !is_boundable(toks, operands) {
         return None;
     }
+    // The head renders as collapsed text. Collapsing a newline that separates an `Ident : Number` (or
+    // a `;` from its predecessor) hands the spacing pass a shape it rewrites — the same refusal
+    // `emit_brace` makes for a `{}` list, on the one path that lacked it (#121).
+    if respaced_when_joined(&toks[..start]) {
+        return None;
+    }
     let head = render_segment(&toks[..start]);
     // A head means these operands are only part of their container's span, so they are bounded
     // whatever they are; with no head it is the position that decides, and it decides the same for a
@@ -588,7 +638,16 @@ fn ternary_arms<'a, 'src>(inner: &'a [Token<'src>]) -> Option<Vec<&'a [Token<'sr
     if !has_top_level_question(inner) {
         return None;
     }
-    let arms = split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ":");
+    // A `:` the spacing pass reads as a bit-field's is not an arm separator: laying these arms out
+    // would write ` : ` where that pass writes `: `, and its output would be respaced (#121's search).
+    let cuts: Vec<usize> = at_depth_zero(inner)
+        .filter(|&(_, t)| t.kind == TokenKind::Punct && t.text == ":")
+        .map(|(j, _)| j)
+        .collect();
+    if cuts.iter().any(|&j| is_bit_field_colon(inner, j)) {
+        return None;
+    }
+    let arms = segments_at(inner, &cuts);
     (arms.len() >= 2 && arms.iter().all(|s| has_non_trivia(s))).then_some(arms)
 }
 
@@ -655,7 +714,7 @@ pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) ->
     if spans_lines(inner) || holds_directive(inner) {
         return None;
     }
-    build_clause_contents(inner, bracketing)
+    build_clause_contents(inner, &pad_for(inner, bracketing))
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
@@ -666,11 +725,17 @@ pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) ->
 /// forces the break, so `for (i = a ? b : c ? d : e; …)` reads as the map it is.
 pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
-        return Doc::Text(format!("({})", render_segment(inner)));
+        return render_passthrough("(", inner, ")");
     }
     let clauses = statement_segments(inner);
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
-    build_container(&PARENS, docs, Seps::Every(";"), None, Fit::Measured)
+    build_container(
+        &pad_for(inner, &PARENS),
+        docs,
+        Seps::Every(";"),
+        None,
+        Fit::Measured,
+    )
 }
 
 /// Split a `;`-separated run into its elements — a `for` header's clauses, or a statement-expression
@@ -697,9 +762,9 @@ pub(super) fn build_statement_element(toks: &[Token]) -> Doc {
 /// `x = (a ? b : c ? d : e)` would disagree about a construct that is bracket-for-bracket identical.
 pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
     if !is_balanced(inner) {
-        return Doc::Text(format!("({})", render_segment(inner)));
+        return render_passthrough("(", inner, ")");
     }
-    build_clause_contents(inner, &PARENS).unwrap_or_else(|| {
+    build_clause_contents(inner, &pad_for(inner, &PARENS)).unwrap_or_else(|| {
         // No depth-zero operator to split at, so the whole condition is one element: an overlong one
         // still breaks away from the `if (` and the `) {` rather than overrunning them. A condition is
         // not a list, so it names no separator — where a call's sole argument still writes
@@ -709,7 +774,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         // where that holds: a second element would be juxtaposed against the first with nothing
         // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
-            &PARENS,
+            &pad_for(inner, &PARENS),
             vec![build_expr_doc(inner)],
             Seps::Each(Vec::new()),
             None,

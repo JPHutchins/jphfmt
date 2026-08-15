@@ -392,7 +392,7 @@ fn paired(
 
 /// The tokens outside every bracket group, paired with their index — the level a construct's own
 /// separators live at. The brackets themselves are not yielded; a construct is never separated by one.
-fn at_depth_zero<'a, 'src>(
+pub(super) fn at_depth_zero<'a, 'src>(
     toks: &'a [Token<'src>],
 ) -> impl Iterator<Item = (usize, &'a Token<'src>)> {
     let mut depth = 0i32;
@@ -408,7 +408,10 @@ fn at_depth_zero<'a, 'src>(
 
 /// The spans `cuts` separates: before the first, between each pair, after the last. A cut token
 /// belongs to no span — it is the separator, which the layout re-spells.
-fn segments_at<'a, 'src>(inner: &'a [Token<'src>], cuts: &[usize]) -> Vec<&'a [Token<'src>]> {
+pub(super) fn segments_at<'a, 'src>(
+    inner: &'a [Token<'src>],
+    cuts: &[usize],
+) -> Vec<&'a [Token<'src>]> {
     std::iter::once(0)
         .chain(cuts.iter().map(|&j| j + 1))
         .zip(cuts.iter().copied().chain(std::iter::once(inner.len())))
@@ -485,6 +488,16 @@ pub(super) fn ternary_open_before(toks: &[Token], j: usize) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the `:` at `j` is the bit-field colon `space_bit_fields` reads — an identifier before,
+/// a number after, no ternary `?` still open. The one spelling for a question asked by that pass, by
+/// [`respaced_when_joined`], and by the ternary layout, which must not separate the same pair with
+/// ` : ` and leave a later pass writing `: ` (#64's class).
+pub(super) fn is_bit_field_colon(toks: &[Token], j: usize) -> bool {
+    !ternary_open_before(toks, j)
+        && prev_nontrivia(toks, j).is_some_and(|k| toks[k].kind == TokenKind::Ident)
+        && next_nontrivia(toks, j + 1).is_some_and(|k| toks[k].kind == TokenKind::Number)
+}
+
 pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
     // A trivia run is more than one token — a `Newline`, then the next line's indentation — so a
     // break is looked for across the whole run, not just the token adjacent to the punctuator.
@@ -519,12 +532,7 @@ pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
         {
             return true;
         }
-        if t.text == ":"
-            && !ternary_open_before(inner, j)
-            && (broken_before(j) || broken_after(j))
-            && prev_nontrivia(inner, j).is_some_and(|k| inner[k].kind == TokenKind::Ident)
-            && next_nontrivia(inner, j + 1).is_some_and(|k| inner[k].kind == TokenKind::Number)
-        {
+        if t.text == ":" && (broken_before(j) || broken_after(j)) && is_bit_field_colon(inner, j) {
             return true;
         }
     }

@@ -11,9 +11,9 @@
 //! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
-    can_precede_cast, closes_literal_type, ends_value, heads_body, is_callee_ident,
-    is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier, is_tag_keyword,
-    is_trivia, is_type_context, is_type_group, is_value_start, ternary_open_before,
+    can_precede_cast, closes_literal_type, ends_value, heads_body, is_bit_field_colon,
+    is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
+    is_tag_keyword, is_trivia, is_type_context, is_type_group, is_value_start,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -339,12 +339,9 @@ fn space_bit_fields(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len().saturating_sub(1) {
         let is_bit_field = pieces[j].1.text == ":"
-            && pieces[j].1.kind == TokenKind::Punct
-            && pieces[j - 1].1.kind == TokenKind::Ident
-            && pieces[j + 1].1.kind == TokenKind::Number
+            && is_bit_field_colon(&toks, j)
             && same_line(&pieces[j].0)
-            && same_line(&pieces[j + 1].0)
-            && !ternary_open_before(&toks, j);
+            && same_line(&pieces[j + 1].0);
         if is_bit_field {
             pieces[j].0.clear();
             pieces[j + 1].0 = " ".to_owned();

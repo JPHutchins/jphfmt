@@ -1828,6 +1828,38 @@ fn a_brace_list_is_not_joined_where_a_later_pass_would_respace_it() {
 }
 
 #[test]
+fn a_chain_head_is_not_joined_where_a_later_pass_would_respace_it() {
+    // #121: the chain head renders collapsed text, so joining a break onto a `:` hands
+    // `space_bit_fields` a same-line `Ident : Number` to reinterpret — this pass's output would be
+    // a fixpoint of a different pass. The `{}` list already refuses for the same reason; the head
+    // path lacked the refusal. Neither shape is valid C, so refusing the layout costs no real
+    // code (§6).
+    for src in ["_\n:0=0&A;\n", "int y = a\n:0 = b & c;\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_leading_equals_keeps_the_spacing_passes_space() {
+    // `space_equals` puts a space before every same-line `=`, pad or no pad, so the layout
+    // dropping an element's leading gap wrote `a(= "")`, which the spacing pass respaced to
+    // `a( = "")` — this pass's output as a fixpoint of a different pass. Found by the
+    // random-input spacing-fixpoint search (#121's property) as `a(="" )` at width 7.
+    for src in [
+        "a(=\"\");\n",
+        "x = {= \"\"};\n",
+        "''[()?:=]\n",
+        "x = {*A:0?};\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
 fn a_ternary_arm_in_a_brace_list_still_lays_out() {
     // The bit-field guard is a `?` earlier in the statement, so a ternary arm ending in a number
     // is not the shape that refuses.
