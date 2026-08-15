@@ -921,7 +921,7 @@ pub(super) fn has_top_level_question(inner: &[Token]) -> bool {
 }
 
 /// An assignment operator: `=` and the compound forms, but not a comparison.
-fn assigns(t: &Token) -> bool {
+pub(super) fn assigns(t: &Token) -> bool {
     (t.kind == TokenKind::Punct && t.text == "=")
         || (t.kind == TokenKind::Operator
             && t.text.ends_with('=')
