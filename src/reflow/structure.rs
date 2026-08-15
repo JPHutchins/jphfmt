@@ -12,10 +12,10 @@ use super::builders::{
 use super::scope::scoped;
 use super::tokens::{
     closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
-    enum_body_brace, has_middle_newline, has_non_trivia, holds_directive, is_backslash,
-    is_balanced, is_call_head, is_chain_break, is_comment, is_control_keyword, is_excluded_callee,
-    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
-    opens_stmt_expr, prev_nontrivia, prev_significant, respaced_when_joined, spans_lines,
+    element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia, holds_directive,
+    is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break, is_comment,
+    is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
+    next_paren, opens_stmt_expr, prev_nontrivia, prev_significant, spans_lines,
     split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
@@ -29,17 +29,6 @@ pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> Strin
     let mut depth = 0usize;
     emit_tokens(toks, &mut out, &mut col, &mut depth, width);
     out
-}
-
-/// Whether the bracket at `open` is a call's `(`. Its argument list belongs to the call handler: a call
-/// whose arguments hold a comment or are unbalanced falls through to per-token verbatim, and laying it
-/// out here instead would collapse that whitespace and lose empty leading arguments. A `[` is never a
-/// call's, so it is never excluded.
-fn heads_call(toks: &[Token], open: usize) -> bool {
-    toks[open].text == "("
-        && open > 0
-        && toks[open - 1].kind == TokenKind::Ident
-        && !is_excluded_callee(toks[open - 1].text)
 }
 
 /// Render `doc` for the line it is landing on and emit it. `reserved` is the width of what must still
@@ -106,15 +95,19 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             continue;
         }
 
-        if is_call_head(toks, i)
-            && let Some(close) = match_bracket(toks, i + 1)
+        if let Some(open) = next_nontrivia(toks, i + 1).filter(|&k| toks[k].text == "(")
+            && is_call_head_pair(toks, open)
+            && let Some(close) = match_bracket(toks, open)
         {
-            let inner = &toks[i + 2..close];
+            let inner = &toks[open + 1..close];
             if !contains_comment(inner)
                 && !holds_directive(inner)
                 && is_balanced(inner)
                 && !has_middle_newline(inner)
             {
+                // The pair-tolerant reading: trivia between the callee and `(` is dropped, and the
+                // tight `f(` this writes is the form `space_call_heads` canonicalizes — the same
+                // join `build_expr_doc`'s call arm makes for nested calls.
                 emit_str(out, col, t.text);
                 let doc = build_call_body(inner, Fit::Measured);
                 emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
@@ -127,7 +120,8 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
                 // The whole call is passed through verbatim: skip past `close` so nested calls
                 // inside the args are not re-entered and reflowed. Reflowing them would strip
                 // their intra-arg newlines, flipping this call's fits/explode decision on the
-                // next pass and breaking idempotency.
+                // next pass and breaking idempotency. No edge pad: `space_equals` runs first and
+                // pre-spaces every same-line `=` edge, so this verbatim cannot write the tight one.
                 for tok in &toks[i..=close] {
                     emit_str(out, col, tok.text);
                 }
@@ -193,9 +187,11 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         //
         // An index reaches nothing else. The chain handler below needs a chain at the statement's own
         // top level, and `int j = arr[…];` has none, so without this it would overrun at any length.
+        // A call head is excluded with the shared trivia-tolerant predicate — a type keyword is not
+        // a callee, so `int (` stays a declarator group here as everywhere else.
         if t.kind == TokenKind::Punct
             && let Some(bracketing) = group_bracketing(&t)
-            && !heads_call(toks, i)
+            && !is_call_head_pair(toks, i)
             && let Some(close) = match_bracket(toks, i)
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
@@ -602,7 +598,7 @@ fn emit_brace(
         || inner
             .iter()
             .any(|t| t.kind == TokenKind::Punct && t.text == "#");
-    if has_comment_or_directive || !is_balanced(inner) || respaced_when_joined(inner) {
+    if has_comment_or_directive || !is_balanced(inner) || element_join_respaced(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
         }

@@ -5,6 +5,7 @@ mod support;
 
 use jphfmt::doc::display_width;
 use jphfmt::format;
+use jphfmt::format_with_width;
 use support::significant;
 
 const GOLDEN: &str = include_str!("golden.c");
@@ -1820,6 +1821,251 @@ fn a_brace_list_is_not_joined_where_a_later_pass_would_respace_it() {
         "x = {A\n;};\n",
         "x = {A\n\t:0};\n",
         "x = {A\n\t;};\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_chain_head_is_not_joined_where_a_later_pass_would_respace_it() {
+    // #121: the chain head renders collapsed text, so joining a break onto a `:` hands
+    // `space_bit_fields` a same-line `Ident : Number` to reinterpret — this pass's output would be
+    // a fixpoint of a different pass. The `{}` list already refuses for the same reason; the head
+    // path lacked the refusal. Neither shape is valid C, so refusing the layout costs no real
+    // code (§6); a label whose statement opens with a number reads the same way at a span start and
+    // is spared by the ternary layout, pinned by
+    // a_label_whose_statement_opens_with_a_number_keeps_its_label.
+    for src in ["_\n:0=0&A;\n", "int y = a\n:0 = b & c;\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_group_in_a_chain_operand_keeps_the_break_a_later_pass_would_respace() {
+    // #121's class, one bracket in: a refused group inside a chain operand used to collapse its
+    // newline — `(A\n:0)` to `(A :0)` — and the spacing pass respaces the joined pair. The group
+    // keeps the break instead, one element per line.
+    for src in ["x = y + (A\n:0);\n", "x = y + [A\n:0];\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn the_chain_and_ternary_segments_join_call_head_and_subscript_breaks() {
+    // Every segment renders through `build_expr_doc`, whose call and group arms join these to the
+    // tight form the spacing pass canonicalizes, so the segment gate takes the canonical reading.
+    let call = format_with_width("x = f\n(x) + y;\n", 12);
+    assert_eq!(format_with_width(&call, 12), call, "must be idempotent");
+    assert!(call.contains("f(x) +"), "the call joins: {call:?}");
+    assert_eq!(format("x = a\n[0] + y;\n"), "x = a[0] + y;\n");
+}
+
+#[test]
+fn the_clause_and_group_segments_keep_a_declarator_star_break_too() {
+    // `build_clause_contents` takes the gate the other segment consumers have: a declarator-star
+    // break in a condition or a bracketed group's segment is the caller's fallback to keep.
+    for src in ["if (int *\n2 && b) { g(); }\n", "x = (int *\n2 && b);\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+    // A value-predecessor star is provably a multiply and joins for every follower the spacing
+    // pass leaves alone, and a newline-separated call head goes to the call handler, which writes
+    // the tight `f(` the spacing pass canonicalizes.
+    assert_eq!(
+        format("for (i = p *\n~q; i; i++) { g(); }\n"),
+        "for (i = p * ~q; i; i++) { g(); }\n"
+    );
+    assert_eq!(format("x = {a *\n(y)};\n"), "x = {a * (y)};\n");
+    assert_eq!(format("f\n(long + chain + x);\n"), "f(long + chain + x);\n");
+}
+
+#[test]
+fn a_chain_or_ternary_segment_keeps_a_declarator_star_break_too() {
+    // The segment gate is the head's: a segment whose collapse would join a respaced pair is
+    // refused — the top reading, so a nested construct inside the segment keeps its own breaks.
+    for src in [
+        "x = int *\n2 + y;\n",
+        "x = y ? int *\n2 : 3;\n",
+        "x = {struct s *\n2};\n",
+        "x = {int **\n2};\n",
+        "for (i = int a, *\n2; i; i++) { g(); }\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_pad_spaces_only_the_edge_beside_an_equals() {
+    // `space_equals` writes a space on both sides of a same-line `=`, so the `=`-adjacent edge
+    // flattens spaced and the other edge keeps §2.5's tight form.
+    assert_eq!(format("f(a, b =);\n"), "f(a, b = );\n");
+    assert_eq!(format("x = {1, y = };\n"), "x = {1, y = };\n");
+    assert_eq!(format("f(=, a);\n"), "f( =, a);\n");
+}
+
+#[test]
+fn a_star_break_joins_only_where_no_declarator_verdict_could_fire() {
+    // `space_pointers` tightens a declarator star's gap to a number, so `int *\n2` is refused —
+    // including at a span start, where a comma-list declarator's head is outside the span — while
+    // a star preceded by a value is provably a multiply and joins to `x * 2`.
+    for src in [
+        "x = {int *\n2};\n",
+        "x = {int a, *\n2};\n",
+        "if (int *\n2) { g(); }\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+    assert_eq!(
+        format("for (i = x *\n2; i; i++) { g(); }\n"),
+        "for (i = x * 2; i; i++) { g(); }\n"
+    );
+    // The colon arm keeps the break-adjacency gate: a label whose joined form is canonical joins.
+    assert_eq!(
+        format("x = ({ lbl: 3\n+ 4; });\n"),
+        "x = ({\n\tlbl: 3 + 4;\n});\n"
+    );
+    // The declined pad shape itself: the first pass's space and the break both survive the
+    // call's verbatim passthrough.
+    {
+        let src = "x = y + f(=\n\"\");\n";
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert!(once.contains("( ="), "the pad: {src:?} -> {once:?}");
+    }
+}
+
+#[test]
+fn the_element_fallbacks_join_call_subscript_and_star_breaks_canonically() {
+    // The element fallback's refusal covers only the joins its collapse writes wrong — a bit-field
+    // colon, an ambiguous declarator star, a `;` — while the group and call arms already join the
+    // canonical tight form, so these lay out rather than freeze.
+    assert_eq!(
+        format("for (i = f\n(x); i; i++) { g(); }\n"),
+        "for (i = f(x); i; i++) { g(); }\n"
+    );
+    assert_eq!(format("if (a\n[0]) { g(); }\n"), "if (a[0]) { g(); }\n");
+    assert_eq!(format("int a[] = {f\n(x)};\n"), "int a[] = {f(x)};\n");
+    assert_eq!(format("x = ({ f\n(1); });\n"), "x = ({\n\tf(1);\n});\n");
+    assert_eq!(
+        format("for (i = x *\n2; i; i++) { g(); }\n"),
+        "for (i = x * 2; i; i++) { g(); }\n"
+    );
+    // A nested `{}` list's break is its own element's to refuse, so the outer container lays out.
+    assert_eq!(format("x = { {a\n:0} };\n"), "x = {{a\n:0}};\n");
+}
+
+#[test]
+fn a_bare_bit_field_colon_break_passes_the_element_fallbacks_through_verbatim() {
+    // The builders' terminal fallback collapses any unclaimed span, and a bare `Ident : Number`
+    // break collapsed to `A :0` is what `space_bit_fields` tightens — the one path without a
+    // refusal until the element builder took one. The author's text, newline included, is the
+    // fixpoint; the edges are trimmed so a container's own separator and the previous pass's
+    // indentation are not doubled.
+    for src in [
+        "for (i = A\n:0; i; i++) { g(); }\n",
+        "if (A\n:0) { g(); }\n",
+        "while (A\n:0) { g(); }\n",
+        "switch (A\n:0) { g(); }\n",
+        "x = ({ A\n:0; });\n",
+        "x = ({ lbl\n: 1 ? a : b; });\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_nested_bit_field_colon_break_is_the_nested_constructs_to_keep() {
+    // `space_bit_fields` reads at any depth, so each nested construct keeps its own colon break:
+    // the chain head's all-depth refusal, the call's has-middle-newline contract (the structure
+    // pass's own, for calls that reach here nested), and the `{}` list's depth-zero refusal.
+    for src in [
+        "int (A\n:0) = x + y;\n",
+        "x = f(a\n:0) + y;\n",
+        "x = (f({A\n:0}) + y);\n",
+        "int v = { {A\n:0} };\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+    // A refused group's collapse preserves the spacing pass's own pre-written pad — `space_equals`
+    // spaces every same-line `=` first, so the layout never writes one against a bracket — and its
+    // nested subscript stays tight.
+    assert_eq!(format("x = y + (=\n);\n"), "x = y + ( = );\n");
+    assert_eq!(format("x = y + (a [0]);\n"), "x = y + (a[0]);\n");
+    // A call whose `{` follows is spaced by `space_braces`, and the callee is its own part, so the
+    // flush must carry the gap across the parts boundary rather than drop it on an empty text
+    // buffer — the pinned search's `''[_/a(){"\""}]` at width 1, one flush over.
+    for src in ["x[_/a(){\"x\"}]\n", "''[_/a(){\"\"}]\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert!(
+            once.contains(") {"),
+            "the body's space: {src:?} -> {once:?}"
+        );
+    }
+}
+
+#[test]
+fn a_declarator_stars_break_joins_by_the_spacing_passes_verdict() {
+    // `space_pointers` writes `* p` before an identifier, so joining that break agrees with it and
+    // the head lays out — a real declarator the round-3 over-broad refusal used to freeze verbatim.
+    assert_eq!(format("int (*\ncb) = x + y;\n"), "int (* cb) = x + y;\n");
+    // The head renders as one text, joining every break nested included, so a subscript break it
+    // would join into a respaced pair still refuses the whole statement — the head has no nested
+    // arm to keep it, and verbatim is the only spelling that stays a fixpoint.
+    {
+        let src = "int (f)\n[2] = x + y;\n";
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+    // A break below the span's own depth is the nested group's own to refuse, so the enclosing
+    // container now lays it out rather than freezing: the join writes the tight `b[0]` the spacing
+    // pass canonicalizes.
+    assert_eq!(format("x = y + (a + b\n[0]);\n"), "x = y + (a + b[0]);\n");
+}
+
+#[test]
+fn a_label_whose_statement_opens_with_a_number_keeps_its_label() {
+    // `lbl: 1 ? a : b` reads as the bit-field shape even at a span start, where the colon is the
+    // label's; laying the arms out would write ` : ` where the spacing pass writes `: `. The whole
+    // statement passes through instead — the §6 cost — keeping the label and its colon.
+    {
+        let src = "lbl: 1 ? a : b;\n";
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(significant(&once), significant(src));
+    }
+    // And a narrow width passes it through whole rather than writing the respaced shape.
+    let src = "lbl: 11111111111111111111 ? 22222222222222222222 : 33333333333333333333;\n";
+    assert_eq!(jphfmt::format_with_width(src, 30), src);
+}
+
+#[test]
+fn a_leading_equals_keeps_the_spacing_passes_space() {
+    // `space_equals` puts a space before every same-line `=`, pad or no pad, so the layout
+    // dropping an element's leading gap wrote `a(= "")`, which the spacing pass respaced to
+    // `a( = "")` — this pass's output as a fixpoint of a different pass. Found by the
+    // random-input spacing-fixpoint search (#121's property) as `a(="" )` at width 7.
+    for src in [
+        "a(=\"\");\n",
+        "x = {= \"\"};\n",
+        "''[()?:=]\n",
+        "x = {*A:0?};\n",
     ] {
         let once = format(src);
         assert_eq!(format(&once), once, "must be idempotent: {src:?}");

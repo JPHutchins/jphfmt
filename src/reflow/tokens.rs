@@ -392,7 +392,7 @@ fn paired(
 
 /// The tokens outside every bracket group, paired with their index — the level a construct's own
 /// separators live at. The brackets themselves are not yielded; a construct is never separated by one.
-fn at_depth_zero<'a, 'src>(
+pub(super) fn at_depth_zero<'a, 'src>(
     toks: &'a [Token<'src>],
 ) -> impl Iterator<Item = (usize, &'a Token<'src>)> {
     let mut depth = 0i32;
@@ -408,7 +408,10 @@ fn at_depth_zero<'a, 'src>(
 
 /// The spans `cuts` separates: before the first, between each pair, after the last. A cut token
 /// belongs to no span — it is the separator, which the layout re-spells.
-fn segments_at<'a, 'src>(inner: &'a [Token<'src>], cuts: &[usize]) -> Vec<&'a [Token<'src>]> {
+pub(super) fn segments_at<'a, 'src>(
+    inner: &'a [Token<'src>],
+    cuts: &[usize],
+) -> Vec<&'a [Token<'src>]> {
     std::iter::once(0)
         .chain(cuts.iter().map(|&j| j + 1))
         .zip(cuts.iter().copied().chain(std::iter::once(inner.len())))
@@ -421,11 +424,21 @@ pub(super) fn split_top_level<'a, 'src>(
     inner: &'a [Token<'src>],
     is_sep: impl Fn(&Token) -> bool,
 ) -> Vec<&'a [Token<'src>]> {
+    split_top_level_with_cuts(inner, is_sep).0
+}
+
+/// [`split_top_level`], with the cut indices too — a caller that must judge the cut tokens
+/// themselves (the ternary layout refuses a bit-field colon) reads one spelling instead of
+/// re-collecting the cuts a second way.
+pub(super) fn split_top_level_with_cuts<'a, 'src>(
+    inner: &'a [Token<'src>],
+    is_sep: impl Fn(&Token) -> bool,
+) -> (Vec<&'a [Token<'src>]>, Vec<usize>) {
     let cuts: Vec<usize> = at_depth_zero(inner)
         .filter(|(_, t)| is_sep(t))
         .map(|(j, _)| j)
         .collect();
-    segments_at(inner, &cuts)
+    (segments_at(inner, &cuts), cuts)
 }
 
 /// The next `;` at bracket depth zero at or after `from`.
@@ -485,30 +498,202 @@ pub(super) fn ternary_open_before(toks: &[Token], j: usize) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether an element's first token is a separator — a `;`, `,` or `:` cannot open an operand, and
+/// laying such an element out would put a gap before it that the spacing pass tightens on the next
+/// pass. The one spelling for the call, brace and ternary layouts' refusal (#121's search).
+pub(super) fn opens_with_separator(toks: &[Token]) -> bool {
+    next_nontrivia(toks, 0).is_some_and(|k| matches!(toks[k].text, ";" | "," | ":"))
+}
+
+/// Whether the `(` at `j` follows a callee identifier — the pair `space_call_heads` tightens. The
+/// one spelling for that pass and for [`respaced_when_joined`], whose joined pair the tightening
+/// would respace (#121's search).
+pub(super) fn is_call_head_pair(toks: &[Token], j: usize) -> bool {
+    toks[j].kind == TokenKind::Punct
+        && toks[j].text == "("
+        && prev_nontrivia(toks, j).is_some_and(|k| is_callee_ident(&toks[k]))
+}
+
+/// Whether the `[` at `j` indexes a value — the shape `space_subscripts` tightens. An attribute's
+/// `[[` opens a construct of its own and keeps its gap. The one spelling for that pass and for
+/// [`respaced_when_joined`], whose joined pair the tightening would respace (#121's search).
+pub(super) fn is_subscript(toks: &[Token], j: usize) -> bool {
+    toks[j].kind == TokenKind::Punct
+        && toks[j].text == "["
+        && next_nontrivia(toks, j + 1).is_none_or(|k| toks[k].text != "[")
+        && prev_nontrivia(toks, j).is_some_and(|k| ends_value(&toks[k]))
+}
+
+/// Whether the gap between the `*` before `j` and the token at `j` is one `space_pointers` respaces:
+/// a declarator star's gap to a non-identifier is tightened — `* :` respaces to `*:` — and a layout
+/// that writes the space back hands the spacing pass a shape it rewrites. The followers that pass
+/// keeps spaced are excluded: an identifier (its other branch — `* p` is the canonical declarator
+/// spelling), an `=`-led token (`*=` re-lexes as a compound assignment and the next pass respaces
+/// what this one wrote), and the two it refuses to hug at all — a `\` and a comment. Every other
+/// follower is refused only where a declarator verdict could fire: the star run's true predecessor
+/// decides — a type keyword, a tag's identifier, a comma whose head reads as a declaration, or a
+/// span start (a comma-list declarator's head is outside the span) makes a declarator possible,
+/// while a value predecessor is provably a multiply and joins freely (#121's search).
+pub(super) fn star_gap_respaced(toks: &[Token], j: usize) -> bool {
+    let star = prev_nontrivia(toks, j).filter(|&k| toks[k].text == "*");
+    // `int **` walks to `int`, the same walk `space_pointers`'s run handling makes.
+    let mut before = star;
+    while let Some(k) = before.filter(|&k| toks[k].text == "*") {
+        before = prev_nontrivia(toks, k);
+    }
+    let declarator_possible = before.is_none_or(|k| {
+        is_type_context(toks[k].text)
+            || (toks[k].kind == TokenKind::Ident
+                && prev_nontrivia(toks, k).is_some_and(|t| is_tag_keyword(toks[t].text)))
+            || (toks[k].text == "," && comma_declares(toks, k))
+    });
+    !is_trivia(&toks[j])
+        && toks[j].kind != TokenKind::Ident
+        && !toks[j].text.starts_with('=')
+        && toks[j].text != "\\"
+        && !is_comment(&toks[j])
+        && declarator_possible
+        && star.is_some()
+}
+
+/// [`star_gap_respaced`]'s `,`-predecessor question, the span-local half of `space_pointers`'
+/// `declares_head`: the head before the comma reads as a declaration — a specifier, or two or more
+/// identifiers separated only by declarator tokens. A head that runs past the span's start is
+/// truncated and refused (§6), so the verdict cannot silently narrow.
+fn comma_declares(toks: &[Token], comma: usize) -> bool {
+    let declarator_shaped = |t: &Token| {
+        (t.kind == TokenKind::Ident && !is_excluded_callee(t.text))
+            || matches!(t.text, "*" | "[" | "]" | ",")
+    };
+    let mut k = comma;
+    loop {
+        while k > 0 && is_trivia(&toks[k - 1]) {
+            k -= 1;
+        }
+        if k == 0 || !declarator_shaped(&toks[k - 1]) {
+            break;
+        }
+        k -= 1;
+    }
+    // The walk stopped at a non-declarator boundary token, or ran into the span's start — the
+    // latter is an unknown head, refused.
+    if k == 0 {
+        return true;
+    }
+    let head: Vec<&Token> = toks[k..comma].iter().filter(|t| !is_trivia(t)).collect();
+    head.iter().any(|t| is_decl_specifier(t.text))
+        || head.iter().filter(|t| t.kind == TokenKind::Ident).count() >= 2
+}
+
+/// Whether the `:` at `j` is the bit-field colon `space_bit_fields` reads — an identifier before,
+/// a number after, no ternary `?` still open. The one spelling for a question asked by that pass, by
+/// [`respaced_when_joined`], and by the ternary layout, which must not separate the same pair with
+/// ` : ` and leave a later pass writing `: ` (#64's class). The cheap shape checks come before the
+/// backward scan. A label whose statement opens with a number reads the same way at a span start;
+/// the ternary layout refuses it like any other (§6), and the spacing pass canonicalizes its colon
+/// like any other's.
+pub(super) fn is_bit_field_colon(toks: &[Token], j: usize) -> bool {
+    prev_nontrivia(toks, j).is_some_and(|k| toks[k].kind == TokenKind::Ident)
+        && next_nontrivia(toks, j + 1).is_some_and(|k| toks[k].kind == TokenKind::Number)
+        && !ternary_open_before(toks, j)
+}
+
+/// Whether a line break sits in the trivia run directly before `j` — a trivia run is more than one
+/// token, a `Newline` then the next line's indentation, so a break is looked for across the whole
+/// run, not just the token adjacent to the punctuator.
+fn broken_before(toks: &[Token], j: usize) -> bool {
+    toks[..j]
+        .iter()
+        .rev()
+        .take_while(|t| is_trivia(t))
+        .any(|t| t.text.contains(['\n', '\r']))
+}
+
+fn broken_after(toks: &[Token], j: usize) -> bool {
+    toks[j + 1..]
+        .iter()
+        .take_while(|t| is_trivia(t))
+        .any(|t| t.text.contains(['\n', '\r']))
+}
+
 pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
-    // A trivia run is more than one token — a `Newline`, then the next line's indentation — so a
-    // break is looked for across the whole run, not just the token adjacent to the punctuator.
-    let broken_before = |j: usize| {
-        inner[..j]
-            .iter()
-            .rev()
-            .take_while(|t| is_trivia(t))
-            .any(|t| t.text.contains(['\n', '\r']))
-    };
-    let broken_after = |j: usize| {
-        inner[j + 1..]
-            .iter()
-            .take_while(|t| is_trivia(t))
-            .any(|t| t.text.contains(['\n', '\r']))
-    };
-    let mut depth = 0i32;
+    joined_pair_respaced(inner, false, false)
+}
+
+/// The depth-zero reading of [`respaced_when_joined`]: a nested break is the nested group's own to
+/// refuse — its handler writes the canonical tight form — so a hit below depth zero would freeze the
+/// enclosing container for nothing. Callers whose collapse joins only the span's own breaks ask this
+/// one; a caller that joins every break, nested included, asks [`respaced_when_joined`].
+pub(super) fn respaced_when_joined_top(inner: &[Token]) -> bool {
+    joined_pair_respaced(inner, true, false)
+}
+
+/// The joins the element fallback's collapse writes wrong — a space a later pass respaces — where
+/// the group and call arms already write the canonical tight form and take no refusal of their own:
+/// the depth-zero bit-field colon, a `*` whose gap to a non-identifier a declarator verdict would
+/// tighten (ambiguous locally, so §6 refuses it), and a `;` the collapse puts a space before, which
+/// `space_semicolons` strips. The top-level reading, braces included, since a nested construct
+/// refuses its own breaks (#121's search).
+pub(super) fn element_join_respaced(toks: &[Token]) -> bool {
+    joined_pair_respaced(toks, true, true)
+}
+
+fn joined_pair_respaced(inner: &[Token], top_only: bool, canonical_joins: bool) -> bool {
+    // The question is only ever about a break, so a span with none is answered without the scan —
+    // the element fallback asks it of every element, the formatter's hot path.
+    if !inner.iter().any(|t| t.kind == TokenKind::Newline) {
+        return false;
+    }
+    let broken_before = |j: usize| broken_before(inner, j);
+    let broken_after = |j: usize| broken_after(inner, j);
+    // Two depths: the join arms read every bracket pair, braces included — a break inside a nested
+    // `{}` list is the nested list's own to refuse — while the `;`-branch mirrors
+    // `space_semicolons`'s own depth, which counts parens and brackets but not braces.
+    let mut brackets = 0i32;
+    let mut parens = 0i32;
     for (j, t) in inner.iter().enumerate() {
+        // Read before the depth update: `[` and `(` open a level themselves, so their joins read at
+        // the level they join from. A `[` whose join the subscript rule tightens — `0\n[]` joined to
+        // `0 []` respaces to `0[]` — and a `(` whose join the call-head rule tightens — `A\n(` joined
+        // to `A (` respaces to `A(` — are both the same class (#121's search). A `*` whose break to a
+        // following operator is joined — `*\n<` joined to `* <` respaces to `*<` when the star reads
+        // as a declarator's — the same class, one star over. The element callers' group and call
+        // arms join the subscript and call-head shapes to the canonical tight form, so those two
+        // arms are not theirs.
+        if (!top_only || brackets == 0) && broken_before(j) && star_gap_respaced(inner, j) {
+            return true;
+        }
+        if !canonical_joins
+            && (!top_only || brackets == 0)
+            && broken_before(j)
+            && (is_subscript(inner, j) || is_call_head_pair(inner, j))
+        {
+            return true;
+        }
+        // `space_bit_fields` reads at any depth, so a colon whose join it would tighten is refused at
+        // any depth in the all-depth reading.
+        if (!top_only || brackets == 0)
+            && t.kind == TokenKind::Punct
+            && t.text == ":"
+            && (broken_before(j) || broken_after(j))
+            && is_bit_field_colon(inner, j)
+        {
+            return true;
+        }
         match t.text {
-            "(" | "[" => depth += 1,
-            ")" | "]" => depth -= 1,
+            "(" | "[" => {
+                parens += 1;
+                brackets += 1;
+            }
+            ")" | "]" => {
+                parens -= 1;
+                brackets -= 1;
+            }
+            "{" => brackets += 1,
+            "}" => brackets -= 1,
             _ => {}
         }
-        if depth != 0 || t.kind != TokenKind::Punct {
+        if parens != 0 || t.kind != TokenKind::Punct {
             continue;
         }
         // `space_semicolons` leaves a `;` that opens its line alone, and never tightens one that
@@ -516,14 +701,6 @@ pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
         if t.text == ";"
             && broken_before(j)
             && prev_nontrivia(inner, j).is_some_and(|k| !matches!(inner[k].text, ";" | "{"))
-        {
-            return true;
-        }
-        if t.text == ":"
-            && !ternary_open_before(inner, j)
-            && (broken_before(j) || broken_after(j))
-            && prev_nontrivia(inner, j).is_some_and(|k| inner[k].kind == TokenKind::Ident)
-            && next_nontrivia(inner, j + 1).is_some_and(|k| inner[k].kind == TokenKind::Number)
         {
             return true;
         }
@@ -666,10 +843,18 @@ pub(super) fn split_chain<'a, 'src>(
     }
     let segments = segments_at(inner, &cuts);
     // An operator missing an operand is not a chain: rendering the empty segment would leave the
-    // separator stranded, and the space it lands beside is not this pass's to keep.
+    // separator stranded, and the space it lands beside is not this pass's to keep. A segment that
+    // opens with a separator strands it the same way — `a + ;:` — and the spacing pass would tighten
+    // the gap this layout wrote before it (#121's search).
+    //
+    // A separator whose preceding token is a `*` needs no refusal of its own here: a `*` ends no
+    // value ([`ends_value`]), so an operator after one is never a binary cut ([`is_binary_position`])
+    // and the shape never becomes a segment boundary — `x * < y` refuses on the cuts being empty,
+    // before this looks. The star-gap refusal lives where such a separator can be written: the
+    // ternary's arms and the break-join's ([`star_gap_respaced`]).
     segments
         .iter()
-        .all(|s| has_non_trivia(s))
+        .all(|s| has_non_trivia(s) && !opens_with_separator(s))
         .then(|| (segments, cuts.iter().map(|&j| inner[j].text).collect()))
 }
 

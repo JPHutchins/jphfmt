@@ -11,9 +11,9 @@
 //! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
-    can_precede_cast, closes_literal_type, ends_value, heads_body, is_callee_ident,
-    is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier, is_tag_keyword,
-    is_trivia, is_type_context, is_type_group, is_value_start, ternary_open_before,
+    can_precede_cast, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
+    is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
+    is_subscript, is_tag_keyword, is_trivia, is_type_context, is_type_group, is_value_start,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -261,7 +261,9 @@ fn space_pointers(pieces: &mut [Piece]) {
                 && after.1.text != "\\"
                 && !is_comment(&after.1)
             {
-                after.0 = if after.1.kind == TokenKind::Ident {
+                // An `=`-led operator stays spaced: `*=` and `*==` re-lex as `*=` and the next
+                // pass respaces what this one wrote (#121's search).
+                after.0 = if after.1.kind == TokenKind::Ident || after.1.text.starts_with('=') {
                     " ".to_owned()
                 } else {
                     String::new()
@@ -339,12 +341,9 @@ fn space_bit_fields(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len().saturating_sub(1) {
         let is_bit_field = pieces[j].1.text == ":"
-            && pieces[j].1.kind == TokenKind::Punct
-            && pieces[j - 1].1.kind == TokenKind::Ident
-            && pieces[j + 1].1.kind == TokenKind::Number
+            && is_bit_field_colon(&toks, j)
             && same_line(&pieces[j].0)
-            && same_line(&pieces[j + 1].0)
-            && !ternary_open_before(&toks, j);
+            && same_line(&pieces[j + 1].0);
         if is_bit_field {
             pieces[j].0.clear();
             pieces[j + 1].0 = " ".to_owned();
@@ -414,14 +413,18 @@ fn space_semicolons(pieces: &mut [Piece]) {
 /// and other excluded callees (`sizeof`, `typeof`, `return`, etc.) are left as-is so we
 /// don't fight the house style (e.g. golden.c has `sizeof(int)` tight).
 fn space_call_heads(pieces: &mut [Piece]) {
+    // Projected once, not per `(`: the backward scan is over the whole prefix.
+    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 0..pieces.len().saturating_sub(1) {
         let next_is_paren = pieces[j + 1].1.kind == TokenKind::Punct && pieces[j + 1].1.text == "(";
-        if !(next_is_paren && same_line(&pieces[j + 1].0)) || names_a_macro(pieces, j) {
+        if !same_line(&pieces[j + 1].0) || (next_is_paren && names_a_macro(pieces, j)) {
             continue;
         }
-        if is_callee_ident(&pieces[j].1) {
+        if is_call_head_pair(&toks, j + 1) {
             pieces[j + 1].0.clear();
-        } else if is_control_keyword(pieces[j].1.text) || is_type_context(pieces[j].1.text) {
+        } else if pieces[j + 1].1.text == "("
+            && (is_control_keyword(pieces[j].1.text) || is_type_context(pieces[j].1.text))
+        {
             pieces[j + 1].0 = " ".to_owned();
         }
     }
@@ -445,19 +448,14 @@ fn names_a_macro(pieces: &[Piece], j: usize) -> bool {
 }
 
 /// A subscript is tight against what it indexes, exactly as a call is tight against its callee
-/// (§2.5): `arr [i]` is `arr[i]`, which was the one pair of brackets §2.5 did not reach.
-///
-/// Only a `[` that *indexes* qualifies. An attribute's `[[` opens a construct of its own and keeps its
-/// gap — `int x [[deprecated]];` and `int arr[10] [[deprecated]];` are both valid C23 — and a `{}`
-/// list's designator follows a `{` or `,`, which end no value ([`ends_value`]).
+/// (§2.5): `arr [i]` is `arr[i]`, which was the one pair of brackets §2.5 did not reach. Whether a
+/// `[` indexes is [`is_subscript`], the one spelling shared with the layout's join refusal.
 fn space_subscripts(pieces: &mut [Piece]) {
-    for j in 1..pieces.len() {
-        let indexes = pieces[j].1.kind == TokenKind::Punct
-            && pieces[j].1.text == "["
-            && pieces.get(j + 1).is_none_or(|next| next.1.text != "[")
-            && ends_value(&pieces[j - 1].1);
-        if indexes && same_line(&pieces[j].0) {
-            pieces[j].0.clear();
+    // Projected once, not per `[`: the backward scan is over the whole prefix.
+    let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
+    for (j, (gap, _)) in pieces.iter_mut().enumerate().skip(1) {
+        if is_subscript(&toks, j) && same_line(gap) {
+            gap.clear();
         }
     }
 }
