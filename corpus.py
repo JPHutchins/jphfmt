@@ -166,7 +166,7 @@ class Unmeasured(NamedTuple):
 	`gcc`-no-worse half is skipped. That is the honest shape, because those files *are* still formatted
 	in the world, and #100 was a content-loss bug no compiler would have caught anyway.
 
-	A halted baseline is not this: both sides halt identically, which is a comparison that found
+	A halted baseline is not this: both sides halt at the same place, which is a comparison that found
 	nothing worse. A `TimedOut` or a `Crashed` says gcc could not answer, and a `ToolFailed` says gcc
 	failed — this machine's problem rather than the file's. Reported apart for that reason."""
 
@@ -289,6 +289,8 @@ def severity(result: Compile) -> tuple[int, int]:
 			return (1, 0)
 		case Crashed() | TimedOut() | ToolFailed():
 			return (2, 0)
+		case _:
+			raise AssertionError(f"unhandled Compile variant: {type(result).__name__}")
 
 
 def first_difference(before: str, after: str) -> tuple[str, str]:
@@ -375,6 +377,24 @@ def as_verdict(path: Path, outcome: Failed | Hung) -> Verdict:
 			return Stalled(path, seconds)
 
 
+def worse_than(after: Compile, before: Compile) -> bool:
+	"""Whether `after` outranks `before`: by severity, or by halting at a different place — the one
+	difference severity cannot see, since both sides halt with equal rank.
+
+	>>> worse_than(Errors(2), Errors(1))
+	True
+	>>> worse_than(Halted("x"), Halted("x"))
+	False
+	>>> worse_than(Halted("y"), Halted("x"))
+	True
+	>>> worse_than(Crashed(11), Halted("x"))
+	True
+	"""
+	return severity(after) > severity(before) or (
+		isinstance(after, Halted) and isinstance(before, Halted) and after.detail != before.detail
+	)
+
+
 def check(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | None, bool]:
 	"""Every property that fails for `path`, not the first — plus whether its baseline was an error
 	count, which is what tells `main` gcc syntax-checked something rather than compared two halts.
@@ -411,14 +431,15 @@ def check(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | N
 	# this cannot resolve, where both sides report the same one fatal error.
 	#
 	# The after side still compiles for a halt: a machine failure ranks above it, so output that makes
-	# gcc crash or hang where the input merely halted is a `Regressed`. Only a machine-failure baseline
-	# skips the comparison — nothing can outrank it.
+	# gcc crash or hang where the input merely halted is a `Regressed`, and two halts compare by place —
+	# output that halts somewhere else changed what the file's includes resolve to. Only a
+	# machine-failure baseline skips the comparison — nothing can outrank it.
 	before = measure("before", original, path)
 	if not isinstance(before, Errors | Halted):
 		return (unstable + lost, Unmeasured(path, before), False)
 	after = measure("after", emitted, path)
 	regressed: tuple[Verdict, ...] = ()
-	if severity(after) > severity(before):
+	if worse_than(after, before):
 		regressed = (Regressed(path, before, after),)
 	return (unstable + lost + regressed, None, isinstance(before, Errors))
 
@@ -517,6 +538,8 @@ def baseline_why(why: Crashed | TimedOut | ToolFailed) -> str:
 			return NO_ANSWER
 		case ToolFailed():
 			return FAILED
+		case _:
+			raise AssertionError(f"unhandled Compile variant: {type(why).__name__}")
 
 
 def describe_unmeasured(unmeasured: tuple[Unmeasured, ...]) -> tuple[str, ...]:
@@ -628,21 +651,20 @@ def main(argv: tuple[str, ...]) -> int:
 	# is interrupted — or watched — should have already named everything it found.
 	clean = 0
 	error_counts = 0
+	both = 0
 	unmeasured: list[Unmeasured] = []
-	reported: set[Path] = set()
 	# The pool is built inside the `try` so a Ctrl+C in the submission loop reaches the handler, and
 	# starts unbound so one delivered mid-construction does not meet the handler with nothing to shut
 	# down.
 	pool: ThreadPoolExecutor | None = None
 	try:
 		pool = ThreadPoolExecutor(max_workers=args.jobs)
-		pending = {pool.submit(checked, args.binary, path): path for path in files}
+		pending = [pool.submit(checked, args.binary, path) for path in files]
 		for done in as_completed(pending):
 			verdicts, unmeasured_here, errors_baseline = done.result()
 			clean += not verdicts
 			error_counts += errors_baseline
-			if verdicts:
-				reported.add(pending[done])
+			both += bool(verdicts) and unmeasured_here is not None
 			unmeasured.extend(filter(None, (unmeasured_here,)))
 			for verdict in verdicts:
 				print(report(verdict), flush=True)
@@ -673,20 +695,21 @@ def main(argv: tuple[str, ...]) -> int:
 	failed = tuple(u for u in unmeasured if baseline_why(u.why) == FAILED)
 	unchecked = error_counts == 0
 	short = len(files) < args.limit
-	if clean == len(files) and not short and not stalled and not failed and not unchecked:
-		print(f"{clean} of {len(files)} files clean")
-		return 0
 	# The headline never claims a clean pass on a failing run, and says which of the reasons failed it.
-	# The checks clause excludes the machine-failure files, so the counts sum to the failing files
-	# instead of double-counting them.
-	both = sum(1 for u in stalled + failed if u.path in reported)
+	# The gate is the same list — a run whose `why` is empty is the clean pass — so the exit code and
+	# the headline cannot drift apart. The checks clause excludes the machine-failure files, so the
+	# counts sum to the failing files instead of double-counting them.
+	checks = len(files) - clean - both
 	why = (
-		[f"{len(files) - clean - both} the checks reported on"] * (len(files) - clean - both > 0)
+		[f"{checks} the checks reported on"] * (checks > 0)
 		+ [f"{len(stalled)} gcc could not answer for"] * bool(stalled)
 		+ [f"{len(failed)} gcc failed for"] * bool(failed)
 		+ ["no file was syntax-checked"] * unchecked
 		+ [f"a corpus of {len(files)} where {args.limit} was asked for"] * short
 	)
+	if not why:
+		print(f"{clean} of {len(files)} files clean")
+		return 0
 	print(f"{clean} of {len(files)} files clean; the run fails on {', '.join(why)}", file=sys.stderr)
 	return 1
 
