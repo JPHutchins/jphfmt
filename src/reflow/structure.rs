@@ -330,9 +330,10 @@ fn explode_params(def: &Define, flat: &str, scoped_col: usize, width: usize) -> 
     // The body is the last line, and [`emit_define`] writes ` \` *between* lines, so this one takes
     // none: only the tab is reserved, and [`format_define_body`] owns whatever the continuation costs.
     let body = format_define_body(&def.body, 0, width.saturating_sub(TAB_WIDTH))?;
-    // A body of more than one line cannot be indented under the `)`: on the next pass its own line
-    // breaks make it a passthrough, so the tab added here would be part of the text and another
-    // would be added on top of it, once per run.
+    // A body of more than one line cannot be indented under the `)`: the tab added here would be
+    // part of the text on the next pass, where a broken body is re-claimed and re-laid out — or
+    // emitted verbatim for the call shape — and another tab would be added on top of it, once per
+    // run.
     if body.contains('\n') {
         return None;
     }
@@ -447,7 +448,8 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
     })
 }
 
-/// Format a macro body if it is a single call/`_Generic` or a statement-expression; else `None`.
+/// Format a macro body if it is a single call/`_Generic`, a statement-expression, or one whole
+/// bracket group ([`define_body_layout`]'s shapes); else `None`.
 ///
 /// Laid out twice when it breaks. [`emit_define`] ends every line of a continued body with ` \`, and
 /// those columns are the continuation's, not the layout's — measured against the whole width, a nested
@@ -468,13 +470,13 @@ fn format_define_body(body: &[Token], prefix_col: usize, width: usize) -> Option
     define_body_layout(body, prefix_col, width.saturating_sub(CONTINUATION_WIDTH))
 }
 
-/// Two shapes only: a body that is one whole call, and one that is one whole statement expression.
-/// Anything else passes through. #77's fourth item would claim every whole bracket here, and
-/// `a_define_body_that_is_one_group_passes_through` records the five ways that went wrong — a body that
-/// is one bracket is not one construct, it is whatever the macro's use makes of it, and §6 prefers
-/// passthrough.
+/// Three shapes: a body that is one whole call, one whole statement expression, and — #77's fourth
+/// item — one whole bracket, which the structurer's group arm lays out with `\` continuations.
+/// Anything else passes through: a body that is one bracket is not one construct, it is whatever the
+/// macro's use makes of it, and §6 prefers passthrough — `a_define_body_that_is_one_whole_bracket_is_claimed`
+/// records the shapes a claim regressed, and the nested-ternary two-cycle that still passes through.
 ///
-/// **Whole-body** in both retained shapes. A group with anything beside it would put the rest on the
+/// **Whole-body** in all three shapes. A group with anything beside it would put the rest on the
 /// line the group's own break ends, which is a layout this has no measure for — and claiming such a
 /// body from its first two tokens while rendering only as far as the group is how `({ ... }) + 1` lost
 /// its `+ 1` (#104).
@@ -501,7 +503,46 @@ fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option
     if opens_stmt_expr(body, 0) && match_bracket(body, 0) == Some(last) {
         return format_stmt_expr(body, 0, 0, width).map(|(s, _)| s);
     }
+    // #77's fourth item: a body that is one whole bracket — `((x) ? a : b ? c : d)` — is a
+    // container, and the structurer's group arm lays it out with the continuation columns the
+    // two-pass measurement above accounts for. Only the *whole* body: a group with anything
+    // beside it passes through, the same whole-span rule the two retained shapes above keep
+    // (#104). A bare chain is deliberately not claimed — parentheses are tokens the author did
+    // not write, in a body whose expansion is the author's to control. A ternary nested inside an
+    // arm's own bracket is refused too: its measured layout and the parameter list's explosion
+    // decide against each other, and the two passes alternate (`((123 ? 0xff : (a)) ? (t))` at
+    // width 40) — §6.
+    let bracketing = group_bracketing(&body[0])?;
+    if match_bracket(body, 0) == Some(last)
+        && is_balanced(body)
+        && !body.iter().any(|t| t.text == "{")
+        && !has_nested_question(body)
+        && build_bracketed_group(&body[1..last], bracketing).is_some()
+    {
+        return Some(structure(body, prefix_col, width));
+    }
     None
+}
+
+/// Whether a `?` sits at paren depth 2 or deeper — inside an arm's, a condition's, a call's, or an
+/// operand's paren, whose measured layout and the parameter list's explosion can decide against
+/// each other in [`define_body_layout`]. Deliberately conservative: the two-cycle the guard exists
+/// for is one of these shapes, and the rest are refused with it rather than probed one by one.
+/// Reads parens only — a subscript's ternary does not nest the way that cycles. A `[`-outer body
+/// seeds the depth at one, so the same shape the paren form refuses is refused in bracket form too.
+/// The closer floors at zero — a malformed body must fall through to [`is_balanced`]'s refusal,
+/// not panic.
+fn has_nested_question(toks: &[Token]) -> bool {
+    let mut depth = i32::from(toks[0].text == "[");
+    toks.iter().any(|t| {
+        match t.text {
+            "(" => depth += 1,
+            ")" => depth = depth.saturating_sub(1),
+            "?" => return depth >= 2,
+            _ => {}
+        }
+        false
+    })
 }
 
 /// Format a `({ ... })` statement-expression: `({` opens the line, each statement on its own line

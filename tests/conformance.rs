@@ -156,24 +156,59 @@ fn initializer_with_comment_keeps_structure_but_retabs() {
     assert_eq!(format(src), expected);
 }
 
-/// #77's fourth item — a `#define` body that is entirely one group laid out as a container — is **not**
-/// implemented, and this pins that it is not, so the day it is, this test fails and says where to look.
+/// #77's fourth item is now implemented — a `#define` body that is entirely one bracket is laid out
+/// as a container — and this pins the two claimed shapes' exact continuation layout alongside the
+/// shapes that still pass through, so the day a claim regresses, this test fails and says where to
+/// look.
 ///
-/// Claiming such a body is a two-line change and produced five distinct regressions over three review
-/// rounds on #103, each on a body the walk then measured as something it is not: a dropped `\`
-/// continuation; a nested `({ … })` collapsed to a brace list, both adjacent and spaced; a two-cycle at
-/// width 40 on a nested parenthesized ternary, because the two passes measure the body at different
-/// columns (#43/#108's defect, not the claim's); and a `\`-continued string literal gaining a ` \` inside
+/// Claiming such a body previously produced five distinct regressions over three review rounds on
+/// #103, each on a body the walk then measured as something it is not: a dropped `\` continuation;
+/// a nested `({ … })` collapsed to a brace list, both adjacent and spaced; a two-cycle at width 40
+/// on a nested parenthesized ternary, because the two passes measure the body at different columns
+/// (#43/#108's defect, not the claim's); and a `\`-continued string literal gaining a ` \` inside
 /// its own text on every pass, which changes what the macro expands to.
 ///
-/// A body that is one bracket is not one construct — it is whatever the macro's use makes of it, and
-/// §6 prefers passthrough. The `#104` fix that shipped with these findings is narrow and separate: a
+/// A body that is one bracket is still not one construct — it is whatever the macro's use makes of
+/// it — and the claim's guards keep the shapes above passing through, the nested ternary's two-cycle
+/// included. The `#104` fix that shipped with these findings is narrow and separate: a
 /// statement-expression body is laid out only when its `)` is the body's last token.
 #[test]
-fn a_define_body_that_is_one_group_passes_through() {
-    for src in [
+fn a_define_body_that_is_one_whole_bracket_is_claimed() {
+    // #77's fourth item: a body that is one whole bracket is a container now — the ternary and the
+    // chain break with `\` continuations — while a bare chain, a partial paren, the statement
+    // expression shapes and the literal keep their passthrough.
+    assert_eq!(
+        format(
+            "#define M(x) ((x) ? aaaaaaaaaaaaaaaaaaaaaa : bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd)\n"
+        ),
+        "#define M(x) ( \\\n\t(x) ? aaaaaaaaaaaaaaaaaaaaaa : \\\n\tbbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : \\\n\tdddddddddddddddddddd \\\n)\n"
+    );
+    assert_eq!(
+        format(
+            "#define N(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd)\n"
+        ),
+        "#define N(x) ( \\\n\t(x) + \\\n\taaaaaaaaaaaaaaaaaaaaaa + \\\n\tbbbbbbbbbbbbbbbbbbbbbb + \\\n\tcccccccccccccccccccc + \\\n\tdddddddddddddddddddd \\\n)\n"
+    );
+    // A whole `[` body is the same claim, one bracket over — and the nested-ternary two-cycle's
+    // bracket form passes through exactly like the paren form (both pinned below).
+    assert_eq!(
+        format(
+            "#define IDX [aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd]\n"
+        ),
+        "#define IDX [ \\\n\taaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : \\\n\tdddddddddddddddddddd \\\n]\n"
+    );
+    for claimed in [
         "#define M(x) ((x) ? aaaaaaaaaaaaaaaaaaaaaa : bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd)\n",
         "#define N(x) ((x) + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd)\n",
+        "#define IDX [aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb ? cccccccccccccccccccc : dddddddddddddddddddd]\n",
+    ] {
+        assert_eq!(
+            format(&format(claimed)),
+            format(claimed),
+            "fixpoint: {claimed:?}"
+        );
+    }
+    for src in [
         // A bare chain gets no parentheses of jphfmt's, however long it is: they would be tokens the
         // author did not write, in a body whose expansion is the author's to control.
         "#define Q(x) x + aaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccc + dddddddddddddddddddd\n",
@@ -187,9 +222,16 @@ fn a_define_body_that_is_one_group_passes_through() {
         assert_eq!(format(src), src, "{src:?}");
     }
 
-    // The nested-ternary two-cycle showed at width 40, so the width it showed at is the one asserted.
-    let ternary = "#define value(x) ((123 ? 0xff : (a)) ? (t))\n";
-    assert_eq!(jphfmt::format_with_width(ternary, 40), ternary);
+    // The nested-ternary two-cycle showed at width 40, so the width it showed at is the one asserted
+    // — both the paren form and the bracket form the claim's depth guard seeds for.
+    for two_cycle in [
+        "#define value(x) ((123 ? 0xff : (a)) ? (t))\n",
+        // The spacing pass tightens the subscript's `[` against the params' `)`, so the bracket
+        // form's canonical spelling is the tight one.
+        "#define value(x)[(123 ? 0xff : (a)) ? (t)]\n",
+    ] {
+        assert_eq!(jphfmt::format_with_width(two_cycle, 40), two_cycle);
+    }
 }
 
 /// A statement expression is a parenthesized group, so the container arm above claims a body that is

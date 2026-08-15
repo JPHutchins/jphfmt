@@ -78,4 +78,13 @@ proptest! {
         let once = format(&s);
         prop_assert_eq!(format(&once), once);
     }
+
+    /// The pieced generator can spell `#define`, which the width-sweeping test's generator cannot —
+    /// so a width-specific two-cycle in a claimed shape (the define-body group's at width 40) fails
+    /// here rather than depending on one conformance pin.
+    #[test]
+    fn pieced_input_is_idempotent_across_widths(s in pieced(), width in 1usize..=120) {
+        let once = format_with_width(&s, width);
+        prop_assert_eq!(format_with_width(&once, width), once);
+    }
 }
