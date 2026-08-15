@@ -11,11 +11,11 @@ use super::builders::{
 };
 use super::scope::scoped;
 use super::tokens::{
-    closes_block, closes_control_header, closes_literal_type, contains_comment, directive_end,
-    element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia, holds_directive,
-    is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break, is_comment,
-    is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in,
-    next_paren, opens_stmt_expr, prev_nontrivia, prev_significant, spans_lines,
+    assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
+    directive_end, element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia,
+    holds_directive, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
+    is_comment, is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia,
+    next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia, prev_significant, spans_lines,
     split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
@@ -726,16 +726,43 @@ fn last_nonspace_char(out: &str) -> Option<char> {
 /// past it can itself break onto later lines — making the measure stable across passes (a chained
 /// `f(x)->g(...)` reserves only `->g(`, not `g`'s arguments), which keeps formatting idempotent.
 /// Comments are ignored so a trailing comment never forces a break.
+/// Whether the reserve's span ends at `j` — the same three stops [`trailing_reserved`]'s loop makes:
+/// a line break, a bracket or a `;`. Comments are not stops, and neither is a same-line comment's
+/// own text.
+fn ends_reserve(toks: &[Token], j: usize) -> bool {
+    let t = &toks[j];
+    match t.kind {
+        TokenKind::Newline => true,
+        TokenKind::LineComment | TokenKind::BlockComment => false,
+        TokenKind::Punct if matches!(t.text, "(" | "[" | "{" | ";") => true,
+        _ => t.text.contains('\n'),
+    }
+}
+
 fn trailing_reserved(toks: &[Token], from: usize) -> usize {
     // `pending` holds the width of a whitespace run: it counts only once something follows it, since
     // whitespace ending the line never reaches the output — reserving for it would measure a line
     // this pass is about to shorten, and reach a different verdict than the next pass does.
     let (mut width, mut pending) = (0usize, 0usize);
+    // The head [`super::tokens::operand_span`] would strip from this fragment: everything through
+    // the last assignment, or a leading `return`. An operator in the head is not a chain break — a
+    // chain is not cut inside an assignment's left side (#119) — and reading one here is what made
+    // this reserve disagree with `loosest_cuts`, which sees the span with the head already gone
+    // (#126). The search takes the same span the loop below measures: the three stops in
+    // [`ends_reserve`], add a fourth to both.
+    let head = (from..toks.len())
+        .take_while(|&j| !ends_reserve(toks, j))
+        .fold(None, |head, j| match head {
+            _ if assigns(&toks[j]) => Some(j),
+            None if toks[j].text == "return" => Some(j),
+            _ => head,
+        })
+        .map_or(0, |j| j + 1);
     for (j, t) in toks.iter().enumerate().skip(from) {
         // A chain breaks after its operator as a bracket group breaks after its bracket: what
         // follows can land on a later line, so its flat width is not this construct's to reserve —
         // and once it has broken, the next pass measures a shorter run and decides differently.
-        if is_chain_break(toks, j) {
+        if is_chain_break(toks, j) && j >= head {
             return width + pending + display_width(t.text);
         }
         let counted = match t.kind {
@@ -888,5 +915,52 @@ mod tests {
             tok(TokenKind::Punct, ";"),
         ];
         assert_eq!(trailing_reserved(&toks, 0), 1);
+    }
+
+    #[test]
+    fn trailing_reserved_keeps_counting_past_an_assignments_left_side() {
+        // An operator before the fragment's last `=` is in the assignment's left side, where a chain
+        // does not break (#119), so the reserve must not stop there either — `loosest_cuts` reads the
+        // span with the head already gone, and the reserve reading a break made the two disagree
+        // (#126).
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Operator, "|"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Ident, "b"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Punct, "="),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Ident, "c"),
+            tok(TokenKind::Punct, ";"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0), display_width("a | b = c;"));
+        // A `return` heads a fragment the same way, while no assignment has.
+        let toks = [
+            tok(TokenKind::Ident, "return"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Operator, "|"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Ident, "b"),
+            tok(TokenKind::Punct, ";"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0), display_width("return a |"));
+        // After the last `=` the chain is the reserve's again.
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Punct, "="),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Ident, "b"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Operator, "|"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Ident, "c"),
+            tok(TokenKind::Punct, ";"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0), display_width("a = b |"));
     }
 }
