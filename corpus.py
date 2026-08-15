@@ -73,10 +73,11 @@ ENGLISH = {**os.environ, "LC_ALL": "C"}
 OWNED = " \t\r\n\v\f\\"
 # Counted as bytes, so the two sides compare the same way whether one arrives decoded and the other not.
 OWNED_BYTES = OWNED.encode()
-# The two reasons gcc gives no baseline, kept apart because they are not the same claim: one is gcc
-# reading the file and stopping, the other gcc never answering at all.
+# The three reasons gcc gives no baseline, kept apart because they are not the same claim: gcc reading
+# the file and stopping, gcc never answering at all, and gcc failing.
 GAVE_UP = "gcc read it and gave up"
 NO_ANSWER = "gcc never answered"
+FAILED = "gcc failed"
 
 
 class Errors(NamedTuple):
@@ -168,7 +169,8 @@ class Unmeasured(NamedTuple):
 	in the world, and #100 was a content-loss bug no compiler would have caught anyway.
 
 	`Halted` says gcc could not read it as C; a `TimedOut` or a `Crashed` says gcc could not answer,
-	which is this machine's problem rather than the file's. Reported apart for that reason."""
+	and a `ToolFailed` says gcc failed. Either way this machine's problem rather than the file's.
+	Reported apart for that reason."""
 
 	path: Path
 	why: Compile
@@ -213,11 +215,14 @@ def measure(label: str, data: bytes, path: Path) -> Compile:
 		# `:` out of the copy's name: [`DIAGNOSTIC`] reads gcc's own location as the text before the
 		# first `:<digits>:`, so a basename holding one made every located diagnostic unmatchable — the
 		# same file then read as `Errors(0)` when it was clean and `ToolFailed` when it was not.
-		# Truncated from the left so the tail — the extension gcc dispatches on — survives: this prefix
-		# is 20-21 bytes, and a basename already near `NAME_MAX` would make the copy ENAMETOOLONG, which
-		# is a harness failure wearing a verdict about the file.
-		stem = path.name.replace(":", "_")
-		copy = Path(tmp) / f"jphfmt-corpus-{label}-{stem[-200:]}"
+		# Truncated by bytes from the left, so the tail — the extension gcc dispatches on — survives:
+		# `NAME_MAX` counts bytes, this prefix is 20-21 of them, and a basename already near the limit
+		# would make the copy ENAMETOOLONG — a harness failure wearing a verdict about the file.
+		stem = (
+			path.name.replace(":", "_").encode("utf-8", "surrogateescape")[-200:]
+			.decode("utf-8", "surrogateescape")
+		)
+		copy = Path(tmp) / f"jphfmt-corpus-{label}-{stem}"
 		copy.write_bytes(data)
 		return compiles(copy, path.parent)
 
@@ -249,7 +254,10 @@ def compiles(source: Path, include: Path) -> Compile:
 	# wrong: an internal error, an out-of-memory, a driver refusal. Counting alone would read it as a
 	# clean compile, and `Errors(0)` as a *measured* baseline — the vacuous pass, twice over.
 	if gcc.returncode != 0 and found == 0:
-		return ToolFailed(gcc.stderr.strip().splitlines()[-1] if gcc.stderr.strip() else "(no stderr)")
+		# The first line with something on it, as in the fatal branch below: the last is gcc's trailing
+		# `compilation terminated.`, which names nothing about why it failed.
+		rest = (line.strip() for line in gcc.stderr.splitlines())
+		return ToolFailed(next((line for line in rest if line), "(no stderr)"))
 	# A `fatal error` is where gcc stopped, not what it found: everything after it went unread, so the
 	# count describes the prefix it managed rather than the file. Both sides report the same one and the
 	# comparison passes having checked nothing — the vacuous pass this whole harness exists to refuse.
@@ -494,7 +502,8 @@ def describe_unmeasured(unmeasured: tuple[Unmeasured, ...]) -> tuple[str, ...]:
 	one of them was still formatted and held to the properties that need no compiler.
 
 	A `Halted` is gcc reading the file and giving up: not C, or C whose `#include` this cannot resolve.
-	The rest are gcc never answering, which is this machine and a different claim.
+	A `TimedOut` or a `Crashed` is gcc never answering, and a `ToolFailed` is gcc failing — either way
+	this machine, and a different claim.
 
 	>>> describe_unmeasured(())
 	()
@@ -502,10 +511,19 @@ def describe_unmeasured(unmeasured: tuple[Unmeasured, ...]) -> tuple[str, ...]:
 	...     print(line)
 	1 file has no gcc baseline — gcc read it and gave up; the format properties still ran
 	  a.h: gcc gave up: x.h: No such file
+	>>> for line in describe_unmeasured(
+	...     (Unmeasured(Path("a.h"), TimedOut(30)), Unmeasured(Path("b.h"), ToolFailed("cc1: out of memory")))
+	... ):
+	...     print(line)
+	1 file has no gcc baseline — gcc never answered; the format properties still ran
+	  a.h: no answer in 30s
+	1 file has no gcc baseline — gcc failed; the format properties still ran
+	  b.h: gcc failed: cc1: out of memory
 	"""
 	groups = (
 		(tuple(u for u in unmeasured if isinstance(u.why, Halted)), GAVE_UP),
-		(tuple(u for u in unmeasured if not isinstance(u.why, Halted)), NO_ANSWER),
+		(tuple(u for u in unmeasured if isinstance(u.why, (TimedOut, Crashed))), NO_ANSWER),
+		(tuple(u for u in unmeasured if isinstance(u.why, ToolFailed)), FAILED),
 	)
 	lines: list[str] = []
 	for group, why in groups:
@@ -519,23 +537,33 @@ def describe_unmeasured(unmeasured: tuple[Unmeasured, ...]) -> tuple[str, ...]:
 	return tuple(lines)
 
 
+def printable(path: Path) -> str:
+	"""The path rendered for stdout: a name whose bytes are not UTF-8 carries lone surrogates, which
+	a strict stdout — what a piped run has — cannot encode.
+
+	>>> printable(Path("bad" + chr(0xDCFF) + ".h"))
+	'bad\\\\udcff.h'
+	"""
+	return str(path).encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def report(verdict: Verdict) -> str:
 	match verdict:
 		case Unformattable(path, status, stderr) if status < 0:
-			return f"SIGNAL {-status:<3} {path}\n           {stderr.strip() or '(no stderr)'}"
+			return f"SIGNAL {-status:<3} {printable(path)}\n           {stderr.strip() or '(no stderr)'}"
 		case Unformattable(path, status, stderr):
-			return f"EXIT {status:<4} {path}\n           {stderr.strip() or '(no stderr)'}"
+			return f"EXIT {status:<4} {printable(path)}\n           {stderr.strip() or '(no stderr)'}"
 		case Stalled(path, seconds):
-			return f"HUNG      {path}\n           no output in {seconds}s"
+			return f"HUNG      {printable(path)}\n           no output in {seconds}s"
 		case NotIdempotent(path, line, again):
-			return f"UNSTABLE  {path}\n            once: {line!r}\n           twice: {again!r}"
+			return f"UNSTABLE  {printable(path)}\n            once: {line!r}\n           twice: {again!r}"
 		case Regressed(path, before, after):
-			return f"REGRESSED {path}\n           gcc: {describe(before)} -> {describe(after)}"
+			return f"REGRESSED {printable(path)}\n           gcc: {describe(before)} -> {describe(after)}"
 		case LostContent(path, before, after):
-			return f"LOST      {path}\n           {before - after} of {before} characters gone"
+			return f"LOST      {printable(path)}\n           {before - after} of {before} characters gone"
 		case Broke(path, error):
 			indented = error.replace("\n", "\n           ")
-			return f"HARNESS   {path}\n           {indented}"
+			return f"HARNESS   {printable(path)}\n           {indented}"
 
 
 def main(argv: tuple[str, ...]) -> int:
@@ -586,14 +614,19 @@ def main(argv: tuple[str, ...]) -> int:
 	# is interrupted — or watched — should have already named everything it found.
 	clean = 0
 	unmeasured: list[Unmeasured] = []
-	# The pool is built inside the `try` too: constructing one spawns its workers, so a Ctrl+C in that
-	# window used to propagate with `pool` unbound — past the handler whose whole job is to shut it down.
+	reported: set[Path] = set()
+	# The pool is built inside the `try` so a Ctrl+C in the submission loop reaches the handler, and
+	# starts unbound so one delivered mid-construction does not meet the handler with nothing to shut
+	# down.
+	pool: ThreadPoolExecutor | None = None
 	try:
 		pool = ThreadPoolExecutor(max_workers=args.jobs)
-		pending = [pool.submit(checked, args.binary, path) for path in files]
+		pending = {pool.submit(checked, args.binary, path): path for path in files}
 		for done in as_completed(pending):
 			verdicts, unmeasured_here = done.result()
 			clean += not verdicts
+			if verdicts:
+				reported.add(pending[done])
 			unmeasured.extend(filter(None, (unmeasured_here,)))
 			for verdict in verdicts:
 				print(report(verdict), flush=True)
@@ -601,11 +634,13 @@ def main(argv: tuple[str, ...]) -> int:
 		# `with ThreadPoolExecutor(...)` waits for every queued file on the way out, so a Ctrl+C sat
 		# there for the rest of the run — for a corpus whose slowest file takes minutes, long enough to
 		# look like a hang. Cancel what has not started and let the running workers go.
-		pool.shutdown(wait=False, cancel_futures=True)
+		if pool is not None:
+			pool.shutdown(wait=False, cancel_futures=True)
 		for line in describe_unmeasured(tuple(unmeasured)):
 			print(line, file=sys.stderr)
 		print(f"interrupted after {clean} clean of {len(files)}", file=sys.stderr)
 		return 130
+	assert pool is not None
 	pool.shutdown()
 
 	# Named, and to stderr, so the verdict stream stays greppable. Every one of these was formatted and
@@ -614,18 +649,26 @@ def main(argv: tuple[str, ...]) -> int:
 	for line in describe_unmeasured(tuple(unmeasured)):
 		print(line, file=sys.stderr)
 	# gcc reading a file and giving up is a verdict about the file, and 117 of this machine's 1200 are
-	# that. gcc never answering is this machine failing, and a run that counts those clean reports a
-	# pass it did not earn — the shape `Unmeasured` was a hard verdict for before the corpus stopped
-	# excluding anything.
-	stalled = tuple(u for u in unmeasured if not isinstance(u.why, Halted))
+	# that. gcc never answering, or gcc failing, is this machine failing, and a run that counts those
+	# clean reports a pass it did not earn — the shape `Unmeasured` was a hard verdict for before the
+	# corpus stopped excluding anything. When not one file produced an error count, the comparison ran
+	# on nothing, which a clean pass cannot be about either.
+	stalled = tuple(u for u in unmeasured if isinstance(u.why, (TimedOut, Crashed)))
+	failed = tuple(u for u in unmeasured if isinstance(u.why, ToolFailed))
+	uncompared = len(unmeasured) == len(files)
 	short = len(files) < args.limit
-	if clean == len(files) and not short and not stalled:
+	if clean == len(files) and not short and not stalled and not failed and not uncompared:
 		print(f"{clean} of {len(files)} files clean")
 		return 0
-	# The headline never claims a clean pass on a failing run, and says which of the three failed it.
+	# The headline never claims a clean pass on a failing run, and says which of the reasons failed it.
+	# The checks clause excludes the machine-failure files, so the counts sum to the failing files
+	# instead of double-counting them.
+	both = sum(1 for u in stalled + failed if u.path in reported)
 	why = (
-		[f"{len(files) - clean} the checks reported on"] * (clean != len(files))
+		[f"{len(files) - clean - both} the checks reported on"] * (len(files) - clean - both > 0)
 		+ [f"{len(stalled)} gcc could not answer for"] * bool(stalled)
+		+ [f"{len(failed)} gcc failed for"] * bool(failed)
+		+ ["a compile comparison that ran on nothing"] * uncompared
 		+ [f"a corpus of {len(files)} where {args.limit} was asked for"] * short
 	)
 	print(f"{clean} of {len(files)} files clean; the run fails on {', '.join(why)}", file=sys.stderr)
