@@ -1159,6 +1159,72 @@ fn a_list_is_never_bounded() {
     assert_eq!(format(src), src);
 }
 
+/// #52: a conjunct that is a single comparison of one whole call prefers its own break — the
+/// call's arguments — over the comparison's, with the layout's parentheses around it, and the
+/// operator stays with its right operand on the call's close line. The wrapped form the next pass
+/// re-reads lays out to the same shape.
+#[test]
+fn a_comparison_conjunct_breaks_inside_its_call() {
+    let src = "if (all_names != NULL\n\t&& new_names != NULL\n\t&& default_by_name != NULL\n\t&& append_inherited(base, all_names, default_by_name) == RESULT_OK\n\t&& append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK) {\n\treturn 1;\n}\n";
+    let expected = "if (\n\tall_names != NULL &&\n\tnew_names != NULL &&\n\tdefault_by_name != NULL &&\n\tappend_inherited(base, all_names, default_by_name) == RESULT_OK &&\n\t(\n\t\tappend_declared(\n\t\t\tbase,\n\t\t\tannotations,\n\t\t\tnamespace,\n\t\t\tall_names,\n\t\t\tnew_names,\n\t\t\tdefault_by_name\n\t\t) == RESULT_OK\n\t)\n) {\n\treturn 1;\n}\n";
+    assert_eq!(format(src), expected);
+    assert_eq!(
+        format(expected),
+        expected,
+        "the laid-out form is a fixpoint"
+    );
+    // A conjunct that fits keeps its flat form, no parentheses.
+    assert_eq!(
+        format("if (x && append(a, b) == RESULT_OK) { g(); }\n"),
+        "if (x && append(a, b) == RESULT_OK) { g(); }\n"
+    );
+    // The head-bounded contexts converge to the same shape on both passes.
+    for src in [
+        "x = append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n",
+        "return append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n",
+        "int v = append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+    }
+    // A headless conjunct writes no stray head: it bounds itself, and it fits flat it stays
+    // exactly as the author wrote it.
+    assert_eq!(
+        format("printf(\"%d\\n\", strcmp(a, b) == 0);\n"),
+        "printf(\"%d\\n\", strcmp(a, b) == 0);\n"
+    );
+    assert_eq!(
+        format("for (int i = 0; strcmp(a, b) == 0; i++) { f(i); }\n"),
+        "for (int i = 0; strcmp(a, b) == 0; i++) { f(i); }\n"
+    );
+    assert_eq!(
+        format("int arr[] = { strcmp(a, b) == 0 };\n"),
+        "int arr[] = {strcmp(a, b) == 0};\n"
+    );
+    let headless: &[(&str, &str)] = &[
+        (
+            "printf(\"%d\\n\", strcmp(a, b) == 0);\n",
+            "printf(\n\t\"%d\\n\",\n\t(\n\t\tstrcmp(\n\t\t\ta,\n\t\t\tb\n\t\t) == 0\n\t)\n);\n",
+        ),
+        (
+            "for (int i = 0; strcmp(a, b) == 0; i++) {\n\tf(i);\n}\n",
+            "for (\n\tint i = 0;\n\t(\n\t\tstrcmp(\n\t\t\ta,\n\t\t\tb\n\t\t) == 0\n\t);\n\ti++\n) {\n\tf(\n\t\ti\n\t);\n}\n",
+        ),
+        (
+            "int arr[] = { strcmp(a, b) == 0 };\n",
+            "int arr[] = {\n\t(\n\t\tstrcmp(\n\t\t\ta,\n\t\t\tb\n\t\t) == 0\n\t),\n};\n",
+        ),
+    ];
+    for &(src, expected) in headless {
+        assert_eq!(&format_with_width(src, 1), expected, "headless: {src:?}");
+        assert_eq!(
+            format_with_width(expected, 1),
+            expected,
+            "the laid-out form is a fixpoint: {src:?}"
+        );
+    }
+}
+
 #[test]
 fn a_chain_that_fits_stays_flat() {
     for src in [
