@@ -11,11 +11,12 @@
 
 use super::tokens::{
     closes_literal_type, element_join_respaced, has_middle_newline, has_non_trivia, has_top_level,
-    has_top_level_question, holds_directive, is_balanced, is_bit_field_colon, is_call_head_pair,
-    is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket,
-    next_nontrivia, opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
-    respaced_when_joined_top, segments_at, spans_lines, split_chain, split_designators,
-    split_on_commas, split_top_level, split_top_level_with_cuts, star_gap_respaced,
+    has_top_level_question, holds_directive, holds_juxtaposed_brackets, is_balanced,
+    is_bit_field_colon, is_call_head_pair, is_comparison, is_subscript, is_ternary_chain,
+    is_trivia, match_brace, match_bracket, next_nontrivia, opens_with_separator, operand_span,
+    prev_nontrivia, respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines,
+    split_chain, split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
+    star_gap_respaced,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -240,7 +241,13 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
         // not at the operator, which stays with its right operand on the call's close line. The
         // headless position bounds it, an [`Bracketing::OnBreak`] in all but spelling.
         if !unboundable && let Some((elements, seps)) = conjunct_element(&segments, &ops) {
-            return build_bounded_doc("", elements, seps, Fit::Measured, Bound::Parens);
+            return build_bounded_doc(
+                Doc::concat([]),
+                elements,
+                seps,
+                Fit::Measured,
+                Bound::Parens,
+            );
         }
         return build_container(
             &Bracketing::Hanging,
@@ -516,7 +523,11 @@ fn build_container(
         // the two must not share a fit.
         Bracketing::OnBreak { head } => Doc::concat(
             (!head.is_empty())
-                .then(|| Doc::concat([head.clone(), Doc::text(" ")]))
+                // The boundary after the head's trailing space: the head's own groups are
+                // measured with the head's line and nothing past it — the operands have a fit of
+                // their own, and a width read across them is one the next pass, measuring the head
+                // alone, does not keep (#108's review).
+                .then(|| Doc::concat([head.clone(), Doc::text(" "), Doc::Boundary]))
                 .into_iter()
                 .chain([fit.wrap(Doc::concat([
                     Doc::IfBreak {
@@ -559,7 +570,7 @@ fn edge_needs_pad(inner: &[Token], edge: Option<usize>) -> bool {
 }
 
 /// `bracketing`'s spelling, with the pads the edge tokens decide.
-fn pad_for<'a>(inner: &[Token], bracketing: &Bracketing<'a>) -> Bracketing<'a> {
+fn pad_for(inner: &[Token], bracketing: &Bracketing) -> Bracketing {
     let Bracketing::Written {
         open,
         close,
@@ -723,6 +734,12 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     if respaced_when_joined(&toks[..start]) {
         return None;
     }
+    // Juxtaposed brackets in the head are measured one handler at a time on the next pass, each
+    // against a trailing reserve that stops at the second bracket — a single lookahead crosses it
+    // and reads the other answer (§6, #108's review).
+    if holds_juxtaposed_brackets(&toks[..start]) {
+        return None;
+    }
     // Through the same builder the operands go through, not [`render_segment`]: whatever is in the
     // head is a construct with its own width, and rendering it flat measured none of them (#108).
     let head = build_expr_doc(&toks[..start]);
@@ -744,7 +761,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // clause branch re-reads later agrees.
         if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_bounded_doc(
-                &head,
+                head.clone(),
                 elements,
                 seps,
                 Fit::Measured,

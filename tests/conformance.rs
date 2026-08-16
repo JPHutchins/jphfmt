@@ -1965,13 +1965,14 @@ fn a_chain_head_is_measured_like_its_operands() {
             40,
             "void f(void) {\n\tarr[index_of(\n\t\tfirst_argument,\n\t\tsecond_argument\n\t)] = alpha | beta;\n}\n",
         ),
-        // The head breaks and the operands do not, which is the whole point: they are measured
-        // apart. Sharing one fit made the operands break whenever the head did, and the next pass —
-        // measuring each alone — disagreed.
+        // The head fits on its own line and stays flat; the operands take their own parens. Sharing
+        // one fit made the head break whenever the operands did, and the next pass — measuring the
+        // head alone, its trailing reserve stopping at the operands' bracket — disagreed (#108's
+        // review). A `Doc::Boundary` after the head is what keeps the two verdicts the same.
         (
             "void f(void) {\n\tarr[a + b] = a | b;\n}\n",
             18,
-            "void f(void) {\n\tarr[\n\t\ta +\n\t\tb\n\t] = a | b;\n}\n",
+            "void f(void) {\n\tarr[a + b] = (\n\t\ta |\n\t\tb\n\t);\n}\n",
         ),
     ] {
         let out = jphfmt::format_with_width(src, width);
@@ -1987,6 +1988,50 @@ fn a_chain_head_is_measured_like_its_operands() {
         // Measured is not the same as broken: a head that fits is still written flat.
         assert_eq!(jphfmt::format_with_width(src, 100), src);
     }
+}
+
+#[test]
+fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
+    // The draft of #108 recorded 211 shapes that still alternated: pass 1 breaks the head on the
+    // operands' flat width, pass 2 measures the head alone — its trailing reserve stops at the
+    // operands' bracket — and joins it back. The boundary after the head stops the head's own
+    // groups' measurement there, the same verdict the next pass reaches either way.
+    for (src, width) in [
+        (
+            "void f(void) {\n\tarr[a + b] = aaaa | bbbb | cccc;\n}\n",
+            18,
+        ),
+        (
+            "void f(void) {\n\tarr[a + b] = aaaa | bbbb | cccc;\n}\n",
+            20,
+        ),
+        (
+            "void f(void) {\n\tarr[a + b] = aaaa | bbbb | cccc;\n}\n",
+            24,
+        ),
+        ("void f(void) {\n\tarr[a + b] = a ? b : c ? d : e;\n}\n", 18),
+        (
+            "void f(void) {\n\tarr[a + b] = a ? b : c ? d : e;\n}\n",
+            100,
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be a fixpoint: {src:?} at width {width}"
+        );
+        for line in once.lines() {
+            assert!(display_width(line) <= width, "over the limit: {line:?}");
+        }
+    }
+    // A head with juxtaposed brackets — `arr[index_of(a, b)][c]` — is measured one handler at a
+    // time on the next pass, each against a trailing reserve that stops at the second bracket,
+    // while this pass's single lookahead crosses it. The two disagree, so the chain is refused and
+    // the author's form passes through (§6): the same span must read the same either way.
+    let juxtaposed = "void f(void) {\n\tarr[index_of(a, b)][c] = a | b | c | d;\n}\n";
+    assert_eq!(jphfmt::format_with_width(juxtaposed, 24), juxtaposed);
+    assert_eq!(jphfmt::format_with_width(juxtaposed, 100), juxtaposed);
 }
 
 #[test]

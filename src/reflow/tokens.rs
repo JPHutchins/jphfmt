@@ -1035,6 +1035,19 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
     }
 }
 
+/// Whether a bracket that closes one construct is followed, trivia aside, by the bracket that
+/// opens the next — `arr[f(x)][c]`, `f(x)(y)`, `(T){…}[0]`. The next pass lays such a head's
+/// constructs out one handler at a time, each measured with a trailing reserve that stops at the
+/// second bracket; this pass's single lookahead crosses it and measures its flat width. The two
+/// verdicts disagree on the same tokens, so a chain whose head holds one is refused (§6, #108's
+/// review).
+pub(super) fn holds_juxtaposed_brackets(toks: &[Token]) -> bool {
+    toks.iter().enumerate().any(|(i, t)| {
+        matches!(t.text, "]" | ")" | "}")
+            && next_nontrivia(toks, i + 1).is_some_and(|j| matches!(toks[j].text, "[" | "("))
+    })
+}
+
 /// Whether what follows a `#` on its logical line makes it a directive's.
 fn opens_directive(after: &[Token]) -> bool {
     let line: Vec<&Token> = after
