@@ -2032,6 +2032,20 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
     let juxtaposed = "void f(void) {\n\tarr[index_of(a, b)][c] = a | b | c | d;\n}\n";
     assert_eq!(jphfmt::format_with_width(juxtaposed, 24), juxtaposed);
     assert_eq!(jphfmt::format_with_width(juxtaposed, 100), juxtaposed);
+    // The review's residual shapes, now the same refusal: a second construct after the first
+    // (a double assignment's head) and a breakable construct a bracket deep (a chain argument
+    // inside the head's call). Each passes through and stays there — the two passes measured
+    // different budgets before.
+    let double_assign = "void f(void) {\n\tarr[a + b] = f(x) = c | d;\n}\n";
+    let deep_break = "void f(void) {\n\tarr[f(a | b)] = x | y;\n}\n";
+    for (src, width) in [(double_assign, 19), (double_assign, 20), (deep_break, 14)] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "{src:?} at {width}"
+        );
+    }
 }
 
 #[test]

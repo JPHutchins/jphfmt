@@ -11,11 +11,11 @@
 
 use super::tokens::{
     closes_literal_type, element_join_respaced, has_middle_newline, has_non_trivia, has_top_level,
-    has_top_level_question, holds_directive, holds_juxtaposed_brackets, is_balanced,
-    is_bit_field_colon, is_call_head_pair, is_comparison, is_subscript, is_ternary_chain,
-    is_trivia, match_brace, match_bracket, next_nontrivia, opens_with_separator, operand_span,
-    prev_nontrivia, respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines,
-    split_chain, split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
+    has_top_level_question, holds_directive, holds_head_split, is_balanced, is_bit_field_colon,
+    is_call_head_pair, is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace,
+    match_bracket, next_nontrivia, opens_with_separator, operand_span, prev_nontrivia,
+    respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines, split_chain,
+    split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
     star_gap_respaced,
 };
 use crate::doc::Doc;
@@ -734,10 +734,11 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     if respaced_when_joined(&toks[..start]) {
         return None;
     }
-    // Juxtaposed brackets in the head are measured one handler at a time on the next pass, each
-    // against a trailing reserve that stops at the second bracket — a single lookahead crosses it
-    // and reads the other answer (§6, #108's review).
-    if holds_juxtaposed_brackets(&toks[..start]) {
+    // A head whose shape the two passes measure differently — a second construct after the
+    // first, or a breakable construct a bracket deep — is refused: the next pass lays it out one
+    // handler at a time, each against a trailing reserve that stops where this pass's single
+    // lookahead crosses, and the same tokens read two ways (§6, #108's review).
+    if holds_head_split(&toks[..start]) {
         return None;
     }
     // Through the same builder the operands go through, not [`render_segment`]: whatever is in the

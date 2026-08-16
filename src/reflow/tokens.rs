@@ -1035,17 +1035,29 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
     }
 }
 
-/// Whether a bracket that closes one construct is followed, trivia aside, by the bracket that
-/// opens the next — `arr[f(x)][c]`, `f(x)(y)`, `(T){…}[0]`. The next pass lays such a head's
-/// constructs out one handler at a time, each measured with a trailing reserve that stops at the
-/// second bracket; this pass's single lookahead crosses it and measures its flat width. The two
-/// verdicts disagree on the same tokens, so a chain whose head holds one is refused (§6, #108's
-/// review).
-pub(super) fn holds_juxtaposed_brackets(toks: &[Token]) -> bool {
-    toks.iter().enumerate().any(|(i, t)| {
+/// Whether a chain's head holds a shape the two passes measure differently: a second bracket
+/// construct after the first — `arr[f(x)][c]`, `f(x)(y)`, a double assignment's `…] = f(x) =` —
+/// whose per-construct reserve on the next pass stops where this pass's single lookahead crosses;
+/// or a breakable construct a bracket deep — `arr[f(a | b)]` — whose inner group's fit the two
+/// passes give different budgets. Either way the same tokens read two ways, so a chain whose
+/// head holds one is refused (§6, #108's review).
+pub(super) fn holds_head_split(toks: &[Token]) -> bool {
+    let second_construct = toks.iter().enumerate().any(|(i, t)| {
         matches!(t.text, "]" | ")" | "}")
-            && next_nontrivia(toks, i + 1).is_some_and(|j| matches!(toks[j].text, "[" | "("))
-    })
+            && toks[i + 1..]
+                .iter()
+                .any(|u| matches!(u.text, "(" | "[" | "{"))
+    });
+    let (mut depth, mut deep_break) = (0i32, false);
+    for t in toks {
+        match t.text {
+            "(" | "[" => depth += 1,
+            ")" | "]" => depth = depth.saturating_sub(1),
+            "?" => deep_break |= depth >= 2,
+            text => deep_break |= depth >= 2 && CHAIN_CLASSES.iter().any(|c| c.contains(&text)),
+        }
+    }
+    second_construct || deep_break
 }
 
 /// Whether what follows a `#` on its logical line makes it a directive's.
