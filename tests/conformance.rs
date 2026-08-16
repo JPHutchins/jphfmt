@@ -1159,6 +1159,113 @@ fn a_list_is_never_bounded() {
     assert_eq!(format(src), src);
 }
 
+/// #52: a conjunct that is a single comparison of one whole call prefers its own break — the
+/// call's arguments — over the comparison's, with the layout's parentheses around it, and the
+/// operator stays with its right operand on the call's close line. The wrapped form the next pass
+/// re-reads lays out to the same shape.
+#[test]
+fn a_comparison_conjunct_breaks_inside_its_call() {
+    let src = "if (all_names != NULL\n\t&& new_names != NULL\n\t&& default_by_name != NULL\n\t&& append_inherited(base, all_names, default_by_name) == RESULT_OK\n\t&& append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK) {\n\treturn 1;\n}\n";
+    let expected = "if (\n\tall_names != NULL &&\n\tnew_names != NULL &&\n\tdefault_by_name != NULL &&\n\tappend_inherited(base, all_names, default_by_name) == RESULT_OK &&\n\t(\n\t\tappend_declared(\n\t\t\tbase,\n\t\t\tannotations,\n\t\t\tnamespace,\n\t\t\tall_names,\n\t\t\tnew_names,\n\t\t\tdefault_by_name\n\t\t) == RESULT_OK\n\t)\n) {\n\treturn 1;\n}\n";
+    assert_eq!(format(src), expected);
+    assert_eq!(
+        format(expected),
+        expected,
+        "the laid-out form is a fixpoint"
+    );
+    // A conjunct that fits keeps its flat form, no parentheses.
+    assert_eq!(
+        format("if (x && append(a, b) == RESULT_OK) { g(); }\n"),
+        "if (x && append(a, b) == RESULT_OK) { g(); }\n"
+    );
+    // The head-bounded contexts converge to the same shape on both passes.
+    for src in [
+        "x = append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n",
+        "return append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n",
+        "int v = append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+    }
+    // A headless conjunct writes no stray head: it bounds itself, and it fits flat it stays
+    // exactly as the author wrote it.
+    assert_eq!(
+        format("printf(\"%d\\n\", strcmp(a, b) == 0);\n"),
+        "printf(\"%d\\n\", strcmp(a, b) == 0);\n"
+    );
+    assert_eq!(
+        format("for (int i = 0; strcmp(a, b) == 0; i++) { f(i); }\n"),
+        "for (int i = 0; strcmp(a, b) == 0; i++) { f(i); }\n"
+    );
+    assert_eq!(
+        format("int arr[] = { strcmp(a, b) == 0 };\n"),
+        "int arr[] = {strcmp(a, b) == 0};\n"
+    );
+    let headless: &[(&str, &str)] = &[
+        (
+            "printf(\"%d\\n\", strcmp(a, b) == 0);\n",
+            "printf(\n\t\"%d\\n\",\n\t(\n\t\tstrcmp(\n\t\t\ta,\n\t\t\tb\n\t\t) == 0\n\t)\n);\n",
+        ),
+        (
+            "for (int i = 0; strcmp(a, b) == 0; i++) {\n\tf(i);\n}\n",
+            "for (\n\tint i = 0;\n\t(\n\t\tstrcmp(\n\t\t\ta,\n\t\t\tb\n\t\t) == 0\n\t);\n\ti++\n) {\n\tf(\n\t\ti\n\t);\n}\n",
+        ),
+        (
+            "int arr[] = { strcmp(a, b) == 0 };\n",
+            "int arr[] = {\n\t(\n\t\tstrcmp(\n\t\t\ta,\n\t\t\tb\n\t\t) == 0\n\t),\n};\n",
+        ),
+    ];
+    for &(src, expected) in headless {
+        assert_eq!(&format_with_width(src, 1), expected, "headless: {src:?}");
+        assert_eq!(
+            format_with_width(expected, 1),
+            expected,
+            "the laid-out form is a fixpoint: {src:?}"
+        );
+    }
+}
+#[test]
+fn a_conjunct_whose_left_breaks_keeps_the_right_operand_on_the_close_line() {
+    // The review's fuzz found the shape the pins could not: when the left call breaks, pass 2
+    // re-reads it through the `has_middle_newline` passthrough as one multi-line text, and the
+    // renderer's column accounting consumed the whole string — the right operand's group that fit
+    // on the close line in pass 1 broke in pass 2. The renderer now reads a text's newlines: the
+    // column after one is its last line's tail, the same column the structured doc's broken
+    // [`Doc::Line`]s reached.
+    let src = "x = p(check(*q, b(append), (T*)y)) > b(y);\n";
+    let expected = "x = (\n\tp(\n\t\tcheck(\n\t\t\t*q,\n\t\t\tb(\n\t\t\t\tappend\n\t\t\t),\n\t\t\t(T*)y\n\t\t)\n\t) > b(y)\n);\n";
+    let once = format_with_width(src, 20);
+    assert_eq!(once, expected, "the pinned shape");
+    assert_eq!(format_with_width(&once, 20), once, "and it is a fixpoint");
+
+    // The head-bounded form, pinned exactly: the head leads, the call explodes, the operator
+    // stays with its right operand on the close line.
+    let head = "x = append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK;\n";
+    let expected = "x = (\n\tappend_declared(\n\t\tbase,\n\t\tannotations,\n\t\tnamespace,\n\t\tall_names,\n\t\tnew_names,\n\t\tdefault_by_name\n\t) == RESULT_OK\n);\n";
+    let once = format_with_width(head, 40);
+    assert_eq!(once, expected, "the head-bounded broken form");
+    assert_eq!(format_with_width(&once, 40), once, "and it is a fixpoint");
+
+    // The sole-argument Enclosing form: the enclosing call's own parens bound the operands, and
+    // the conjunct writes no pair of its own.
+    let sole = "g(append_declared(base, annotations, namespace, all_names, new_names, default_by_name) == RESULT_OK);\n";
+    let expected = "g(\n\tappend_declared(\n\t\tbase,\n\t\tannotations,\n\t\tnamespace,\n\t\tall_names,\n\t\tnew_names,\n\t\tdefault_by_name\n\t) == RESULT_OK\n);\n";
+    let once = format_with_width(sole, 40);
+    assert_eq!(
+        once, expected,
+        "the Enclosing form writes no pair of its own"
+    );
+    assert_eq!(format_with_width(&once, 40), once, "and it is a fixpoint");
+
+    // A span whose width the model cannot describe — an unterminated literal spanning lines,
+    // spelled with a *real* newline inside the string token so `spans_lines` sees it — takes no
+    // conjunct parens: the same refusal `is_boundable` makes on the chain path.
+    let literal = "int arr[] = { f(\"abc\\\n def\") == 0 };\n";
+    let once = format_with_width(literal, 20);
+    assert!(!once.contains(" ( f("), "no stray-spaced parens: {once:?}");
+    assert_eq!(format_with_width(&once, 20), once, "and it is a fixpoint");
+}
+
 #[test]
 fn a_chain_that_fits_stays_flat() {
     for src in [

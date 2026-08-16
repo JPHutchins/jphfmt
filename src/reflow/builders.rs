@@ -12,8 +12,8 @@
 use super::tokens::{
     closes_literal_type, element_join_respaced, has_middle_newline, has_non_trivia, has_top_level,
     has_top_level_question, holds_directive, is_balanced, is_bit_field_colon, is_call_head_pair,
-    is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket, next_nontrivia,
-    opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
+    is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket,
+    next_nontrivia, opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
     respaced_when_joined_top, segments_at, spans_lines, split_chain, split_designators,
     split_on_commas, split_top_level, split_top_level_with_cuts, star_gap_respaced,
 };
@@ -231,6 +231,17 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
     {
+        // The same refusals the chain path makes in `is_boundable`: a span whose width the model
+        // cannot describe (an unterminated literal spanning lines) or whose `#` a later pass
+        // rewrites gets no conjunct parens either (#134's review).
+        let unboundable = span_unmeasurable(toks);
+        // #52's conjunct: a single comparison whose left operand is one whole call reads as one
+        // term — its flat form is the call's, and its break belongs inside the call's arguments,
+        // not at the operator, which stays with its right operand on the call's close line. The
+        // headless position bounds it, an [`Bracketing::OnBreak`] in all but spelling.
+        if !unboundable && let Some((elements, seps)) = conjunct_element(&segments, &ops) {
+            return build_bounded_doc("", elements, seps, Fit::Measured, Bound::Parens);
+        }
         return build_container(
             &Bracketing::Hanging,
             segment_docs(&segments),
@@ -338,8 +349,9 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
 ///
 /// [`Each`](Seps::Each) owns its strings deliberately: [`chain_seps`] builds ` |` from the operator's
 /// text plus a leading space, so those do not exist to borrow. Every other site names its separator as
-/// a literal — except one, which names none: [`build_cond_doc`]'s single-element condition is not a
-/// list, and says so with an empty `Each` rather than a string it would never read.
+/// a literal — except two, which name none: [`build_cond_doc`]'s single-element condition and
+/// #52's parenthesised conjunct are not lists, and say so with an empty `Each` rather than a
+/// string they would never read.
 ///
 /// Which removes the *construction* and nothing further: `Doc::Text` owns its string, so
 /// [`trailing_items`] still allocates one per gap for [`Every`](Seps::Every) where the `Vec<String>`
@@ -386,8 +398,9 @@ fn trailing_items(segments: Vec<Doc>, seps: Seps) -> Vec<Doc> {
             // One per gap, not "as many as there are": a short `Each` would leave the elements past
             // it juxtaposed with neither a separator *nor* a gap — `a |bc` — which is a construct no
             // builder here has, and a silent merge rather than a visible mistake. `chain_seps` yields
-            // exactly one operator per gap and `build_cond_doc` pairs one element with none, so this
-            // holds for every producer; it is asserted so the next one cannot quietly not.
+            // exactly one operator per gap, and `build_cond_doc`'s condition and #52's conjunct
+            // pair one element with none, so this holds for every producer; it is asserted so the
+            // next one cannot quietly not.
             //
             // A real assertion rather than a `debug_assert`, which release builds compile out: the
             // failure it catches is *silently merged tokens*, and this file's whole subject is that
@@ -597,6 +610,14 @@ fn render_passthrough(open: &str, inner: &[Token], close: &str) -> Doc {
 /// width model does not describe ([`crate::doc::display_width`] measures one line), and a `#` means the
 /// span is a directive fragment whose column a later pass rewrites. Bounding either would decide a
 /// layout from a width that the next pass measures differently.
+/// Whether a span's width is one this pass may decide from: a line break inside a *token* is an
+/// unterminated literal spanning lines, which a one-line width cannot describe, and a `#` means a
+/// directive fragment whose column a later pass rewrites. The one spelling — the chain path
+/// (`is_boundable`) and the conjunct fallback both refuse the same spans (#134's review).
+fn span_unmeasurable(toks: &[Token]) -> bool {
+    spans_lines(toks) || toks.iter().any(|t| t.text == "#")
+}
+
 fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     // A line break inside a *token* is an unterminated literal spanning lines, which a one-line
     // width cannot describe, and a `#` means a directive fragment whose column a later pass
@@ -607,7 +628,7 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     // Any `#`, not only [`super::tokens::holds_directive`]'s: narrowing this to a directive broke
     // idempotency on `]{'((.AA…'0}#A*:?` at width 57, where the `#` names nothing. Whatever a `#` here
     // is, its spacing is not settled until the passes that own it have run (#112's review).
-    if spans_lines(toks) || toks.iter().any(|t| t.text == "#") {
+    if span_unmeasurable(toks) {
         return false;
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
@@ -675,7 +696,10 @@ fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Seps, fit: Fit, bound
 }
 
 /// An operator chain or ternary with no parentheses of its own: flat, or one operand per line with the
-/// operator trailing, bounded by parentheses [`build_bounded_doc`] adds on the break.
+/// operator trailing, bounded by parentheses [`build_bounded_doc`] adds on the break. A #52 conjunct —
+/// one comparison whose left operand is one whole call — is the exception: it reads as a single term,
+/// so it breaks inside its call's arguments and the operator stays with its right operand on the
+/// call's close line, the single element of a one-element [`build_bounded_doc`].
 pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     let start = operand_span(toks);
     let operands = &toks[start..];
@@ -705,6 +729,18 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // segment refuses its own breaks (#121's search).
         if segments.iter().any(|s| element_join_respaced(s)) {
             return None;
+        }
+        // #52's conjunct, at the statement's own level: one bounded element, so the head leads
+        // and the OnBreak parentheses the `bound` decides wrap the broken form — the pass the
+        // clause branch re-reads later agrees.
+        if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
+            return Some(build_bounded_doc(
+                &head,
+                elements,
+                seps,
+                Fit::Measured,
+                bound,
+            ));
         }
         return Some(build_bounded_doc(
             &head,
@@ -773,6 +809,47 @@ fn segment_docs(segments: &[&[Token]]) -> Vec<Doc> {
     segments.iter().map(|s| build_expr_doc(s)).collect()
 }
 
+/// #52's conjunct: [`split_chain`]'s shape where the chain is one comparison and the left operand
+/// is one whole call. The flat form writes no parentheses, and the break writes one pair around
+/// the call and the operator's right operand where the caller's bound is [`Bound::Parens`] — a
+/// sole call argument ([`Bound::Enclosing`]) writes none, the enclosing call's own parens bounding
+/// the operands instead.
+/// #52's conjunct as a container's single element: the operator lives inside the term, so the
+/// container separates nothing and names no separators. The three conjunct sites all build this
+/// same one-element shape, differing only in the container they wrap it in.
+fn conjunct_element(segments: &[&[Token]], ops: &[&str]) -> Option<(Vec<Doc>, Seps)> {
+    comparison_conjunct(segments, ops).map(|conjunct| (vec![conjunct], Seps::Each(Vec::new())))
+}
+
+fn comparison_conjunct(segments: &[&[Token]], ops: &[&str]) -> Option<Doc> {
+    let [left, right] = segments else {
+        return None;
+    };
+    let [op] = ops else {
+        return None;
+    };
+    if !is_comparison(op) {
+        return None;
+    }
+    // The left segment is one whole call: a callee identifier followed by its matching close at
+    // the segment's last non-trivia token. The pair check comes first — it inspects only `open`
+    // and its predecessor, so a left like `a[i] == b` never pays the bracket walk.
+    let callee = next_nontrivia(left, 0)?;
+    let open = next_nontrivia(left, callee + 1)?;
+    if !is_call_head_pair(left, open) {
+        return None;
+    }
+    let close = match_bracket(left, open)?;
+    if prev_nontrivia(left, left.len()) != Some(close) || element_join_respaced(right) {
+        return None;
+    }
+    Some(Doc::concat([
+        build_expr_doc(left),
+        Doc::text(format!(" {op} ")),
+        build_expr_doc(right),
+    ]))
+}
+
 /// A segment's text: its non-trivia tokens with runs of whitespace collapsed to one space.
 fn render_segment(toks: &[Token]) -> String {
     let mut s = String::new();
@@ -801,6 +878,17 @@ fn render_segment(toks: &[Token]) -> String {
 /// neither is a fixpoint.
 fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
+        // The same conjunct, wrapped in the author's own parens — the form a previous pass's
+        // layout re-reads, so it must lay out to the same shape.
+        if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
+            return Some(build_container(
+                bracketing,
+                elements,
+                seps,
+                None,
+                Fit::Measured,
+            ));
+        }
         // The gate the other segment consumers have, the canonical reading: a segment whose
         // collapse would join a respaced pair is refused, and the caller's own fallback keeps the
         // break (#121's search).
@@ -937,8 +1025,9 @@ mod tests {
     fn trailing_items_separates_between_elements_only() {
         assert_eq!(placed(&["a", "b", "c"], Seps::Every(",")), "a,~b,~c");
         assert_eq!(placed(&["a"], Seps::Every(",")), "a");
-        // The shape `build_cond_doc` emits: one element, no gap, and an `Each` naming nothing. It is
-        // the only non-chain `Each` there is, so the "however many elements" claim above rests on it.
+        // The shape `build_cond_doc` emits: one element, no gap, and an `Each` naming nothing. The
+        // same shape #52's conjunct sites emit — a condition and a conjunct are not lists, so the
+        // "however many elements" claim above rests on them.
         assert_eq!(placed(&["a"], Seps::Each(Vec::new())), "a");
         assert_eq!(placed(&[], Seps::Every(",")), "");
         let each = Seps::Each(vec![" |".to_owned(), " &&".to_owned()]);

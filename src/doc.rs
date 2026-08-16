@@ -9,8 +9,8 @@ pub const TAB_WIDTH: usize = 4;
 /// Display width of `s` in columns: one per `char`, [`TAB_WIDTH`] for a tab. A tab reaches here
 /// inside a token — a string or character literal holding one — and counting it as a single column
 /// measures the line narrower than it renders, which is how a line could pass the fits test and
-/// still overrun §8.5's limit. Newlines do not reach here: text spanning lines is refused a layout
-/// rather than measured wrongly (`is_boundable`).
+/// still overrun §8.5's limit. A newline reaches here only from `fits`'s lookahead over a
+/// passthrough text, where the over-count is deliberate — see the [`Doc::Text`] arm there.
 pub fn display_width(s: &str) -> usize {
     s.chars()
         .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
@@ -20,7 +20,9 @@ pub fn display_width(s: &str) -> usize {
 /// A layout document. Built bottom-up, then rendered at a width.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Doc {
-    /// Verbatim text containing no newline.
+    /// Verbatim text. It may hold newlines — a passthrough keeps an author's break verbatim — and
+    /// the render's cursor reads them: a line ends at each one, so the column after the text is the
+    /// last line's tail, the column a group that follows it measures from (#134's review).
     Text(String),
     /// A space when the enclosing group is flat; a newline + indentation when broken.
     Line,
@@ -75,6 +77,24 @@ enum Mode {
     Break,
 }
 
+/// The width of `s`'s last line — the columns a cursor after the text sits at — and whether the
+/// text held a line break before it. One walk, so the render's hot path pays one scan whether the
+/// text is a plain one or a passthrough holding breaks (#134's review).
+fn last_line_width(s: &str) -> (usize, bool) {
+    let (mut width, mut broken) = (0, false);
+    for c in s.chars() {
+        match c {
+            '\n' | '\r' => {
+                width = 0;
+                broken = true;
+            }
+            '\t' => width += TAB_WIDTH,
+            _ => width += 1,
+        }
+    }
+    (width, broken)
+}
+
 /// Render `doc`: groups that fit within `width` columns stay flat, the rest break fully.
 /// `start_col` is the cursor column before the document; `base_level` is the indentation, in tab
 /// levels, that broken lines and the closing delimiter return to.
@@ -86,7 +106,12 @@ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> S
         match d {
             Doc::Text(s) => {
                 out.push_str(s);
-                col += display_width(s);
+                let (width, broken) = last_line_width(s);
+                if broken {
+                    col = width;
+                } else {
+                    col += width;
+                }
             }
             Doc::Concat(items) => {
                 for child in items.iter().rev() {
@@ -146,6 +171,10 @@ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
         };
         match d {
             Doc::Text(s) => {
+                // The whole string, newlines and all, where the render counts only the last line:
+                // the over-count is what makes a group holding a passthrough text break, the
+                // decision both passes agree on — narrowing it to the tail re-opens #134's
+                // pass-1/pass-2 flip.
                 let w = display_width(s);
                 if w > remaining {
                     return false;
@@ -310,6 +339,36 @@ mod tests {
         assert_eq!(render(&doc, 4, 0, 0), "def\nx y");
         // Width 2: both groups overflow; inner Line uses Nest indentation (level 1).
         assert_eq!(render(&doc, 2, 0, 0), "def\nx\n\ty");
+    }
+
+    #[test]
+    fn a_newline_bearing_text_sets_the_cursor_to_its_last_lines_tail() {
+        // A passthrough text holds the author's break verbatim; a group after it must measure
+        // from the column its last line ends at, not the whole string's width (#134's review).
+        let doc = Doc::group(Doc::concat([
+            Doc::text("f(\n\tx"),
+            Doc::Line,
+            Doc::text("y"),
+        ]));
+        // At width 4: the text's tail `x` puts the cursor at 5, so ` y` overflows and the group
+        // breaks — the whole-string accounting would have said 7 and broken it either way, but
+        // the column after the break is the tail's, which is what the next group measures from.
+        assert_eq!(render(&doc, 4, 0, 0), "f(\n\tx\ny");
+        // The cursor after the text is its tail's width: a group rendered after it starts there.
+        let after = Doc::concat([
+            Doc::text("a\nbb\nccc"),
+            Doc::group(Doc::concat([Doc::Line, Doc::text("dddd")])),
+        ]);
+        assert_eq!(render(&after, 5, 0, 0), "a\nbb\nccc\ndddd");
+        assert_eq!(render(&after, 2, 0, 0), "a\nbb\nccc\ndddd");
+        // The distinguishing band: the tail `bc` leaves two columns, so the group after the text
+        // fits flat — the old whole-string accounting read four and broke it. Without this width,
+        // the test cannot fail if the fix is deleted.
+        let band = Doc::concat([
+            Doc::text("a\nbc"),
+            Doc::group(Doc::concat([Doc::Line, Doc::text("x")])),
+        ]);
+        assert_eq!(render(&band, 4, 0, 0), "a\nbc x");
     }
 
     #[test]

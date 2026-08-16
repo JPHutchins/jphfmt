@@ -713,6 +713,12 @@ pub(super) fn split_on_commas<'a, 'src>(inner: &'a [Token<'src>]) -> Vec<&'a [To
     split_top_level(inner, |t| t.kind == TokenKind::Punct && t.text == ",")
 }
 
+/// Whether `text` is one of the comparison operators — the class whose chain a #52 conjunct is.
+/// Spelled by the class table itself, not a second list of the same operators.
+pub(super) fn is_comparison(text: &str) -> bool {
+    CHAIN_CLASSES[5].contains(&text) || CHAIN_CLASSES[6].contains(&text)
+}
+
 /// Binary operator classes in C precedence order, lowest first — the order a chain breaks in, since
 /// the loosest binding is the one whose operands read as the elements of the container.
 ///
