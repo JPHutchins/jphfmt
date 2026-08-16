@@ -1035,32 +1035,75 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
     }
 }
 
-/// Whether a chain's head holds a shape the two passes measure differently: a second bracket
-/// construct after the first — `arr[f(x)][c]`, `f(x)(y)`, a double assignment's `…] = f(x) =` —
-/// whose per-construct reserve on the next pass stops where this pass's single lookahead crosses;
-/// or a breakable construct a bracket deep — `arr[f(a | b)]` — whose inner group's fit the two
-/// passes give different budgets. Either way the same tokens read two ways, so a chain whose
-/// head holds one is refused (§6, #108's review).
+/// Whether a chain's head holds a shape the two passes measure differently: a *breakable*
+/// construct a bracket deep — whose own fits the next pass's per-construct reserve budgets
+/// differently from this pass's single lookahead — or a second construct after the first —
+/// which the next pass lays out one handler at a time while this pass's lookahead crosses it.
+/// Unbreakable nested content — a cast `(size_t)i`, parens around an atom `(a)`, a brace list
+/// argument — measures the same on both passes and is allowed (§6, #108's review).
+///
+/// A nested bracket's content is breakable when it holds a chain operator, a `?`, or a `,` at
+/// its own depth, another bracket whose content is, or a call head. One pass over the span,
+/// exiting at the first offending bracket.
 pub(super) fn holds_head_split(toks: &[Token]) -> bool {
-    // One pass: a nested construct — an opening bracket at depth two or deeper, whose own fits the
-    // next pass's per-construct reserve budgets differently — and a second construct after the
-    // first — any opening bracket after a closing one, which the next pass lays out one handler at
-    // a time while this pass's single lookahead crosses it.
-    let (mut depth, mut last_close, mut split) = (0i32, false, false);
-    for t in toks {
+    // One frame per open bracket: whether its content is breakable, and whether the open was a
+    // call's (an identifier callee before it) — a call is breakable whatever its content, and the
+    // distinction keeps `(*fp)(x)` one construct: a parens group's `)` followed by `(` is the
+    // same call the group's callee makes, where `f(x)(y)` is two.
+    let mut frames: Vec<bool> = Vec::new();
+    let mut paren_calls: Vec<bool> = Vec::new();
+    let mut close_seen = false;
+    let mut prev_is_close = false;
+    let mut prev_close_group = false;
+    let mut prev_callee = false;
+    for t in toks.iter().filter(|t| !is_trivia(t)) {
         match t.text {
             "(" | "[" | "{" => {
-                split |= depth >= 1 || last_close;
-                depth += 1;
+                // A second construct after the first — an open after any close. The one exemption
+                // is a parens group's `)` directly followed by `(`: `(*fp)(x)` is one call
+                // through a parenthesized callee, laid out by one handler, where `f(x)(y)` — a
+                // call's close — is two.
+                let group_call = t.text == "(" && prev_is_close && prev_close_group;
+                if close_seen && !group_call {
+                    return true;
+                }
+                frames.push(false);
+                paren_calls.push(t.text == "(" && prev_callee);
             }
             ")" | "]" | "}" => {
-                depth = depth.saturating_sub(1);
-                last_close = true;
+                let call = paren_calls.pop().unwrap_or(false);
+                let breakable = frames.pop().unwrap_or(false) || call;
+                if breakable {
+                    if let Some(parent) = frames.last_mut() {
+                        *parent = true;
+                    }
+                    if !paren_calls.is_empty() || !frames.is_empty() {
+                        // A nested bracket (it had a parent) that is breakable refuses the head;
+                        // the head's own outermost bracket is the one construct the boundary
+                        // covers.
+                        return true;
+                    }
+                }
+                close_seen = true;
+                prev_close_group = t.text == ")" && !call;
             }
-            _ => {}
+            "?" | "," => {
+                if let Some(parent) = frames.last_mut() {
+                    *parent = true;
+                }
+            }
+            text => {
+                if CHAIN_CLASSES.iter().any(|c| c.contains(&text))
+                    && let Some(parent) = frames.last_mut()
+                {
+                    *parent = true;
+                }
+            }
         }
+        prev_is_close = matches!(t.text, ")" | "]" | "}");
+        prev_callee = is_callee_ident(t);
     }
-    split
+    false
 }
 
 /// Whether what follows a `#` on its logical line makes it a directive's.

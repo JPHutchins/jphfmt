@@ -70,7 +70,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
         .map(|a| build_element_doc(a, bound))
         .collect();
     build_container(
-        &pad_for(inner, &PARENS),
+        pad_for(inner, &PARENS),
         elements,
         Seps::Every(","),
         None,
@@ -112,7 +112,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     );
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
-    build_container(&bracketing, docs, Seps::Every(","), Some(","), fit)
+    build_container(bracketing, docs, Seps::Every(","), Some(","), fit)
 }
 
 /// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
@@ -250,7 +250,7 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
             );
         }
         return build_container(
-            &Bracketing::Hanging,
+            Bracketing::Hanging,
             segment_docs(&segments),
             chain_seps(&ops),
             None,
@@ -489,7 +489,7 @@ pub(super) enum Bracketing {
 /// the operator trails and the ternary `:` trails. What differs between them is the four values passed
 /// here, not the shape they are laid out in (#71).
 fn build_container(
-    bracketing: &Bracketing,
+    bracketing: Bracketing,
     elements: Vec<Doc>,
     seps: Seps,
     trailing: Option<&str>,
@@ -511,10 +511,10 @@ fn build_container(
             open_pad,
             close_pad,
         } => fit.wrap(Doc::concat([
-            Doc::text(*open),
+            Doc::text(open),
             nested(open_pad.doc(), items),
             close_pad.doc(),
-            Doc::text(*close),
+            Doc::text(close),
         ])),
         // The head sits *outside* the group the operands break as. Inside it, the head's own groups
         // would be measured together with the operands and break whenever the operands did — while
@@ -525,10 +525,9 @@ fn build_container(
             // The boundary after the head's trailing space: the head's own groups are measured
             // with the head's line and nothing past it — the operands have a fit of their own,
             // and a width read across them is one the next pass, measuring the head alone, does
-            // not keep (#108's review). `head` is a borrow through `&Bracketing`, so the clone
-            // is the move.
+            // not keep (#108's review). The bracketing is owned here, so `head` moves.
             (!head.is_empty())
-                .then(|| Doc::concat([head.clone(), Doc::text(" "), Doc::Boundary]))
+                .then(move || Doc::concat([head, Doc::text(" "), Doc::Boundary]))
                 .into_iter()
                 .chain([fit.wrap(Doc::concat([
                     Doc::IfBreak {
@@ -715,7 +714,7 @@ fn build_bounded_doc(head: Doc, segments: Vec<Doc>, seps: Seps, fit: Fit, bound:
         }
         Bound::Parens => Bracketing::OnBreak { head },
     };
-    build_container(&bracketing, segments, seps, None, fit)
+    build_container(bracketing, segments, seps, None, fit)
 }
 
 /// An operator chain or ternary with no parentheses of its own: flat, or one operand per line with the
@@ -910,7 +909,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         // layout re-reads, so it must lay out to the same shape.
         if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_container(
-                bracketing,
+                bracketing.clone(),
                 elements,
                 seps,
                 None,
@@ -924,7 +923,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
             return None;
         }
         return Some(build_container(
-            bracketing,
+            bracketing.clone(),
             segment_docs(&segments),
             chain_seps(&ops),
             None,
@@ -932,7 +931,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_container(bracketing, arms, seps, None, fit))
+    Some(build_container(bracketing.clone(), arms, seps, None, fit))
 }
 
 /// A bracketed group the author wrote — `(…)` around an expression, `[…]` around an index. The
@@ -969,7 +968,7 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     let clauses = statement_segments(inner);
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
     build_container(
-        &pad_for(inner, &PARENS),
+        pad_for(inner, &PARENS),
         docs,
         Seps::Every(";"),
         None,
@@ -1013,7 +1012,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         // where that holds: a second element would be juxtaposed against the first with nothing
         // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
-            &pad_for(inner, &PARENS),
+            pad_for(inner, &PARENS),
             vec![build_element_doc(inner, Bound::Enclosing)],
             Seps::Each(Vec::new()),
             None,

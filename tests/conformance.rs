@@ -2059,6 +2059,30 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             "the nested-call head at {width}"
         );
     }
+    // The gate's other half: unbreakable nested content — a cast, parens around an atom, a call
+    // through a parenthesized callee — measures the same on both passes and is allowed, so the
+    // operands still wrap and every line stays within the width.
+    for (src, expected) in [
+        (
+            "void f(void) {\n\tarr[(size_t)i] = a | b;\n}\n",
+            "void f(void) {\n\tarr[(size_t)i] = (\n\t\ta |\n\t\tb\n\t);\n}\n",
+        ),
+        (
+            "void f(void) {\n\t(*fp)(x) = aaaa | bbbb;\n}\n",
+            "void f(void) {\n\t(*fp)(x) = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, 24);
+        assert_eq!(once, expected, "{src:?}");
+        assert_eq!(
+            jphfmt::format_with_width(&once, 24),
+            once,
+            "and it is a fixpoint"
+        );
+        for line in once.lines() {
+            assert!(display_width(line) <= 24, "over the limit: {line:?}");
+        }
+    }
 }
 
 #[test]
