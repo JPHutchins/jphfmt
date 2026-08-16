@@ -234,7 +234,7 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
         // The same refusals the chain path makes in `is_boundable`: a span whose width the model
         // cannot describe (an unterminated literal spanning lines) or whose `#` a later pass
         // rewrites gets no conjunct parens either (#134's review).
-        let unboundable = spans_lines(toks) || toks.iter().any(|t| t.text == "#");
+        let unboundable = span_unmeasurable(toks);
         // #52's conjunct: a single comparison whose left operand is one whole call reads as one
         // term — its flat form is the call's, and its break belongs inside the call's arguments,
         // not at the operator, which stays with its right operand on the call's close line. The
@@ -610,6 +610,14 @@ fn render_passthrough(open: &str, inner: &[Token], close: &str) -> Doc {
 /// width model does not describe ([`crate::doc::display_width`] measures one line), and a `#` means the
 /// span is a directive fragment whose column a later pass rewrites. Bounding either would decide a
 /// layout from a width that the next pass measures differently.
+/// Whether a span's width is one this pass may decide from: a line break inside a *token* is an
+/// unterminated literal spanning lines, which a one-line width cannot describe, and a `#` means a
+/// directive fragment whose column a later pass rewrites. The one spelling — the chain path
+/// (`is_boundable`) and the conjunct fallback both refuse the same spans (#134's review).
+fn span_unmeasurable(toks: &[Token]) -> bool {
+    spans_lines(toks) || toks.iter().any(|t| t.text == "#")
+}
+
 fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     // A line break inside a *token* is an unterminated literal spanning lines, which a one-line
     // width cannot describe, and a `#` means a directive fragment whose column a later pass
@@ -620,7 +628,7 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     // Any `#`, not only [`super::tokens::holds_directive`]'s: narrowing this to a directive broke
     // idempotency on `]{'((.AA…'0}#A*:?` at width 57, where the `#` names nothing. Whatever a `#` here
     // is, its spacing is not settled until the passes that own it have run (#112's review).
-    if spans_lines(toks) || toks.iter().any(|t| t.text == "#") {
+    if span_unmeasurable(toks) {
         return false;
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns

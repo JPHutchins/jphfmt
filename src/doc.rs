@@ -9,8 +9,8 @@ pub const TAB_WIDTH: usize = 4;
 /// Display width of `s` in columns: one per `char`, [`TAB_WIDTH`] for a tab. A tab reaches here
 /// inside a token — a string or character literal holding one — and counting it as a single column
 /// measures the line narrower than it renders, which is how a line could pass the fits test and
-/// still overrun §8.5's limit. Newlines do not reach here: text spanning lines is refused a layout
-/// rather than measured wrongly (`is_boundable`).
+/// still overrun §8.5's limit. A newline reaches here only from `fits`'s lookahead over a
+/// passthrough text, where the over-count is deliberate — see the [`Doc::Text`] arm there.
 pub fn display_width(s: &str) -> usize {
     s.chars()
         .map(|c| if c == '\t' { TAB_WIDTH } else { 1 })
@@ -77,6 +77,24 @@ enum Mode {
     Break,
 }
 
+/// The width of `s`'s last line — the columns a cursor after the text sits at — and whether the
+/// text held a line break before it. One walk, so the render's hot path pays one scan whether the
+/// text is a plain one or a passthrough holding breaks (#134's review).
+fn last_line_width(s: &str) -> (usize, bool) {
+    let (mut width, mut broken) = (0, false);
+    for c in s.chars() {
+        match c {
+            '\n' | '\r' => {
+                width = 0;
+                broken = true;
+            }
+            '\t' => width += TAB_WIDTH,
+            _ => width += 1,
+        }
+    }
+    (width, broken)
+}
+
 /// Render `doc`: groups that fit within `width` columns stay flat, the rest break fully.
 /// `start_col` is the cursor column before the document; `base_level` is the indentation, in tab
 /// levels, that broken lines and the closing delimiter return to.
@@ -88,10 +106,11 @@ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> S
         match d {
             Doc::Text(s) => {
                 out.push_str(s);
-                if let Some((_, tail)) = s.rsplit_once(['\n', '\r']) {
-                    col = display_width(tail);
+                let (width, broken) = last_line_width(s);
+                if broken {
+                    col = width;
                 } else {
-                    col += display_width(s);
+                    col += width;
                 }
             }
             Doc::Concat(items) => {
@@ -152,6 +171,10 @@ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
         };
         match d {
             Doc::Text(s) => {
+                // The whole string, newlines and all, where the render counts only the last line:
+                // the over-count is what makes a group holding a passthrough text break, the
+                // decision both passes agree on — narrowing it to the tail re-opens #134's
+                // pass-1/pass-2 flip.
                 let w = display_width(s);
                 if w > remaining {
                     return false;
@@ -338,6 +361,14 @@ mod tests {
         ]);
         assert_eq!(render(&after, 5, 0, 0), "a\nbb\nccc\ndddd");
         assert_eq!(render(&after, 2, 0, 0), "a\nbb\nccc\ndddd");
+        // The distinguishing band: the tail `bc` leaves two columns, so the group after the text
+        // fits flat — the old whole-string accounting read four and broke it. Without this width,
+        // the test cannot fail if the fix is deleted.
+        let band = Doc::concat([
+            Doc::text("a\nbc"),
+            Doc::group(Doc::concat([Doc::Line, Doc::text("x")])),
+        ]);
+        assert_eq!(render(&band, 4, 0, 0), "a\nbc x");
     }
 
     #[test]

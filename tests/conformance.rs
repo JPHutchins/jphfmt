@@ -1257,9 +1257,10 @@ fn a_conjunct_whose_left_breaks_keeps_the_right_operand_on_the_close_line() {
     );
     assert_eq!(format_with_width(&once, 40), once, "and it is a fixpoint");
 
-    // A span whose width the model cannot describe — an unterminated literal spanning lines —
-    // takes no conjunct parens: the same refusal `is_boundable` makes on the chain path.
-    let literal = "int arr[] = { f(\"abc\\ndef\") == 0 };\n";
+    // A span whose width the model cannot describe — an unterminated literal spanning lines,
+    // spelled with a *real* newline inside the string token so `spans_lines` sees it — takes no
+    // conjunct parens: the same refusal `is_boundable` makes on the chain path.
+    let literal = "int arr[] = { f(\"abc\\\n def\") == 0 };\n";
     let once = format_with_width(literal, 20);
     assert!(!once.contains(" ( f("), "no stray-spaced parens: {once:?}");
     assert_eq!(format_with_width(&once, 20), once, "and it is a fixpoint");
