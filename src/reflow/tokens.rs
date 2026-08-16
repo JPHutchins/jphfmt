@@ -997,22 +997,35 @@ pub(super) fn spans_lines(toks: &[Token]) -> bool {
 /// reverse would write a `#` mid-line. Not a divergence to copy into the scope pass without deciding what
 /// `# /* c */ if` should do about depth.
 ///
-/// **The list is audited, not complete.** Three review rounds found twelve names missing from it, and the
-/// thirteenth is a vendor extension nobody has written yet. #118 records the measured alternatives:
-/// refusing *any* `#`, which closes the class but costs nine corpus files their comma spacing, and giving
-/// the four call sites enough context to know whether they sit inside a `#define` body, which is correct
-/// in both directions and wants the same change #43 and #76 want.
+/// **The list is audited, not complete**, and that is now tolerable: #118 gave the call sites the
+/// context this lacks, so the list is consulted only where a stringize can occur — inside a
+/// `#define` replacement list ([`holds_unsafe_hash`]). Everywhere else any `#` refuses, which is
+/// where the twelfth missing name bit and the reason it no longer can.
 ///
-/// **Both errors are possible and they are not symmetric.** A name this does not know is a false
-/// negative and writes a `#` mid-line — the defect itself — so [`names_directive`] must stay complete;
-/// the blanket `#` tests in `is_boundable` and `emit_brace` are a partial backstop for spans that reach
-/// them. A false positive costs only layout: `#define STR(define) f(#define, …)` names a parameter that
-/// is not a keyword, so its stringize reads as a directive and the argument list passes through instead
-/// of breaking. §6 prefers that direction, which is why the test is a name list rather than "any `#`".
+/// **Both errors remain possible inside a define body, and they are not symmetric.** A name this
+/// does not know is a false negative and writes a `#` mid-line — the defect itself — so
+/// [`names_directive`] must stay complete. A false positive costs only layout: `#define STR(define)
+/// f(#define, …)` names a parameter that is not a keyword, so its stringize reads as a directive
+/// and the argument list passes through instead of breaking. §6 prefers that direction, which is
+/// why the test is a name list rather than "any `#`".
 pub(super) fn holds_directive(toks: &[Token]) -> bool {
     toks.iter().enumerate().any(|(i, t)| {
         t.kind == TokenKind::Punct && t.text == "#" && opens_directive(&toks[i + 1..])
     })
+}
+
+/// Whether laying `toks` out could write a directive's `#` mid-line, the answer #118's context
+/// provides: outside a `#define` replacement list a stringize cannot occur, so *any* `#` is unsafe
+/// and [`holds_directive`]'s name list — open-ended, three rounds of missing names — is not
+/// consulted. Inside one a `#` may be a stringize, so only a directive the list names refuses;
+/// a `#param` stays laid out (§2.5).
+pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
+    if in_define_body {
+        holds_directive(toks)
+    } else {
+        toks.iter()
+            .any(|t| t.kind == TokenKind::Punct && t.text == "#")
+    }
 }
 
 /// Whether what follows a `#` on its logical line makes it a directive's.
