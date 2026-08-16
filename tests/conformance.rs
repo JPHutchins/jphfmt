@@ -2206,8 +2206,51 @@ fn a_continued_literal_is_one_token_under_either_line_ending() {
 ///
 /// A directive begins its line; the stringize `#` of `foo(#x, y)` does not, and that call still lays
 /// out. Refusing on any `#` cost real layout: `#define STR(x) f(#x, …)` exploded its *parameter list*
-/// instead of its argument list. A block comment before it does not stop it being a directive — phase 3
+/// instead of its argument list — which is why #118 splits the verdict on context instead: any `#`
+/// refuses outside a `#define` body, and inside one the name list decides ([`DIRECTIVE_FORMS`] is
+/// pinned there). A block comment before it does not stop it being a directive — phase 3
 /// makes the comment whitespace and phase 4 then reads the `#`.
+/// Every form [`names_directive`] knows — the plain names, a line marker's number (GNU's
+/// preprocessor-output form, not C11 §6.10.4's `#line`), the null directive, a name phase 2 splices
+/// back together, and a name phase 3 does not — a comment ends one where a continuation does not.
+const DIRECTIVE_FORMS: &[&str] = &[
+    "#if defined(X)",
+    "#ifdef X",
+    "#ifndef X",
+    "#elif defined(X)",
+    "#elifdef X",
+    "#elifndef X",
+    "#else",
+    "#endif",
+    "#define Q 1",
+    "#undef Q",
+    "#include <f.h>",
+    "#embed \"f.bin\"",
+    "#line 42",
+    "#error nope",
+    "#warning hi",
+    "#pragma pack(1)",
+    "#include_next <f.h>",
+    "#import \"f.h\"",
+    "#ident \"v\"",
+    "#sccs \"x\"",
+    "#assert x(y)",
+    "#unassert x",
+    "#system_header",
+    "#using <f>",
+    "#region x",
+    "#endregion",
+    "#push_macro(\"X\")",
+    "#pop_macro(\"X\")",
+    "#42 \"gen.c\"",
+    "#",
+    "#\\\ndefine Q 1",
+    "# /* c */ define Q 1",
+    "#in\\\nclude <f.h>",
+    "#in/*c*/clude <f.h>",
+    "#if/*c*/defined(X)",
+];
+
 #[test]
 fn a_construct_does_not_measure_across_a_directive() {
     let header = "static int f(int a, int b) {\n\tif (a == 111111111\n#if defined(__APPLE__)\n\t\t|| b == 22222222\n#endif\n\t) {\n\t\treturn 1;\n\t}\n\treturn 0;\n}\n";
@@ -2257,50 +2300,10 @@ fn a_construct_does_not_measure_across_a_directive() {
     let commented = "int x = (a\n/* c */ #if X\n\t| b\n#endif\n);\n";
     assert_eq!(format(commented), commented);
 
-    // **Every name in `names_directive`, each alone in the span**, because an `#endif` elsewhere in the
-    // span catches the construct on its own and that is how earlier forms of this test passed while
-    // missing twelve names. Ablating any single name must fail here: a name the list does not know is laid
-    // out across and the `#` written mid-line, which is the defect this test exists for.
-    for directive in [
-        "#if defined(X)",
-        "#ifdef X",
-        "#ifndef X",
-        "#elif defined(X)",
-        "#elifdef X",
-        "#elifndef X",
-        "#else",
-        "#endif",
-        "#define Q 1",
-        "#undef Q",
-        "#include <f.h>",
-        "#embed \"f.bin\"",
-        "#line 42",
-        "#error nope",
-        "#warning hi",
-        "#pragma pack(1)",
-        "#include_next <f.h>",
-        "#import \"f.h\"",
-        "#ident \"v\"",
-        "#sccs \"x\"",
-        "#assert x(y)",
-        "#unassert x",
-        "#system_header",
-        "#using <f>",
-        "#region x",
-        "#endregion",
-        "#push_macro(\"X\")",
-        "#pop_macro(\"X\")",
-        // Not names: a line marker's number (GNU's preprocessor-output form, not C11 §6.10.4's `#line`),
-        // the null directive, a name phase 2 splices back together, and a name phase 3 does not — a
-        // comment ends one where a continuation does not.
-        "#42 \"gen.c\"",
-        "#",
-        "#\\\ndefine Q 1",
-        "# /* c */ define Q 1",
-        "#in\\\nclude <f.h>",
-        "#in/*c*/clude <f.h>",
-        "#if/*c*/defined(X)",
-    ] {
+    // #118: outside a `#define` body the list is not consulted at all — a stringize cannot occur
+    // there, so *any* `#` refuses. These pass on the catch-all now; the loop below, inside a
+    // `#define` body, is what pins the list itself.
+    for directive in DIRECTIVE_FORMS {
         let src = format!(
             "static int f(int a, int b) {{\n\tif (a == 111111111\n{directive}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
         );
@@ -2358,4 +2361,65 @@ fn a_construct_does_not_measure_across_a_directive() {
         format("#define CAT(a, b) a##b\n"),
         "#define CAT(a, b) a##b\n"
     );
+
+    // The same forms, now where the list is actually consulted: inside a `#define` body a `#` may
+    // be a stringize, so `holds_unsafe_hash` falls back to the name list there. Each form alone in
+    // the body's argument span, and the body overflows, so a call the list let through would
+    // explode the directive onto a `\t`-indented line of its own — the refusal passes the body
+    // through instead, whose width-cut lands mid-token and never before a `#`. Ablating any single
+    // name must fail here.
+    for directive in DIRECTIVE_FORMS {
+        let src = format!(
+            "#define M(x) {f}(x, {b}, {directive})\n",
+            f = "f".repeat(120),
+            b = "b".repeat(40),
+        );
+        let once = format(&src);
+        assert!(
+            !once
+                .lines()
+                .skip(1)
+                .any(|l| l.trim_start().starts_with('#')),
+            "{directive:?} keeps its place in the passthrough: {once:?}"
+        );
+        assert_eq!(format(&once), once, "{directive:?}");
+    }
+
+    // A name the list does not know, in the same body: the stringize-side error, which is the
+    // reason the list survives inside defines at all. The argument list explodes and the `#` lands
+    // on a continuation line, where the splice keeps it from reading as a directive on the next
+    // pass — §6 prefers the false positive, but a false negative must stay a fixpoint.
+    let unknown = format!(
+        "#define M(x) {f}(x, {b}, #pragma_mark x)\n",
+        f = "f".repeat(120),
+        b = "b".repeat(40),
+    );
+    let once = format(&unknown);
+    assert!(once.contains("\n\t#pragma_mark x \\\n"), "{once:?}");
+    assert_eq!(format(&once), once, "{once:?}");
+}
+
+#[test]
+fn an_unknown_directive_name_is_refused_outside_a_define() {
+    // #118: the name list is open-ended — three rounds found twelve missing names — so outside a
+    // `#define` replacement list, where a stringize cannot occur, any `#` refuses. Each of the
+    // four handlers that flatten a span gets one: a control header, a call's arguments, a
+    // bracketed group, and a statement expression.
+    for name in ["#link foo", "#suppress xyz", "#pragma_mark x"] {
+        let src = format!(
+            "static int f(int a, int b) {{\n\tif (a == 111111111\n{name}\n\t\t|| b == 22222222\n\t) {{\n\t\treturn 1;\n\t}}\n\treturn 0;\n}}\n"
+        );
+        assert_eq!(format(&src), src, "control: {name:?}");
+
+        let src = format!("void g(void) {{\n\tfoo(x,\n{name}\n\t\t);\n}}\n");
+        assert_eq!(format(&src), src, "call: {name:?}");
+
+        let src =
+            format!("int x = (aaaaaaaaaaaaaaaaaaaaa\n{name}\n\t| bbbbbbbbbbbbbbbbbbbbb\n);\n");
+        assert_eq!(format(&src), src, "group: {name:?}");
+
+        let src =
+            format!("void g(void) {{\n\tint y = ({{\n{name}\n\t\tint t = 1;\n\t\tt;\n\t}});\n}}\n");
+        assert_eq!(format(&src), src, "stmt-expr: {name:?}");
+    }
 }

@@ -53,7 +53,7 @@ pub fn format_with_width(src: &str, width: usize) -> String {
     // afterward (`(int)x` -> `(int) x`) could widen a line and flip a fits/explode decision on
     // the next pass, breaking idempotency.
     let spaced = spacing::space_tokens(src);
-    let structured = structure::structure(&tokenize(&spaced), 0, width);
+    let structured = structure::structure(&tokenize(&spaced), 0, width, false);
     let scoped = scope::scope_directives(&structured);
     normalize_endings(&collapse_blank_lines(&trim_comment_lines(&retab(&scoped))))
 }

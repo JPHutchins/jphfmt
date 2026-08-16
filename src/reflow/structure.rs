@@ -13,7 +13,7 @@ use super::scope::scoped;
 use super::tokens::{
     assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
     directive_end, element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia,
-    holds_directive, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
+    holds_unsafe_hash, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
     is_comment, is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia,
     next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia, prev_significant, spans_lines,
     split_brace_line_comment, statement_end,
@@ -23,11 +23,16 @@ use crate::lexer::{Token, TokenKind};
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
 /// formatting a fragment such as a macro body that follows a prefix).
-pub(super) fn structure(toks: &[Token], start_col: usize, width: usize) -> String {
+pub(super) fn structure(
+    toks: &[Token],
+    start_col: usize,
+    width: usize,
+    in_define_body: bool,
+) -> String {
     let mut out = String::new();
     let mut col = start_col;
     let mut depth = 0usize;
-    emit_tokens(toks, &mut out, &mut col, &mut depth, width);
+    emit_tokens(toks, &mut out, &mut col, &mut depth, width, in_define_body);
     out
 }
 
@@ -43,7 +48,14 @@ fn emit_doc(doc: &Doc, reserved: usize, out: &mut String, col: &mut usize, width
 /// Walk `toks`, appending to `out` so an enclosing construct's indentation is already in view when a
 /// nested one measures its own base level. `depth` is the `#if` nesting the walk has reached, carried
 /// through nested bodies because a scope opened in one can close outside it.
-fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut usize, width: usize) {
+fn emit_tokens(
+    toks: &[Token],
+    out: &mut String,
+    col: &mut usize,
+    depth: &mut usize,
+    width: usize,
+    in_define_body: bool,
+) {
     let mut i = 0usize;
     let mut paren_depth = 0i32;
     let mut in_init = false;
@@ -67,7 +79,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(open) = next_paren(toks, i)
             && let Some(close) = match_bracket(toks, open)
             && !contains_comment(&toks[open + 1..close])
-            && !holds_directive(&toks[open + 1..close])
+            && !holds_unsafe_hash(&toks[open + 1..close], in_define_body)
             && is_balanced(&toks[open + 1..close])
         {
             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
@@ -101,7 +113,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         {
             let inner = &toks[open + 1..close];
             if !contains_comment(inner)
-                && !holds_directive(inner)
+                && !holds_unsafe_hash(inner, in_define_body)
                 && is_balanced(inner)
                 && !has_middle_newline(inner)
             {
@@ -135,7 +147,9 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         // GNU statement-expression `({ ... })` — block-indent its statements.
         if opens_stmt_expr(toks, i) {
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-            if let Some((block, next)) = format_stmt_expr(toks, i, base_level, width) {
+            if let Some((block, next)) =
+                format_stmt_expr(toks, i, base_level, width, in_define_body)
+            {
                 emit_str(out, col, &block);
                 i = next;
                 continue;
@@ -146,7 +160,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
         // with one statement per line, body indented, `}` at the definition's own indent level.
         if t.kind == TokenKind::Punct && t.text == "{" && pending_func_def {
             pending_func_def = false;
-            i = emit_func_body(toks, i, out, col, depth, width);
+            i = emit_func_body(toks, i, out, in_define_body, col, depth, width);
             continue;
         }
 
@@ -195,6 +209,7 @@ fn emit_tokens(toks: &[Token], out: &mut String, col: &mut usize, depth: &mut us
             && let Some(close) = match_bracket(toks, i)
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
+            && !holds_unsafe_hash(&toks[i + 1..close], in_define_body)
             && let Some(doc) = build_bracketed_group(&toks[i + 1..close], bracketing)
         {
             emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
@@ -495,13 +510,13 @@ fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option
         return None;
     }
     if is_call_head(body, 0) && match_bracket(body, 1) == Some(last) {
-        return Some(structure(body, prefix_col, width));
+        return Some(structure(body, prefix_col, width, true));
     }
     // `format_stmt_expr` renders as far as the `})` and reports the `)` consumed, so a body with
     // anything after it had that tail dropped — `({ int t = (x); t; }) + 1` lost its `+ 1` and the
     // expansion changed on valid GNU C (#104). The `)` must close the body for the render to be it.
     if opens_stmt_expr(body, 0) && match_bracket(body, 0) == Some(last) {
-        return format_stmt_expr(body, 0, 0, width).map(|(s, _)| s);
+        return format_stmt_expr(body, 0, 0, width, true).map(|(s, _)| s);
     }
     // #77's fourth item: a body that is one whole bracket — `((x) ? a : b ? c : d)` — is a
     // container, and the structurer's group arm lays it out with the continuation columns the
@@ -519,7 +534,7 @@ fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option
         && !has_nested_question(body)
         && build_bracketed_group(&body[1..last], bracketing).is_some()
     {
-        return Some(structure(body, prefix_col, width));
+        return Some(structure(body, prefix_col, width, true));
     }
     None
 }
@@ -558,6 +573,7 @@ fn format_stmt_expr(
     open: usize,
     base_level: usize,
     width: usize,
+    in_define_body: bool,
 ) -> Option<(String, usize)> {
     let paren_close = match_bracket(toks, open)?;
     let brace_close = match_brace(toks, open + 1)?;
@@ -572,7 +588,7 @@ fn format_stmt_expr(
     // A directive here too: the statements are joined one per line, and a directive joined onto the
     // statement after it swallows that statement into the directive — `#pragma pack(1)` + `int t = 1;`
     // came out as one line and `t` was then undeclared (#112).
-    let unformattable = holds_directive(inner)
+    let unformattable = holds_unsafe_hash(inner, in_define_body)
         || inner
             .iter()
             .any(|t| is_comment(t) || (t.kind == TokenKind::Punct && t.text == "{"));
@@ -658,6 +674,7 @@ fn emit_func_body(
     toks: &[Token],
     open: usize,
     out: &mut String,
+    in_define_body: bool,
     col: &mut usize,
     depth: &mut usize,
     width: usize,
@@ -703,7 +720,7 @@ fn emit_func_body(
     if body[0].text != "#" {
         emit_str(out, col, &inner_indent);
     }
-    emit_tokens(body, out, col, depth, width);
+    emit_tokens(body, out, col, depth, width, in_define_body);
     // A directive carries its own line break, so the one before `}` is already there.
     if !out.ends_with('\n') {
         emit_str(out, col, "\n");
