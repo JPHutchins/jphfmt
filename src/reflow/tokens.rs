@@ -1042,22 +1042,25 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
 /// passes give different budgets. Either way the same tokens read two ways, so a chain whose
 /// head holds one is refused (§6, #108's review).
 pub(super) fn holds_head_split(toks: &[Token]) -> bool {
-    let second_construct = toks.iter().enumerate().any(|(i, t)| {
-        matches!(t.text, "]" | ")" | "}")
-            && toks[i + 1..]
-                .iter()
-                .any(|u| matches!(u.text, "(" | "[" | "{"))
-    });
-    let (mut depth, mut deep_break) = (0i32, false);
+    // One pass: a nested construct — an opening bracket at depth two or deeper, whose own fits the
+    // next pass's per-construct reserve budgets differently — and a second construct after the
+    // first — any opening bracket after a closing one, which the next pass lays out one handler at
+    // a time while this pass's single lookahead crosses it.
+    let (mut depth, mut last_close, mut split) = (0i32, false, false);
     for t in toks {
         match t.text {
-            "(" | "[" => depth += 1,
-            ")" | "]" => depth = depth.saturating_sub(1),
-            "?" => deep_break |= depth >= 2,
-            text => deep_break |= depth >= 2 && CHAIN_CLASSES.iter().any(|c| c.contains(&text)),
+            "(" | "[" | "{" => {
+                split |= depth >= 1 || last_close;
+                depth += 1;
+            }
+            ")" | "]" | "}" => {
+                depth = depth.saturating_sub(1);
+                last_close = true;
+            }
+            _ => {}
         }
     }
-    second_construct || deep_break
+    split
 }
 
 /// Whether what follows a `#` on its logical line makes it a directive's.

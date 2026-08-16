@@ -522,11 +522,12 @@ fn build_container(
         // the other answer. A head that is text cannot show that; a head that is a document can, so
         // the two must not share a fit.
         Bracketing::OnBreak { head } => Doc::concat(
+            // The boundary after the head's trailing space: the head's own groups are measured
+            // with the head's line and nothing past it — the operands have a fit of their own,
+            // and a width read across them is one the next pass, measuring the head alone, does
+            // not keep (#108's review). `head` is a borrow through `&Bracketing`, so the clone
+            // is the move.
             (!head.is_empty())
-                // The boundary after the head's trailing space: the head's own groups are
-                // measured with the head's line and nothing past it — the operands have a fit of
-                // their own, and a width read across them is one the next pass, measuring the head
-                // alone, does not keep (#108's review).
                 .then(|| Doc::concat([head.clone(), Doc::text(" "), Doc::Boundary]))
                 .into_iter()
                 .chain([fit.wrap(Doc::concat([
@@ -762,7 +763,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // clause branch re-reads later agrees.
         if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_bounded_doc(
-                head.clone(),
+                head,
                 elements,
                 seps,
                 Fit::Measured,

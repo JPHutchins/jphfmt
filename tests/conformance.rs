@@ -2046,6 +2046,19 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             "{src:?} at {width}"
         );
     }
+    // A nested call at depth two is the same class the gate is now structural for: pass 1's
+    // lookahead flattened through `g(x)`'s own fits where pass 2's handlers reserve stops at its
+    // bracket, and the two laid `g(x)` two ways. The chain is refused; the structure's own
+    // handlers lay the head out one construct at a time, the same path on every pass.
+    let nested_call = "void f(void) {\n\tarr[f(g(x))] = a | b;\n}\n";
+    for width in 12..=20 {
+        let once = jphfmt::format_with_width(nested_call, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "the nested-call head at {width}"
+        );
+    }
 }
 
 #[test]
