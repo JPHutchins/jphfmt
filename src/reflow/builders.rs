@@ -231,18 +231,16 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
     {
+        // The same refusals the chain path makes in `is_boundable`: a span whose width the model
+        // cannot describe (an unterminated literal spanning lines) or whose `#` a later pass
+        // rewrites gets no conjunct parens either (#134's review).
+        let unboundable = spans_lines(toks) || toks.iter().any(|t| t.text == "#");
         // #52's conjunct: a single comparison whose left operand is one whole call reads as one
         // term — its flat form is the call's, and its break belongs inside the call's arguments,
         // not at the operator, which stays with its right operand on the call's close line. The
         // headless position bounds it, an [`Bracketing::OnBreak`] in all but spelling.
-        if let Some(conjunct) = comparison_conjunct(&segments, &ops) {
-            return build_bounded_doc(
-                "",
-                vec![conjunct],
-                Seps::Each(Vec::new()),
-                Fit::Measured,
-                Bound::Parens,
-            );
+        if !unboundable && let Some((elements, seps)) = conjunct_element(&segments, &ops) {
+            return build_bounded_doc("", elements, seps, Fit::Measured, Bound::Parens);
         }
         return build_container(
             &Bracketing::Hanging,
@@ -727,11 +725,11 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // #52's conjunct, at the statement's own level: one bounded element, so the head leads
         // and the OnBreak parentheses the `bound` decides wrap the broken form — the pass the
         // clause branch re-reads later agrees.
-        if let Some(conjunct) = comparison_conjunct(&segments, &ops) {
+        if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_bounded_doc(
                 &head,
-                vec![conjunct],
-                Seps::Each(Vec::new()),
+                elements,
+                seps,
                 Fit::Measured,
                 bound,
             ));
@@ -804,9 +802,17 @@ fn segment_docs(segments: &[&[Token]]) -> Vec<Doc> {
 }
 
 /// #52's conjunct: [`split_chain`]'s shape where the chain is one comparison and the left operand
-/// is one whole call. The bound is this layout's own — an [`Bracketing::OnBreak`] in all but
-/// spelling, since the flat form writes no parentheses and the break writes one pair around the
-/// call and the operator's right operand.
+/// is one whole call. The flat form writes no parentheses, and the break writes one pair around
+/// the call and the operator's right operand where the caller's bound is [`Bound::Parens`] — a
+/// sole call argument ([`Bound::Enclosing`]) writes none, the enclosing call's own parens bounding
+/// the operands instead.
+/// #52's conjunct as a container's single element: the operator lives inside the term, so the
+/// container separates nothing and names no separators. The three conjunct sites all build this
+/// same one-element shape, differing only in the container they wrap it in.
+fn conjunct_element(segments: &[&[Token]], ops: &[&str]) -> Option<(Vec<Doc>, Seps)> {
+    comparison_conjunct(segments, ops).map(|conjunct| (vec![conjunct], Seps::Each(Vec::new())))
+}
+
 fn comparison_conjunct(segments: &[&[Token]], ops: &[&str]) -> Option<Doc> {
     let [left, right] = segments else {
         return None;
@@ -818,14 +824,15 @@ fn comparison_conjunct(segments: &[&[Token]], ops: &[&str]) -> Option<Doc> {
         return None;
     }
     // The left segment is one whole call: a callee identifier followed by its matching close at
-    // the segment's last non-trivia token.
+    // the segment's last non-trivia token. The pair check comes first — it inspects only `open`
+    // and its predecessor, so a left like `a[i] == b` never pays the bracket walk.
     let callee = next_nontrivia(left, 0)?;
     let open = next_nontrivia(left, callee + 1)?;
+    if !is_call_head_pair(left, open) {
+        return None;
+    }
     let close = match_bracket(left, open)?;
-    if !is_call_head_pair(left, open)
-        || prev_nontrivia(left, left.len()) != Some(close)
-        || element_join_respaced(right)
-    {
+    if prev_nontrivia(left, left.len()) != Some(close) || element_join_respaced(right) {
         return None;
     }
     Some(Doc::concat([
@@ -865,11 +872,11 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
     if let Some((segments, ops)) = split_chain(inner) {
         // The same conjunct, wrapped in the author's own parens — the form a previous pass's
         // layout re-reads, so it must lay out to the same shape.
-        if let Some(conjunct) = comparison_conjunct(&segments, &ops) {
+        if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_container(
                 bracketing,
-                vec![conjunct],
-                Seps::Each(Vec::new()),
+                elements,
+                seps,
                 None,
                 Fit::Measured,
             ));

@@ -20,7 +20,9 @@ pub fn display_width(s: &str) -> usize {
 /// A layout document. Built bottom-up, then rendered at a width.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Doc {
-    /// Verbatim text containing no newline.
+    /// Verbatim text. It may hold newlines — a passthrough keeps an author's break verbatim — and
+    /// the render's cursor reads them: a line ends at each one, so the column after the text is the
+    /// last line's tail, the column a group that follows it measures from (#134's review).
     Text(String),
     /// A space when the enclosing group is flat; a newline + indentation when broken.
     Line,
@@ -86,7 +88,11 @@ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> S
         match d {
             Doc::Text(s) => {
                 out.push_str(s);
-                col += display_width(s);
+                if let Some((_, tail)) = s.rsplit_once(['\n', '\r']) {
+                    col = display_width(tail);
+                } else {
+                    col += display_width(s);
+                }
             }
             Doc::Concat(items) => {
                 for child in items.iter().rev() {
@@ -310,6 +316,28 @@ mod tests {
         assert_eq!(render(&doc, 4, 0, 0), "def\nx y");
         // Width 2: both groups overflow; inner Line uses Nest indentation (level 1).
         assert_eq!(render(&doc, 2, 0, 0), "def\nx\n\ty");
+    }
+
+    #[test]
+    fn a_newline_bearing_text_sets_the_cursor_to_its_last_lines_tail() {
+        // A passthrough text holds the author's break verbatim; a group after it must measure
+        // from the column its last line ends at, not the whole string's width (#134's review).
+        let doc = Doc::group(Doc::concat([
+            Doc::text("f(\n\tx"),
+            Doc::Line,
+            Doc::text("y"),
+        ]));
+        // At width 4: the text's tail `x` puts the cursor at 5, so ` y` overflows and the group
+        // breaks — the whole-string accounting would have said 7 and broken it either way, but
+        // the column after the break is the tail's, which is what the next group measures from.
+        assert_eq!(render(&doc, 4, 0, 0), "f(\n\tx\ny");
+        // The cursor after the text is its tail's width: a group rendered after it starts there.
+        let after = Doc::concat([
+            Doc::text("a\nbb\nccc"),
+            Doc::group(Doc::concat([Doc::Line, Doc::text("dddd")])),
+        ]);
+        assert_eq!(render(&after, 5, 0, 0), "a\nbb\nccc\ndddd");
+        assert_eq!(render(&after, 2, 0, 0), "a\nbb\nccc\ndddd");
     }
 
     #[test]
