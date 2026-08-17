@@ -2071,6 +2071,10 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             "void f(void) {\n\t(*fp)(x) = aaaa | bbbb;\n}\n",
             "void f(void) {\n\t(*fp)(x) = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
         ),
+        (
+            "void f(void) {\n\ta[0][1] = aaaa | bbbb;\n}\n",
+            "void f(void) {\n\ta[0][1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+        ),
     ] {
         let once = jphfmt::format_with_width(src, 24);
         assert_eq!(once, expected, "{src:?}");

@@ -1035,72 +1035,81 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
     }
 }
 
-/// Whether a chain's head holds a shape the two passes measure differently: a *breakable*
-/// construct a bracket deep — whose own fits the next pass's per-construct reserve budgets
-/// differently from this pass's single lookahead — or a second construct after the first —
-/// which the next pass lays out one handler at a time while this pass's lookahead crosses it.
-/// Unbreakable nested content — a cast `(size_t)i`, parens around an atom `(a)`, a brace list
-/// argument — measures the same on both passes and is allowed (§6, #108's review).
-///
-/// A nested bracket's content is breakable when it holds a chain operator, a `?`, or a `,` at
-/// its own depth, another bracket whose content is, or a call head. One pass over the span,
-/// exiting at the first offending bracket.
+/// Whether a chain's head holds a shape the two passes measure differently. Pass 1's single
+/// lookahead flattens through every construct in the head; pass 2 lays each out one handler at a
+/// time, each reserve stopping at the next bracket. They agree unless the head holds a
+/// *breakable* construct a bracket deep — a chain operator or `?`, a `,` list a builder actually
+/// breaks (a call's arguments, a brace list — not a comma operator in a group), or a call —
+/// which refuses; or a second construct after a breakable first — `f(x)(y)`, a double
+/// assignment's `…] = f(x) =` — which pass 1's parens would turn into pass 2's second construct
+/// and refuse. Unbreakable nested content — a cast `(size_t)i`, parens around an atom `(a)`, a
+/// subscript chain `a[0][1]`, a call through a group `(*fp)(x)` — measures the same on both
+/// passes and is allowed (§6, #108's review). One pass; returns at the first offending bracket.
 pub(super) fn holds_head_split(toks: &[Token]) -> bool {
-    // One frame per open bracket: whether its content is breakable, and whether the open was a
-    // call's (an identifier callee before it) — a call is breakable whatever its content, and the
-    // distinction keeps `(*fp)(x)` one construct: a parens group's `)` followed by `(` is the
-    // same call the group's callee makes, where `f(x)(y)` is two.
-    let mut frames: Vec<bool> = Vec::new();
-    let mut paren_calls: Vec<bool> = Vec::new();
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        /// A call's `(` — breakable whatever its content is.
+        Call,
+        /// A group's `(` — a cast's or a parenthesized expression's, whose comma is an operator.
+        Group,
+        /// A `[` subscript or a `{` brace list.
+        Other,
+    }
+    let mut frames: Vec<(Kind, bool)> = Vec::new();
     let mut close_seen = false;
-    let mut prev_is_close = false;
-    let mut prev_close_group = false;
+    let mut closed_breakable = false;
     let mut prev_callee = false;
     for t in toks.iter().filter(|t| !is_trivia(t)) {
         match t.text {
             "(" | "[" | "{" => {
-                // A second construct after the first — an open after any close. The one exemption
-                // is a parens group's `)` directly followed by `(`: `(*fp)(x)` is one call
-                // through a parenthesized callee, laid out by one handler, where `f(x)(y)` — a
-                // call's close — is two.
-                let group_call = t.text == "(" && prev_is_close && prev_close_group;
-                if close_seen && !group_call {
+                // A second construct after a breakable first: pass 1's lookahead crosses it
+                // where pass 2's reserve stops at the bracket.
+                if close_seen && closed_breakable {
                     return true;
                 }
-                frames.push(false);
-                paren_calls.push(t.text == "(" && prev_callee);
+                let kind = match t.text {
+                    "(" if prev_callee => Kind::Call,
+                    "(" => Kind::Group,
+                    _ => Kind::Other,
+                };
+                frames.push((kind, false));
             }
             ")" | "]" | "}" => {
-                let call = paren_calls.pop().unwrap_or(false);
-                let breakable = frames.pop().unwrap_or(false) || call;
-                if breakable {
-                    if let Some(parent) = frames.last_mut() {
-                        *parent = true;
-                    }
-                    if !paren_calls.is_empty() || !frames.is_empty() {
-                        // A nested bracket (it had a parent) that is breakable refuses the head;
-                        // the head's own outermost bracket is the one construct the boundary
-                        // covers.
-                        return true;
-                    }
+                let (kind, breakable) = frames.pop().unwrap_or((Kind::Group, false));
+                let breakable = breakable || kind == Kind::Call;
+                // A breakable construct a bracket deep — the head's own outermost bracket is the
+                // one construct the boundary covers.
+                if breakable && !frames.is_empty() {
+                    return true;
                 }
                 close_seen = true;
-                prev_close_group = t.text == ")" && !call;
+                closed_breakable = breakable;
             }
+            // A ternary or chain after a construct at the head's own level: pass 1's operand
+            // parens become pass 2's second construct and the gate refuses its own output.
             "?" | "," => {
-                if let Some(parent) = frames.last_mut() {
-                    *parent = true;
+                if frames.is_empty() {
+                    if close_seen && t.text == "?" {
+                        return true;
+                    }
+                } else if let Some((kind, breakable)) = frames.last_mut()
+                    && (t.text == "?" || *kind != Kind::Group)
+                {
+                    *breakable = true;
                 }
             }
             text => {
-                if CHAIN_CLASSES.iter().any(|c| c.contains(&text))
-                    && let Some(parent) = frames.last_mut()
-                {
-                    *parent = true;
+                if CHAIN_CLASSES.iter().any(|c| c.contains(&text)) {
+                    if frames.is_empty() {
+                        if close_seen {
+                            return true;
+                        }
+                    } else if let Some((_, breakable)) = frames.last_mut() {
+                        *breakable = true;
+                    }
                 }
             }
         }
-        prev_is_close = matches!(t.text, ")" | "]" | "}");
         prev_callee = is_callee_ident(t);
     }
     false
