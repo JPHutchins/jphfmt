@@ -1052,14 +1052,16 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
         Call,
         /// A group's `(` — a cast's or a parenthesized expression's, whose comma is an operator.
         Group,
-        /// A `[` subscript or a `{` brace list.
-        Other,
+        /// A `[` subscript — its comma is an operator too, and no builder breaks it as a list.
+        Subscript,
+        /// A `{` brace list, whose comma a builder does break.
+        Brace,
     }
     let mut frames: Vec<(Kind, bool)> = Vec::new();
     let mut close_seen = false;
     let mut closed_breakable = false;
     let mut prev_callee = false;
-    for t in toks.iter().filter(|t| !is_trivia(t)) {
+    for (i, t) in toks.iter().enumerate().filter(|(_, t)| !is_trivia(t)) {
         match t.text {
             "(" | "[" | "{" => {
                 // A second construct after a breakable first: pass 1's lookahead crosses it
@@ -1070,7 +1072,8 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                 let kind = match t.text {
                     "(" if prev_callee => Kind::Call,
                     "(" => Kind::Group,
-                    _ => Kind::Other,
+                    "[" => Kind::Subscript,
+                    _ => Kind::Brace,
                 };
                 frames.push((kind, false));
             }
@@ -1085,21 +1088,23 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                 close_seen = true;
                 closed_breakable = breakable;
             }
-            // A ternary or chain after a construct at the head's own level: pass 1's operand
-            // parens become pass 2's second construct and the gate refuses its own output.
+            // A ternary after a construct at the head's own level: pass 1's operand parens
+            // become pass 2's second construct and the gate refuses its own output. A `,` marks
+            // only a list a builder actually breaks — a call's arguments or a brace list; a
+            // group's and a subscript's commas are operators no layout splits.
             "?" | "," => {
                 if frames.is_empty() {
                     if close_seen && t.text == "?" {
                         return true;
                     }
                 } else if let Some((kind, breakable)) = frames.last_mut()
-                    && (t.text == "?" || *kind != Kind::Group)
+                    && (t.text == "?" || *kind == Kind::Call || *kind == Kind::Brace)
                 {
                     *breakable = true;
                 }
             }
             text => {
-                if CHAIN_CLASSES.iter().any(|c| c.contains(&text)) {
+                if is_chain_break(toks, i) && !is_trivia(t) {
                     if frames.is_empty() {
                         if close_seen {
                             return true;

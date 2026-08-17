@@ -2075,6 +2075,26 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             "void f(void) {\n\ta[0][1] = aaaa | bbbb;\n}\n",
             "void f(void) {\n\ta[0][1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
         ),
+        (
+            "void f(void) {\n\ta[0].b[1] = aaaa | bbbb;\n}\n",
+            "void f(void) {\n\ta[0].b[1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[i](j) = a | b;\n}\n",
+            "void f(void) {\n\tarr[i](j) = a | b;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[(a)][0] = x | y;\n}\n",
+            "void f(void) {\n\tarr[(a)][0] = x | y;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[x[a, b]] = c | d;\n}\n",
+            "void f(void) {\n\tarr[x[a, b]] = (\n\t\tc |\n\t\td\n\t);\n}\n",
+        ),
+        (
+            "void f(void) {\n\t(a) + b = c | d;\n}\n",
+            "void f(void) {\n\t(a) + b = c | d;\n}\n",
+        ),
     ] {
         let once = jphfmt::format_with_width(src, 24);
         assert_eq!(once, expected, "{src:?}");
