@@ -1060,7 +1060,6 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
     let mut frames: Vec<(Kind, bool)> = Vec::new();
     let mut close_seen = false;
     let mut closed_breakable = false;
-    let mut prev_callee = false;
     for (i, t) in toks.iter().enumerate().filter(|(_, t)| !is_trivia(t)) {
         match t.text {
             "(" | "[" | "{" => {
@@ -1070,9 +1069,9 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                     return true;
                 }
                 let kind = match t.text {
-                    "(" if prev_callee => Kind::Call,
-                    "(" => Kind::Group,
-                    "[" => Kind::Subscript,
+                    "(" if is_call_head_pair(toks, i) => Kind::Call,
+                    "[" if is_subscript(toks, i) => Kind::Subscript,
+                    "(" | "[" => Kind::Group,
                     _ => Kind::Brace,
                 };
                 frames.push((kind, false));
@@ -1094,7 +1093,11 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
             // group's and a subscript's commas are operators no layout splits.
             "?" | "," => {
                 if frames.is_empty() {
-                    if close_seen && t.text == "?" {
+                    // A ternary after a *breakable* construct at the head's own level: pass 1's
+                    // operand parens become pass 2's second construct. After an unbreakable one
+                    // the head re-parses as itself — `(a) ? b : c =` and `x[0] ? a : b =` are the
+                    // base's stable class.
+                    if close_seen && closed_breakable && t.text == "?" {
                         return true;
                     }
                 } else if let Some((kind, breakable)) = frames.last_mut()
@@ -1106,7 +1109,10 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
             _text => {
                 if is_chain_break(toks, i) && !is_trivia(t) {
                     if frames.is_empty() {
-                        if close_seen {
+                        // A depth-zero binary chain operator in an assignment's left side is an
+                        // invalid lvalue that cannot re-bind the head, so an unbreakable close
+                        // before it stays laid out — only a breakable construct's close refuses.
+                        if close_seen && closed_breakable {
                             return true;
                         }
                     } else if let Some((_, breakable)) = frames.last_mut() {
@@ -1115,7 +1121,6 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                 }
             }
         }
-        prev_callee = is_callee_ident(t);
     }
     false
 }

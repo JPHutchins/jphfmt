@@ -2062,49 +2062,62 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
     // The gate's other half: unbreakable nested content — a cast, parens around an atom, a call
     // through a parenthesized callee — measures the same on both passes and is allowed, so the
     // operands still wrap and every line stays within the width.
-    for (src, expected) in [
+    for (src, expected, width) in [
         (
             "void f(void) {\n\tarr[(size_t)i] = a | b;\n}\n",
             "void f(void) {\n\tarr[(size_t)i] = (\n\t\ta |\n\t\tb\n\t);\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\t(*fp)(x) = aaaa | bbbb;\n}\n",
             "void f(void) {\n\t(*fp)(x) = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\ta[0][1] = aaaa | bbbb;\n}\n",
             "void f(void) {\n\ta[0][1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\ta[0].b[1] = aaaa | bbbb;\n}\n",
             "void f(void) {\n\ta[0].b[1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\tarr[i](j) = a | b;\n}\n",
             "void f(void) {\n\tarr[i](j) = a | b;\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\tarr[(a)][0] = x | y;\n}\n",
             "void f(void) {\n\tarr[(a)][0] = x | y;\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\tarr[x[a, b]] = c | d;\n}\n",
             "void f(void) {\n\tarr[x[a, b]] = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            24,
         ),
         (
             "void f(void) {\n\t(a) + b = c | d;\n}\n",
-            "void f(void) {\n\t(a) + b = c | d;\n}\n",
+            "void f(void) {\n\t(a) + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            16,
+        ),
+        (
+            "void f(void) {\n\tx[0] + b = c | d;\n}\n",
+            "void f(void) {\n\tx[0] + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            16,
         ),
     ] {
-        let once = jphfmt::format_with_width(src, 24);
+        let once = jphfmt::format_with_width(src, width);
         assert_eq!(once, expected, "{src:?}");
         assert_eq!(
-            jphfmt::format_with_width(&once, 24),
+            jphfmt::format_with_width(&once, width),
             once,
             "and it is a fixpoint"
         );
         for line in once.lines() {
-            assert!(display_width(line) <= 24, "over the limit: {line:?}");
+            assert!(display_width(line) <= width, "over the limit: {line:?}");
         }
     }
 }
