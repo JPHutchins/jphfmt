@@ -1103,7 +1103,7 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                     *breakable = true;
                 }
             }
-            text => {
+            _text => {
                 if is_chain_break(toks, i) && !is_trivia(t) {
                     if frames.is_empty() {
                         if close_seen {
