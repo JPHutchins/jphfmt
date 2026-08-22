@@ -603,6 +603,25 @@ fn comma_separated_declarators_are_all_spaced() {
 }
 
 #[test]
+fn a_declarator_after_a_broken_statement_expression_reads_the_same_both_passes() {
+    // #130: the structure pass broke the author's `({=})` as a statement expression and wrote
+    // the `;` that goes with it — and the next pass's spacing read `({ =; })` as a block, its
+    // `=` hidden behind the `;`, respacing the author's `fx*f` as a declarator `fx * f`. The
+    // verdict now reads tokens, bracket-aware: the `=` inside the group cannot mark an
+    // initializer, and a brace is transparent so a real initializer's `=` stays visible.
+    let once = format("({=}){fx*f");
+    assert_eq!(
+        format(&once),
+        once,
+        "the statement expression's broken form is a fixpoint"
+    );
+    assert!(
+        once.contains("fx * f"),
+        "the declarator read is the first pass's: {once:?}"
+    );
+}
+
+#[test]
 fn a_multiply_inside_braces_is_left_alone() {
     // An initializer element is an expression, whichever brace holds it — `=`, a compound literal
     // in `return` or in an argument, or a nested list.
