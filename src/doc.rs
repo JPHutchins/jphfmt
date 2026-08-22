@@ -45,6 +45,10 @@ pub enum Doc {
     /// ends where another's begins — what follows has a fit of its own, and a width read across the
     /// boundary is a line the next pass does not keep (#108).
     Boundary,
+    /// `head` first, then `rest` at `head`'s broken lines' indent when the head's group breaks, at
+    /// the current indent when it stays flat: the wrap that follows a broken chain head must sit
+    /// where the parentheses the next pass reads back as the operand's own group sit (#108's draw).
+    HeadThen(Box<Doc>, Box<Doc>),
 }
 
 impl Doc {
@@ -72,7 +76,8 @@ impl Doc {
             | Doc::SoftLine
             | Doc::Group(_)
             | Doc::IfBreak { .. }
-            | Doc::ForceBreak(_) => false,
+            | Doc::ForceBreak(_)
+            | Doc::HeadThen(..) => false,
         }
     }
 }
@@ -155,6 +160,30 @@ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> S
             }
             Doc::ForceBreak(inner) => stack.push((level, Mode::Break, inner)),
             Doc::Boundary => {}
+            Doc::HeadThen(head, rest) => {
+                // `rest` is a concat whose children are pushed individually, so the boundary
+                // inside it stays a stack-level sibling — the head's own fit, evaluated again
+                // when it pops, sees the same stack this evaluation does; levels do not enter
+                // fits, only modes and docs. The levels then follow the head's outcome: a broken
+                // head indents its lines one level, and the wrap after it re-reads as the
+                // operand's own group, nested exactly there.
+                let Doc::Concat(items) = rest.as_ref() else {
+                    unreachable!("HeadThen's rest is the OnBreak arm's concat");
+                };
+                for child in items.iter().rev() {
+                    stack.push((level, mode, child));
+                }
+                let head_breaks = match head.as_ref() {
+                    Doc::Group(inner) => !fits(width.saturating_sub(col), inner, &stack),
+                    _ => false,
+                };
+                if head_breaks {
+                    for entry in stack.iter_mut().rev().take(items.len()) {
+                        entry.0 = level + 1;
+                    }
+                }
+                stack.push((level, mode, head));
+            }
         }
     }
     out
@@ -228,6 +257,10 @@ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
                 remaining -= w;
             }
             Doc::ForceBreak(_) => return false,
+            Doc::HeadThen(head, rest) => {
+                work.push((mode, rest));
+                work.push((mode, head));
+            }
         }
     }
 }

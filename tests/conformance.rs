@@ -2318,6 +2318,40 @@ fn a_bracket_and_a_brace_join_by_tokens_not_the_authors_gap() {
 }
 
 #[test]
+fn a_call_a_pass_broke_re_reads_with_its_forced_break() {
+    // #108's fresh draw: `({[x<<case({[],})]`. The case's `{[],}` carries the magic trailing
+    // comma, which forces the call broken on every pass. The middle-newline verbatim re-read
+    // dropped that force — its text form has no ForceBreak — so the enclosing bracket group
+    // measured a doc without it, joined what the previous pass broke, and the two passed
+    // alternated. A forced break has no fits decision to flip: the re-laid form is the one every
+    // pass reaches, so the passthrough yields to it.
+    for (src, width) in [("({[x<<case({[],})]", 1), ("({[x<<case({[],})]", 100)] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at {width}"
+        );
+    }
+}
+
+#[test]
+fn a_wrap_after_a_broken_chain_head_nests_where_the_next_pass_reads_it() {
+    // #108's fresh draw: `x&return""x+f;` at width 1. The chain's head broke, but the operand
+    // wrap's indent stayed at the head's own level, while the next pass — reading the written
+    // parentheses as the operand's own group — nested one deeper. The wrap now follows the
+    // head's outcome: a broken head indents the wrap with its own lines, the two passes agree.
+    for width in [1, 3] {
+        let once = jphfmt::format_with_width("x&return\"\"x+f;", width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent at {width}"
+        );
+    }
+}
+
+#[test]
 fn the_chain_and_ternary_segments_join_call_head_and_subscript_breaks() {
     // Every segment renders through `build_expr_doc`, whose call and group arms join these to the
     // tight form the spacing pass canonicalizes, so the segment gate takes the canonical reading.

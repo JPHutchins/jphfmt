@@ -32,9 +32,19 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     // that reach here nested need the same contract: collapsing the break joins what the author
     // separated, and a later pass may respace the join — `f(a\n:0)` to `f(a :0)`, which
     // `space_bit_fields` tightens (#121's search).
-    if has_middle_newline(inner) {
+    //
+    // Unless the laid-out form is forced broken anyway — a magic trailing comma — where the
+    // passthrough's text form loses the force: an enclosing group then measures a doc without the
+    // ForceBreak and joins what the previous pass broke, two passes for one line (#108's draw). A
+    // forced break has no fits decision to flip, so the laid form is the one every pass reaches.
+    let laid = laid_call_body(inner, fit);
+    if has_middle_newline(inner) && !holds_forced_break(&laid) {
         return render_passthrough("(", inner, ")");
     }
+    laid
+}
+
+fn laid_call_body(inner: &[Token], fit: Fit) -> Doc {
     let args = split_on_commas(inner);
     // An empty element is a hole a macro invocation spells with a bare comma — `PICK(x, , y)`, valid C99
     // and later. There is no element to lay out for it, and dropping it drops the comma that spells it,
@@ -521,27 +531,35 @@ fn build_container(
         // the next pass, reading the parentheses this wrote, measures each of them alone and reaches
         // the other answer. A head that is text cannot show that; a head that is a document can, so
         // the two must not share a fit.
-        Bracketing::OnBreak { head } => Doc::concat(
+        Bracketing::OnBreak { head } => {
             // The boundary after the head's trailing space: the head's own groups are measured
             // with the head's line and nothing past it — the operands have a fit of their own,
             // and a width read across them is one the next pass, measuring the head alone, does
-            // not keep (#108's review). The bracketing is owned here, so `head` moves.
-            (!head.is_empty())
-                .then(move || Doc::concat([head, Doc::text(" "), Doc::Boundary]))
-                .into_iter()
-                .chain([fit.wrap(Doc::concat([
-                    Doc::IfBreak {
-                        broken: "(".to_owned(),
-                        flat: String::new(),
-                    },
-                    nested(Doc::SoftLine, items),
-                    Doc::SoftLine,
-                    Doc::IfBreak {
-                        broken: ")".to_owned(),
-                        flat: String::new(),
-                    },
-                ]))]),
-        ),
+            // not keep (#108's review). The wrap follows the head through [`Doc::HeadThen`], so
+            // a head that breaks indents the wrap with its own lines — the parentheses the next
+            // pass reads back as the operand's own group sit exactly there. The bracketing is
+            // owned here, so `head` moves.
+            let wrap = fit.wrap(Doc::concat([
+                Doc::IfBreak {
+                    broken: "(".to_owned(),
+                    flat: String::new(),
+                },
+                nested(Doc::SoftLine, items),
+                Doc::SoftLine,
+                Doc::IfBreak {
+                    broken: ")".to_owned(),
+                    flat: String::new(),
+                },
+            ]));
+            if head.is_empty() {
+                wrap
+            } else {
+                Doc::HeadThen(
+                    Box::new(head),
+                    Box::new(Doc::concat([Doc::text(" "), Doc::Boundary, wrap])),
+                )
+            }
+        }
     }
 }
 
@@ -567,6 +585,18 @@ pub(super) const BRACKETS: Bracketing = Bracketing::Written {
 /// token, so a `=` on one edge spaces that edge alone and the other keeps §2.5's tight form.
 fn edge_needs_pad(inner: &[Token], edge: Option<usize>) -> bool {
     edge.is_some_and(|k| inner[k].text == "=")
+}
+
+/// Whether `doc` holds a [`Doc::ForceBreak`] anywhere inside it — a break no fit decision
+/// reaches, so the laid-out form is the one every pass produces.
+pub(super) fn holds_forced_break(doc: &Doc) -> bool {
+    match doc {
+        Doc::ForceBreak(_) => true,
+        Doc::Concat(items) => items.iter().any(holds_forced_break),
+        Doc::Nest(inner) | Doc::Group(inner) => holds_forced_break(inner),
+        Doc::HeadThen(head, rest) => holds_forced_break(head) || holds_forced_break(rest),
+        Doc::Text(_) | Doc::Line | Doc::SoftLine | Doc::IfBreak { .. } | Doc::Boundary => false,
+    }
 }
 
 /// `bracketing`'s spelling, with the pads the edge tokens decide.
@@ -1177,5 +1207,15 @@ mod tests {
             rendered,
             "(\n\tfirst_argument,\n\tinner_function_with_a_very_long_name(\n\t\tnested_argument_one,\n\t\tnested_argument_two,\n\t\tnested_argument_three\n\t)\n)"
         );
+    }
+
+    #[test]
+    fn tmp_probe_seed1() {
+        use crate::doc::render;
+        use crate::lexer::tokenize;
+        let toks = tokenize("x&return\"\"x+f;");
+        let doc = build_chain_doc(&toks, Bound::Parens);
+        eprintln!("DOC {doc:#?}");
+        eprintln!("RENDER {:?}", doc.as_ref().map(|d| render(d, 1, 0, 0)));
     }
 }
