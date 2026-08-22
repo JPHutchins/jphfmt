@@ -168,15 +168,30 @@ fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
 
 /// Whether the `{` at `open` opens a block rather than an initializer list, whose elements are
 /// expressions: the structure pass collapses an element's newline to a space, which would otherwise
-/// let a multiply reach [`declares_pointer`] as a same-line run on the next pass. An `=` since the
-/// last `;` marks an initializer, and so does a preceding `(T)` — a compound literal reaches neither
-/// `=` nor a statement boundary in `return (T){…}` or `f((T){…})`.
+/// let a multiply reach [`declares_pointer`] as a same-line run on the next pass. A top-level `=`
+/// since the last top-level `;` marks an initializer, and so does a preceding `(T)` — a compound
+/// literal reaches neither `=` nor a statement boundary in `return (T){…}` or `f((T){…})`.
+///
+/// The scan skips `(` and `[` interiors: an `=` or `;` the layout wrote inside a group — a
+/// statement expression's `=;` — must not decide the verdict, or the pass that wrote it reads a
+/// different answer than the pass that read the author's (#130). A brace is transparent: an
+/// initializer's `=` must stay visible through it (`int m[] = {{a*b}, …}`), and its own elements
+/// read the same statement level as it does.
 fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
-    !opens_literal(toks, open)
-        && (0..open)
-            .rev()
-            .take_while(|&k| pieces[k].1.text != ";")
-            .all(|k| pieces[k].1.text != "=")
+    if opens_literal(toks, open) {
+        return false;
+    }
+    let mut depth = 0i32;
+    for k in (0..open).rev() {
+        match pieces[k].1.text {
+            ")" | "]" => depth += 1,
+            "(" | "[" => depth = depth.saturating_sub(1),
+            ";" if depth == 0 => return true,
+            "=" if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether the `{` at `open` follows a compound literal's `(T)`. The piece list is the token stream
@@ -462,6 +477,36 @@ fn space_subscripts(pieces: &mut [Piece]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tmp_probe_130() {
+        use crate::lexer::tokenize;
+        for input in ["({=}){fx*f", "({\n\t=;\n}){fx*f"] {
+            let mut pieces: Vec<Piece> = Vec::new();
+            let mut gap = String::new();
+            for t in tokenize(input) {
+                if is_trivia(&t) {
+                    gap.push_str(t.text);
+                } else {
+                    pieces.push((std::mem::take(&mut gap), t));
+                }
+            }
+            let star = pieces.iter().position(|(_, t)| t.text == "*").unwrap();
+            let name = star - 1;
+            let enclosing = enclosing_open(&pieces, name);
+            let statement_level = enclosing.is_none_or(|open| {
+                pieces[open].1.text == "{" && opens_block(&pieces, &toks_view(&pieces), open)
+            });
+            let prev = pieces[name.saturating_sub(1)].1.text.to_string();
+            eprintln!(
+                "PROBE {input:?} star={star} prev={prev:?} enclosing={enclosing:?} statement_level={statement_level}"
+            );
+        }
+    }
+
+    fn toks_view<'src>(pieces: &[Piece<'src>]) -> Vec<crate::lexer::Token<'src>> {
+        pieces.iter().map(|p| p.1).collect()
+    }
+
     use super::*;
 
     #[test]
