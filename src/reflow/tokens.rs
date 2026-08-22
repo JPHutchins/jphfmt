@@ -1040,8 +1040,9 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
 /// time, each reserve stopping at the next bracket. They agree unless the head holds a
 /// *breakable* construct a bracket deep — a chain operator or `?`, a `,` list a builder actually
 /// breaks (a call's arguments, a brace list — not a comma operator in a group), or a call —
-/// which refuses, unless the call sits directly in the head's outermost group or subscript,
-/// whose author's brackets read back verbatim; or a second construct after a breakable first —
+/// which refuses, unless the call sits directly in the head's outermost group or subscript
+/// and no chain operator or `?` marks that bracket — before or after the call — whose author's
+/// brackets read back verbatim; or a second construct after a breakable first —
 /// `f(x)(y)`, a double assignment's `…] = f(x) =` — which pass 1's parens would turn into pass
 /// 2's second construct and refuse. Unbreakable nested content — a cast `(size_t)i`, parens
 /// around an atom `(a)`, a subscript chain `a[0][1]`, a call through a group `(*fp)(x)` —
@@ -1059,7 +1060,7 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
         /// A `{` brace list, whose comma a builder does break.
         Brace,
     }
-    let mut frames: Vec<(Kind, bool)> = Vec::new();
+    let mut frames: Vec<(Kind, bool, bool)> = Vec::new();
     let mut close_seen = false;
     let mut closed_breakable = false;
     for (i, t) in toks.iter().enumerate().filter(|(_, t)| !is_trivia(t)) {
@@ -1076,34 +1077,40 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                     "(" | "[" => Kind::Group,
                     _ => Kind::Brace,
                 };
-                frames.push((kind, false));
+                frames.push((kind, false, false));
             }
             ")" | "]" | "}" => {
-                let (kind, marked) = frames.pop().unwrap_or((Kind::Group, false));
-                let breakable = marked || kind == Kind::Call;
+                let (kind, chain_marked, has_call) =
+                    frames.pop().unwrap_or((Kind::Group, false, false));
+                let breakable = chain_marked || has_call || kind == Kind::Call;
                 // A breakable construct a bracket deep refuses — the head's own outermost bracket
                 // is the one construct the boundary covers. The exemption: a call directly inside
                 // the head's outermost group or subscript — `(f(x)) + b =` and `x[f(y)] + z =`
                 // re-parse as themselves: the author's brackets read back verbatim, so pass 1's
                 // operand parens never become pass 2's second construct (the force-allow build is
-                // stable and compliant). A call *marked* by a chain operator or `?` in its own
-                // arguments — `arr[f(a | b)]` — is the deep class: pass 1's lookahead crosses the
-                // call's bracket where pass 2's reserve stops, so it stays refused.
-                let exempt = kind == Kind::Call
-                    && !marked
+                // stable and compliant). A chain operator or `?` in the call's own arguments, or
+                // in the enclosing bracket before the call — `arr[f(a | b)]`, `arr[a | f(y)]` —
+                // is the deep class: pass 1's lookahead crosses the call's bracket where pass 2's
+                // reserve stops, so it stays refused. Neither mark is set by a `,` list — the
+                // call's own builder breaks it the same way on both passes.
+                let candidate = kind == Kind::Call
+                    && !chain_marked
                     && frames.len() == 1
+                    && !frames[0].1
                     && (frames[0].0 == Kind::Group || frames[0].0 == Kind::Subscript);
-                if breakable && !frames.is_empty() && !exempt {
+                if breakable && !frames.is_empty() && !candidate {
                     return true;
                 }
-                // The exemption's breakability is the enclosing frames': mark each one, so the
-                // last close re-arms `closed_breakable` — an open or `?` after the bracket is
-                // still the second-construct class the gate refuses (`(f(x))(y)`,
-                // `(f(x)) ? a : b`).
-                if exempt {
-                    for (_, frame_breakable) in &mut frames {
-                        *frame_breakable = true;
-                    }
+                // The candidate's breakability moves to the enclosing frame — its close leaves
+                // `closed_breakable` armed, so an open or `?` after the bracket is still the
+                // second-construct class (`(f(x))(y)`, `(f(x)) ? a : b`). A chain mark that
+                // arrives *after* the call — `arr[f(y) | a]` — marks the frame instead, and its
+                // close refuses: the same two-pass disagreement as the mark-before order.
+                if candidate {
+                    frames.last_mut().unwrap().2 = true;
+                }
+                if chain_marked && has_call {
+                    return true;
                 }
                 close_seen = true;
                 closed_breakable = breakable;
@@ -1122,7 +1129,7 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                     if close_seen && closed_breakable && t.text == "?" {
                         return true;
                     }
-                } else if let Some((kind, breakable)) = frames.last_mut()
+                } else if let Some((kind, breakable, _)) = frames.last_mut()
                     && (t.text == "?" || *kind == Kind::Brace)
                 {
                     *breakable = true;
@@ -1135,7 +1142,7 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                     // read back verbatim, so pass 1's operand parens cannot become pass 2's
                     // second construct. Only an open or a `?` after a breakable close refuses.
                     if !frames.is_empty()
-                        && let Some((_, breakable)) = frames.last_mut()
+                        && let Some((_, breakable, _)) = frames.last_mut()
                     {
                         *breakable = true;
                     }

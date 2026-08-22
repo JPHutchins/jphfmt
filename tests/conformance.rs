@@ -1972,11 +1972,11 @@ fn a_chain_head_is_measured_like_its_operands() {
     // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
     // limit outright: at width 40 the head alone is 50 columns.
     //
-    // This shape's call is breakable (its `,` list), so the head gate refuses the *chain* and the
-    // statement walker's subscript arm lays the head out — the fallback path, not the boundary
-    // mechanism. The boundary path is pinned by the gate-passing heads in
-    // [`a_chain_head_does_not_alternate_with_the_wrapped_operands`] (`(f(x)) + b =`,
-    // `x[a + b] + c =`, and the unbreakable heads).
+    // The gate passes this head — the `,` list leaves the call unmarked, so the exemption admits
+    // the call in the head's outermost subscript — and `build_chain_doc` lays the head out through
+    // the boundary mechanism. The fallback path — a refused head the statement walker's subscript
+    // arm lays out — is pinned by the chain-marked heads in
+    // [`a_chain_head_does_not_alternate_with_the_wrapped_operands`] (`arr[a | f(y)] =`).
     //
     // Asserted three ways, because the layout alone is not enough: a pass-1 layout that no second
     // pass reproduces is what #108 *is*, so an exact-output test that never formats its own output
@@ -2190,6 +2190,33 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
         20,
         "void f(void) {\n\t((f(\n\t\tx\n\t))) + b = c | d;\n}\n",
     );
+    // A chain operator in the enclosing bracket — before the call or after it — is the deep
+    // class: pass 1's lookahead crosses the call's bracket where pass 2's reserve stops, so the
+    // chain refuses and the walk lays the head's subscript out on every pass. The w=14 pin sits
+    // in the band that alternated (pass 1 wrote `f(y)` flat, pass 2 broke it): the exact broken
+    // call asserts the stable side, and the width bound guards the refused layout. The w=26
+    // companion is the verbatim form at a width it satisfies.
+    assert_laid_out(
+        "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+        14,
+        "void f(void) {\n\tarr[\n\t\ta |\n\t\tf(\n\t\t\ty\n\t\t)\n\t] = x | y;\n}\n",
+    );
+    assert_laid_out(
+        "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+        26,
+        "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+    );
+    // The same mark in a group: refused, compliant from the width its broken group satisfies.
+    // At w=24-26 the whole statement renders flat at 27 columns — a stable §6 passthrough the
+    // gate's refusal keeps — recorded here as the cost the suite states rather than hides.
+    assert_laid_out(
+        "void f(void) {\n\t(a | f(x)) + b = c | d;\n}\n",
+        22,
+        "void f(void) {\n\t(\n\t\ta |\n\t\tf(x)\n\t) + b = c | d;\n}\n",
+    );
+    // The ternary refusal's trade, stated: at w=16 the pinned output's tail is 23 columns — the
+    // refusal widened the admitted form's 18-column overrun for the `?`-arm's categorical rule —
+    // and w=23 above is the first width the refused form satisfies.
 }
 
 #[test]
