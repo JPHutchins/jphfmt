@@ -2032,6 +2032,19 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
     let juxtaposed = "void f(void) {\n\tarr[index_of(a, b)][c] = a | b | c | d;\n}\n";
     assert_eq!(jphfmt::format_with_width(juxtaposed, 24), juxtaposed);
     assert_eq!(jphfmt::format_with_width(juxtaposed, 100), juxtaposed);
+    // The refusal is a passthrough: at a width the verbatim form satisfies, every line stays
+    // within it — the width rule is guarded even for the shapes the gate refuses.
+    for (src, width) in [
+        (juxtaposed, 100),
+        ("void f(void) {\n\tarr[a + b] = f(x) = c | d;\n}\n", 40),
+        ("void f(void) {\n\tarr[f(a | b)] = x | y;\n}\n", 30),
+        ("void f(void) {\n\tarr[f(g(x))] = a | b;\n}\n", 30),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        for line in once.lines() {
+            assert!(display_width(line) <= width, "{src:?} at {width}: {line:?}");
+        }
+    }
     // The review's residual shapes, now the same refusal: a second construct after the first
     // (a double assignment's head) and a breakable construct a bracket deep (a chain argument
     // inside the head's call). Each passes through and stays there — the two passes measured
@@ -2107,6 +2120,16 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             "void f(void) {\n\tx[0] + b = c | d;\n}\n",
             "void f(void) {\n\tx[0] + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
             16,
+        ),
+        (
+            "void f(void) {\n\t(f(x)) + b = c | d;\n}\n",
+            "void f(void) {\n\t(f(\n\t\tx\n\t)) + b = c | d;\n}\n",
+            19,
+        ),
+        (
+            "void f(void) {\n\tx[a + b] + c = d | e;\n}\n",
+            "void f(void) {\n\tx[\n\t\ta +\n\t\tb\n\t] + c = (\n\t\td |\n\t\te\n\t);\n}\n",
+            14,
         ),
     ] {
         let once = jphfmt::format_with_width(src, width);

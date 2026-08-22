@@ -1108,14 +1108,13 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
             }
             _text => {
                 if is_chain_break(toks, i) && !is_trivia(t) {
-                    if frames.is_empty() {
-                        // A depth-zero binary chain operator in an assignment's left side is an
-                        // invalid lvalue that cannot re-bind the head, so an unbreakable close
-                        // before it stays laid out — only a breakable construct's close refuses.
-                        if close_seen && closed_breakable {
-                            return true;
-                        }
-                    } else if let Some((_, breakable)) = frames.last_mut() {
+                    // A depth-zero binary chain operator after any close passes: the head
+                    // re-parses as itself — the closed construct's brackets are the author's and
+                    // read back verbatim, so pass 1's operand parens cannot become pass 2's
+                    // second construct. Only an open or a `?` after a breakable close refuses.
+                    if !frames.is_empty()
+                        && let Some((_, breakable)) = frames.last_mut()
+                    {
                         *breakable = true;
                     }
                 }
