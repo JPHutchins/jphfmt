@@ -37,8 +37,11 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     // passthrough's text form loses the force: an enclosing group then measures a doc without the
     // ForceBreak and joins what the previous pass broke, two passes for one line (#108's draw). A
     // forced break has no fits decision to flip, so the laid form is the one every pass reaches.
+    // A `#` fragment keeps the verbatim — its lines are not the layout's to own, the guard every
+    // laid path carries.
     let laid = laid_call_body(inner, fit);
-    if has_middle_newline(inner) && !holds_forced_break(&laid) {
+    let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
+    if has_middle_newline(inner) && (!holds_forced_break(&laid) || holds_hash) {
         return render_passthrough("(", inner, ")");
     }
     laid

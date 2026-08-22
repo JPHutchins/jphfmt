@@ -140,15 +140,20 @@ fn emit_tokens(
                 // — where the passthrough's text form loses the force: the enclosing group the
                 // call sits in then measures a doc without the ForceBreak and joins what the
                 // previous pass broke, two passes for one line (#108's draw). A forced break has
-                // no fits decision to flip, so the re-laid form is the one every pass reaches.
-                let doc = build_call_body(inner, Fit::Measured);
-                if holds_forced_break(&doc) {
-                    emit_str(out, col, t.text);
-                    emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
-                    pending_func_def =
-                        next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                    i = close + 1;
-                    continue;
+                // no fits decision to flip, so the re-laid form is the one every pass reaches. A
+                // `#` or `##` fragment in the arguments keeps the verbatim — its lines are not
+                // the layout's to own, the same guard the laid arm carries.
+                let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
+                if !holds_hash {
+                    let doc = build_call_body(inner, Fit::Measured);
+                    if holds_forced_break(&doc) {
+                        emit_str(out, col, t.text);
+                        emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+                        pending_func_def =
+                            next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
+                        i = close + 1;
+                        continue;
+                    }
                 }
                 for tok in &toks[i..=close] {
                     emit_str(out, col, tok.text);

@@ -1119,7 +1119,10 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
             // become pass 2's second construct and the gate refuses its own output. A `,` marks
             // only a brace list — a call's arguments are the call's own builder, broken the same
             // way on both passes, so a call stays exemptible with them; a group's and a
-            // subscript's commas are operators no layout splits.
+            // subscript's commas are operators no layout splits. A `?` marks any enclosing
+            // frame: a ternary in the head's bracket, before or after the call, alternates once
+            // the operands grow (`x[a ? f(y) : b] =` at w=19-21) — the walk's ternary arms and
+            // the head's own groups measure the call against different budgets.
             "?" | "," => {
                 if frames.is_empty() {
                     // A ternary after a *breakable* construct at the head's own level: pass 1's

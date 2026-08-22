@@ -2193,9 +2193,10 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
     // A chain operator in the enclosing bracket — before the call or after it — is the deep
     // class: pass 1's lookahead crosses the call's bracket where pass 2's reserve stops, so the
     // chain refuses and the walk lays the head's subscript out on every pass. The w=14 pin sits
-    // in the band that alternated (pass 1 wrote `f(y)` flat, pass 2 broke it): the exact broken
-    // call asserts the stable side, and the width bound guards the refused layout. The w=26
-    // companion is the verbatim form at a width it satisfies.
+    // beside the band that alternated — w=13 for this member, w=13-15 for the longer operands
+    // (pass 1 wrote `f(y)` flat, pass 2 broke it): the exact broken call asserts the stable
+    // side, and the width bound guards the refused layout. The w=26 companion is the verbatim
+    // form at a width it satisfies.
     assert_laid_out(
         "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
         14,
@@ -2205,6 +2206,15 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
         "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
         26,
         "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+    );
+    // The mark-after order exercises the arm the mark-before pins cannot: the call closes before
+    // the `|` marks the enclosing bracket, and the frame's own close refuses
+    // (`chain_marked && has_call`). w=16 sits in the band that alternated on the round-12
+    // binary (w=15-17); the laid form is the one every pass reaches.
+    assert_laid_out(
+        "void f(void) {\n\tarr[f(y) | a] = aa | bb;\n}\n",
+        16,
+        "void f(void) {\n\tarr[\n\t\tf(\n\t\t\ty\n\t\t) |\n\t\ta\n\t] = aa | bb;\n}\n",
     );
     // The same mark in a group: refused, compliant from the width its broken group satisfies.
     // At w=24-26 the whole statement renders flat at 27 columns — a stable §6 passthrough the
@@ -2217,6 +2227,50 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
     // The ternary refusal's trade, stated: at w=16 the pinned output's tail is 23 columns — the
     // refusal widened the admitted form's 18-column overrun for the `?`-arm's categorical rule —
     // and w=23 above is the first width the refused form satisfies.
+    //
+    // A `?` in the enclosing bracket is the same deep class in both orders: the review's probe
+    // found the short-operand member stable, but the width sweep shows `x[a ? f(y) : b] =` and
+    // `x[f(y) ? a : b] =` alternate at w=19-21 once the operands grow — the walk's ternary arms
+    // and the head's own groups measure the call against different budgets. The categorical
+    // refusal stays; this pin is the refused layout, compliant from w=14, and the flat form
+    // overruns w=25-27 at 28 columns (recorded, per the round-9 convention).
+    assert_laid_out(
+        "void f(void) {\n\tx[a ? f(y) : b] = c | d;\n}\n",
+        14,
+        "void f(void) {\n\tx[\n\t\ta ? f(\n\t\t\ty\n\t\t) :\n\t\tb\n\t] = c | d;\n}\n",
+    );
+    // The justified refusals' §8.5 cost across the chain-marked family, per the round-9
+    // convention: each member pins a width its passthrough satisfies. The bands the flat tail
+    // overruns, measured on the built binary: `aa | bb | cc` at 21 columns through w=20 and the
+    // flat form at 33 from w=24; the ternary operand at 18 through w=17; the `&&` continuation
+    // at 19 through w=18 and the flat form at 31 at w=28-30. The `==` head with the long
+    // operands has no compliant width below 40 — the broken form overruns through w=26 at 27
+    // columns and the flat form from w=27 at 40 — so its pin is the verbatim passthrough at its
+    // natural width, the shape the walk keeps when the gate refuses.
+    for (src, width, expected) in [
+        (
+            "void f(void) {\n\tarr[f(y) | a] = aa | bb | cc;\n}\n",
+            22,
+            "void f(void) {\n\tarr[\n\t\tf(y) |\n\t\ta\n\t] = aa | bb | cc;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[a | f(y)] = a ? b : c;\n}\n",
+            18,
+            "void f(void) {\n\tarr[\n\t\ta |\n\t\tf(\n\t\t\ty\n\t\t)\n\t] = a ? b : c;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[f(y) == a] = aaaa | bbbb | cccc;\n}\n",
+            40,
+            "void f(void) {\n\tarr[f(y) == a] = aaaa | bbbb | cccc;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[f(y) | a] && b = x | y;\n}\n",
+            19,
+            "void f(void) {\n\tarr[\n\t\tf(\n\t\t\ty\n\t\t) |\n\t\ta\n\t] && b = x | y;\n}\n",
+        ),
+    ] {
+        assert_laid_out(src, width, expected);
+    }
 }
 
 #[test]
@@ -2326,6 +2380,20 @@ fn a_call_a_pass_broke_re_reads_with_its_forced_break() {
     // alternated. A forced break has no fits decision to flip: the re-laid form is the one every
     // pass reaches, so the passthrough yields to it.
     for (src, width) in [("({[x<<case({[],})]", 1), ("({[x<<case({[],})]", 100)] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at {width}"
+        );
+    }
+    // A `#` or `##` fragment in the arguments keeps the verbatim either way — its lines are not
+    // the layout's to own — and the same draw that surfaced the case shape also surfaced the
+    // re-lay overreaching into one: the hash guard is the difference between the two.
+    for (src, width) in [
+        ("0\"\"''\"\"a(\"\"{##}{.,}=0+_)", 1),
+        ("0\"\"''\"\"a(\"\"{##}{.,}=0+_)", 100),
+    ] {
         let once = jphfmt::format_with_width(src, width);
         assert_eq!(
             jphfmt::format_with_width(&once, width),
