@@ -1950,6 +1950,354 @@ fn a_parenthesized_assignment_keeps_its_operator_spaced() {
     );
 }
 
+/// Format `src` at `width` once and assert the three things every head pin asserts: the exact
+/// output, the fixpoint, and every line within the width. The one recipe — a case that forgets the
+/// width bound would otherwise regress silently.
+fn assert_laid_out(src: &str, width: usize, expected: &str) {
+    let once = jphfmt::format_with_width(src, width);
+    assert_eq!(once, expected, "{src:?}");
+    assert_eq!(
+        jphfmt::format_with_width(&once, width),
+        once,
+        "and it is a fixpoint"
+    );
+    for line in once.lines() {
+        assert!(display_width(line) <= width, "over the limit: {line:?}");
+    }
+}
+
+#[test]
+fn a_chain_head_is_measured_like_its_operands() {
+    // #108. The head held whatever precedes the operands — an assignment's left side — and was
+    // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
+    // limit outright: at width 40 the head alone is 50 columns.
+    //
+    // The gate passes this head — the `,` list leaves the call unmarked, so the exemption admits
+    // the call in the head's outermost subscript — and `build_chain_doc` lays the head out through
+    // the boundary mechanism. The fallback path — a refused head the statement walker's subscript
+    // arm lays out — is pinned by the chain-marked heads in
+    // [`a_chain_head_does_not_alternate_with_the_wrapped_operands`] (`arr[a | f(y)] =`).
+    //
+    // Asserted three ways, because the layout alone is not enough: a pass-1 layout that no second
+    // pass reproduces is what #108 *is*, so an exact-output test that never formats its own output
+    // is green on the very defect it names. The review of this change found exactly that.
+    for (src, width, expected) in [
+        (
+            "void f(void) {\n\tarr[index_of(first_argument, second_argument)] = alpha | beta;\n}\n",
+            40,
+            "void f(void) {\n\tarr[index_of(\n\t\tfirst_argument,\n\t\tsecond_argument\n\t)] = alpha | beta;\n}\n",
+        ),
+        // The head fits on its own line and stays flat; the operands take their own parens. Sharing
+        // one fit made the head break whenever the operands did, and the next pass — measuring the
+        // head alone, its trailing reserve stopping at the operands' bracket — disagreed (#108's
+        // review). A `Doc::Boundary` after the head is what keeps the two verdicts the same.
+        (
+            "void f(void) {\n\tarr[a + b] = a | b;\n}\n",
+            18,
+            "void f(void) {\n\tarr[a + b] = (\n\t\ta |\n\t\tb\n\t);\n}\n",
+        ),
+    ] {
+        assert_laid_out(src, width, expected);
+        // Measured is not the same as broken: a head that fits is still written flat.
+        assert_eq!(jphfmt::format_with_width(src, 100), src);
+    }
+}
+
+#[test]
+fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
+    // The draft of #108 recorded 211 shapes that still alternated: pass 1 breaks the head on the
+    // operands' flat width, pass 2 measures the head alone — its trailing reserve stops at the
+    // operands' bracket — and joins it back. The boundary after the head stops the head's own
+    // groups' measurement there, the same verdict the next pass reaches either way.
+    for (src, width) in [
+        (
+            "void f(void) {\n\tarr[a + b] = aaaa | bbbb | cccc;\n}\n",
+            18,
+        ),
+        (
+            "void f(void) {\n\tarr[a + b] = aaaa | bbbb | cccc;\n}\n",
+            20,
+        ),
+        (
+            "void f(void) {\n\tarr[a + b] = aaaa | bbbb | cccc;\n}\n",
+            24,
+        ),
+        ("void f(void) {\n\tarr[a + b] = a ? b : c ? d : e;\n}\n", 18),
+        (
+            "void f(void) {\n\tarr[a + b] = a ? b : c ? d : e;\n}\n",
+            100,
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be a fixpoint: {src:?} at width {width}"
+        );
+        for line in once.lines() {
+            assert!(display_width(line) <= width, "over the limit: {line:?}");
+        }
+    }
+    // A head with juxtaposed brackets — `arr[index_of(a, b)][c]` — is measured one handler at a
+    // time on the next pass, each against a trailing reserve that stops at the second bracket,
+    // while this pass's single lookahead crosses it. The two disagree, so the chain is refused and
+    // the author's form passes through (§6): the same span must read the same either way.
+    let juxtaposed = "void f(void) {\n\tarr[index_of(a, b)][c] = a | b | c | d;\n}\n";
+    assert_eq!(jphfmt::format_with_width(juxtaposed, 24), juxtaposed);
+    assert_eq!(jphfmt::format_with_width(juxtaposed, 100), juxtaposed);
+    // The refusal is a passthrough: at a width the verbatim form satisfies, every line stays
+    // within it — the width rule is guarded even for the shapes the gate refuses.
+    for (src, width) in [
+        (juxtaposed, 100),
+        ("void f(void) {\n\tarr[a + b] = f(x) = c | d;\n}\n", 40),
+        ("void f(void) {\n\tarr[f(a | b)] = x | y;\n}\n", 30),
+        ("void f(void) {\n\tarr[f(g(x))] = a | b;\n}\n", 30),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        for line in once.lines() {
+            assert!(display_width(line) <= width, "{src:?} at {width}: {line:?}");
+        }
+    }
+    // The review's residual shapes, now the same refusal: a second construct after the first
+    // (a double assignment's head) and a breakable construct a bracket deep (a chain argument
+    // inside the head's call). Each passes through and stays there — the two passes measured
+    // different budgets before.
+    let double_assign = "void f(void) {\n\tarr[a + b] = f(x) = c | d;\n}\n";
+    let deep_break = "void f(void) {\n\tarr[f(a | b)] = x | y;\n}\n";
+    for (src, width) in [(double_assign, 19), (double_assign, 20), (deep_break, 14)] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "{src:?} at {width}"
+        );
+    }
+    // A nested call at depth two is the same class the gate is now structural for: pass 1's
+    // lookahead flattened through `g(x)`'s own fits where pass 2's handlers reserve stops at its
+    // bracket, and the two laid `g(x)` two ways. The chain is refused; the structure's own
+    // handlers lay the head out one construct at a time, the same path on every pass.
+    let nested_call = "void f(void) {\n\tarr[f(g(x))] = a | b;\n}\n";
+    for width in 12..=20 {
+        let once = jphfmt::format_with_width(nested_call, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "the nested-call head at {width}"
+        );
+    }
+    // The gate's other half: unbreakable nested content — a cast, parens around an atom, a call
+    // through a parenthesized callee — measures the same on both passes and is allowed, so the
+    // operands still wrap and every line stays within the width.
+    for (src, expected, width) in [
+        (
+            "void f(void) {\n\tarr[(size_t)i] = a | b;\n}\n",
+            "void f(void) {\n\tarr[(size_t)i] = (\n\t\ta |\n\t\tb\n\t);\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\t(*fp)(x) = aaaa | bbbb;\n}\n",
+            "void f(void) {\n\t(*fp)(x) = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\ta[0][1] = aaaa | bbbb;\n}\n",
+            "void f(void) {\n\ta[0][1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\ta[0].b[1] = aaaa | bbbb;\n}\n",
+            "void f(void) {\n\ta[0].b[1] = (\n\t\taaaa |\n\t\tbbbb\n\t);\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\tarr[i](j) = a | b;\n}\n",
+            "void f(void) {\n\tarr[i](j) = a | b;\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\tarr[(a)][0] = x | y;\n}\n",
+            "void f(void) {\n\tarr[(a)][0] = x | y;\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\tarr[x[a, b]] = c | d;\n}\n",
+            "void f(void) {\n\tarr[x[a, b]] = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            24,
+        ),
+        (
+            "void f(void) {\n\t(a) + b = c | d;\n}\n",
+            "void f(void) {\n\t(a) + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            16,
+        ),
+        (
+            "void f(void) {\n\tx[0] + b = c | d;\n}\n",
+            "void f(void) {\n\tx[0] + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            16,
+        ),
+        (
+            "void f(void) {\n\t(f(x)) + b = c | d;\n}\n",
+            "void f(void) {\n\t(f(x)) + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            19,
+        ),
+        (
+            "void f(void) {\n\tx[a + b] + c = d | e;\n}\n",
+            "void f(void) {\n\tx[\n\t\ta +\n\t\tb\n\t] + c = (\n\t\td |\n\t\te\n\t);\n}\n",
+            14,
+        ),
+        (
+            "void f(void) {\n\tx[f(y)] + z = c | d;\n}\n",
+            "void f(void) {\n\tx[f(\n\t\ty\n\t)] + z = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            16,
+        ),
+    ] {
+        assert_laid_out(src, width, expected);
+    }
+    // The round-12 classes. A call in the author's group with a second construct after it —
+    // `(f(x))(y)`, `(f(x))[y]` — and a ternary after the exempted call's close are the
+    // second-construct class the gate refuses: pass 1's operand parens would read back as
+    // construct two on pass 2. The exemption re-arms the breakability it exempts, so each is
+    // refused again and the next pass keeps whatever the refusal laid out — pinned at the widths
+    // in the band that used to alternate or overrun.
+    let juxtaposed_call = "void f(void) {\n\t(f(x))(y) = c | d;\n}\n";
+    let juxtaposed_subscript = "void f(void) {\n\t(f(x))[y] = c | d;\n}\n";
+    let ternary_after_exempt = "void f(void) {\n\t(f(x)) ? a : b = c | d;\n}\n";
+    for (src, width) in [
+        (juxtaposed_call, 12),
+        (juxtaposed_call, 16),
+        (juxtaposed_subscript, 12),
+        (juxtaposed_subscript, 16),
+        (ternary_after_exempt, 16),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "{src:?} at {width}"
+        );
+    }
+    // The same shapes at a width the refusal's own layout satisfies, with every line within it.
+    assert_laid_out(juxtaposed_call, 22, juxtaposed_call);
+    assert_laid_out(juxtaposed_subscript, 22, juxtaposed_subscript);
+    assert_laid_out(
+        ternary_after_exempt,
+        23,
+        "void f(void) {\n\t(f(\n\t\tx\n\t)) ? a : b = c | d;\n}\n",
+    );
+    // The depth-2 residual: `f(` after a `(` reads as a group, not a call, so the exemption
+    // cannot reach it and the chain stays refused — stable, with the compliant band pinned.
+    assert_laid_out(
+        "void f(void) {\n\t((f(x))) + b = c | d;\n}\n",
+        20,
+        "void f(void) {\n\t((f(\n\t\tx\n\t))) + b = c | d;\n}\n",
+    );
+    // A chain operator in the enclosing bracket — before the call or after it — is the deep
+    // class: pass 1's lookahead crosses the call's bracket where pass 2's reserve stops, so the
+    // chain refuses and the walk lays the head's subscript out on every pass. The w=14 pin sits
+    // beside the band that alternated — w=13 for this member, w=13-15 for the longer operands
+    // (pass 1 wrote `f(y)` flat, pass 2 broke it): the exact broken call asserts the stable
+    // side, and the width bound guards the refused layout. The w=26 companion is the verbatim
+    // form at a width it satisfies.
+    assert_laid_out(
+        "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+        14,
+        "void f(void) {\n\tarr[\n\t\ta |\n\t\tf(\n\t\t\ty\n\t\t)\n\t] = x | y;\n}\n",
+    );
+    assert_laid_out(
+        "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+        26,
+        "void f(void) {\n\tarr[a | f(y)] = x | y;\n}\n",
+    );
+    // The mark-after order exercises the arm the mark-before pins cannot: the call closes before
+    // the `|` marks the enclosing bracket, and the frame's own close refuses
+    // (`chain_marked && has_call`). w=16 sits in the band that alternated on the round-12
+    // binary (w=15-17); the laid form is the one every pass reaches.
+    assert_laid_out(
+        "void f(void) {\n\tarr[f(y) | a] = aa | bb;\n}\n",
+        16,
+        "void f(void) {\n\tarr[\n\t\tf(\n\t\t\ty\n\t\t) |\n\t\ta\n\t] = aa | bb;\n}\n",
+    );
+    // The same mark in a group: refused, compliant from the width its broken group satisfies.
+    // At w=24-26 the whole statement renders flat at 27 columns — a stable §6 passthrough the
+    // gate's refusal keeps — recorded here as the cost the suite states rather than hides.
+    assert_laid_out(
+        "void f(void) {\n\t(a | f(x)) + b = c | d;\n}\n",
+        22,
+        "void f(void) {\n\t(\n\t\ta |\n\t\tf(x)\n\t) + b = c | d;\n}\n",
+    );
+    // The ternary refusal's trade, stated: at w=16 the pinned output's tail is 23 columns — the
+    // refusal widened the admitted form's 18-column overrun for the `?`-arm's categorical rule —
+    // and w=23 above is the first width the refused form satisfies.
+    //
+    // A `?` in the enclosing bracket is the same deep class in both orders: the review's probe
+    // found the short-operand member stable, but the width sweep shows `x[a ? f(y) : b] =` and
+    // `x[f(y) ? a : b] =` alternate at w=19-21 once the operands grow — the walk's ternary arms
+    // and the head's own groups measure the call against different budgets. The categorical
+    // refusal stays; this pin is the refused layout, compliant from w=14, and the flat form
+    // overruns w=25-27 at 28 columns (recorded, per the round-9 convention).
+    assert_laid_out(
+        "void f(void) {\n\tx[a ? f(y) : b] = c | d;\n}\n",
+        14,
+        "void f(void) {\n\tx[\n\t\ta ? f(\n\t\t\ty\n\t\t) :\n\t\tb\n\t] = c | d;\n}\n",
+    );
+    // The justified refusals' §8.5 cost across the chain-marked family, per the round-9
+    // convention: each member pins a width its passthrough satisfies. The bands the flat tail
+    // overruns, measured on the built binary: `aa | bb | cc` at 21 columns through w=20 and the
+    // flat form at 33 from w=24; the ternary operand at 18 through w=17; the `&&` continuation
+    // at 19 through w=18 and the flat form at 31 at w=28-30. The `==` head with the long
+    // operands has no compliant width below 40 — the broken form overruns through w=26 at 27
+    // columns and the flat form from w=27 at 40 — so its pin is the verbatim passthrough at its
+    // natural width, the shape the walk keeps when the gate refuses.
+    for (src, width, expected) in [
+        (
+            "void f(void) {\n\tarr[f(y) | a] = aa | bb | cc;\n}\n",
+            22,
+            "void f(void) {\n\tarr[\n\t\tf(y) |\n\t\ta\n\t] = aa | bb | cc;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[a | f(y)] = a ? b : c;\n}\n",
+            18,
+            "void f(void) {\n\tarr[\n\t\ta |\n\t\tf(\n\t\t\ty\n\t\t)\n\t] = a ? b : c;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[f(y) == a] = aaaa | bbbb | cccc;\n}\n",
+            40,
+            "void f(void) {\n\tarr[f(y) == a] = aaaa | bbbb | cccc;\n}\n",
+        ),
+        (
+            "void f(void) {\n\tarr[f(y) | a] && b = x | y;\n}\n",
+            19,
+            "void f(void) {\n\tarr[\n\t\tf(\n\t\t\ty\n\t\t) |\n\t\ta\n\t] && b = x | y;\n}\n",
+        ),
+    ] {
+        assert_laid_out(src, width, expected);
+    }
+}
+
+#[test]
+fn a_call_in_a_chain_head_is_laid_out_on_the_first_pass() {
+    // #108's other half. A head rendered flat is laid out anyway on the *next* pass — the operands
+    // below it have broken by then, so the span reaches a handler that does measure it — and the
+    // two passes disagreed about the same tokens. The layout is pinned, not only the fixpoint: a
+    // flat head that both passes converge on is green on the very defect this test names.
+    for (src, expected) in [
+        ("0(A<0)=0:??;", "0(\n\tA <\n\t0\n) = (\n\t0 :\n\t??\n);\n"),
+        (
+            "a\tA(*)\'\'00 .=a<A;",
+            "a A(\n\t*\n)''00 . = (\n\ta <\n\tA\n);\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, 1);
+        assert_eq!(once, expected, "the head's call breaks on the first pass");
+        assert_eq!(
+            jphfmt::format_with_width(&once, 1),
+            once,
+            "and it is a fixpoint"
+        );
+    }
+    // The width bound is meaningless at width 1 — `0(` is two columns of unbreakable content —
+    // so this test pins the layout and the fixpoint, not the width.
+}
+
 #[test]
 fn a_floating_exponent_keeps_its_sign() {
     // The sign is part of the number (C11 §6.4.8), not an operator to space. Splitting it produced
@@ -2002,6 +2350,72 @@ fn a_group_in_a_chain_operand_keeps_the_break_a_later_pass_would_respace() {
         let once = format(src);
         assert_eq!(format(&once), once, "must be idempotent: {src:?}");
         assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_bracket_and_a_brace_join_by_tokens_not_the_authors_gap() {
+    // The juxtaposed-bracket join the group doc writes tight. A refused bracket group falls back
+    // to the token walk, and a gap kept there re-reads as the author's own on the next pass and
+    // joins then — two passes for one line, keyed on whitespace where the doc keys on tokens
+    // (#108's fresh draw found `[ {}x&x\n;]` alternating).
+    for src in [
+        "[ {}x&x\n;]",
+        "[ {}x & x;]",
+        "[{}x & x;]",
+        "arr[ {1, 2}] = x;",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert!(!once.contains("[ {"), "the join is tight: {src:?}");
+    }
+}
+
+#[test]
+fn a_call_a_pass_broke_re_reads_with_its_forced_break() {
+    // #108's fresh draw: `({[x<<case({[],})]`. The case's `{[],}` carries the magic trailing
+    // comma, which forces the call broken on every pass. The middle-newline verbatim re-read
+    // dropped that force — its text form has no ForceBreak — so the enclosing bracket group
+    // measured a doc without it, joined what the previous pass broke, and the two passed
+    // alternated. A forced break has no fits decision to flip: the re-laid form is the one every
+    // pass reaches, so the passthrough yields to it.
+    for (src, width) in [("({[x<<case({[],})]", 1), ("({[x<<case({[],})]", 100)] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at {width}"
+        );
+    }
+    // A `#` or `##` fragment in the arguments keeps the verbatim either way — its lines are not
+    // the layout's to own — and the same draw that surfaced the case shape also surfaced the
+    // re-lay overreaching into one: the hash guard is the difference between the two.
+    for (src, width) in [
+        ("0\"\"''\"\"a(\"\"{##}{.,}=0+_)", 1),
+        ("0\"\"''\"\"a(\"\"{##}{.,}=0+_)", 100),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent: {src:?} at {width}"
+        );
+    }
+}
+
+#[test]
+fn a_wrap_after_a_broken_chain_head_nests_where_the_next_pass_reads_it() {
+    // #108's fresh draw: `x&return""x+f;` at width 1. The chain's head broke, but the operand
+    // wrap's indent stayed at the head's own level, while the next pass — reading the written
+    // parentheses as the operand's own group — nested one deeper. The wrap now follows the
+    // head's outcome: a broken head indents the wrap with its own lines, the two passes agree.
+    for width in [1, 3] {
+        let once = jphfmt::format_with_width("x&return\"\"x+f;", width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be idempotent at {width}"
+        );
     }
 }
 

@@ -7,7 +7,8 @@
 
 use super::builders::{
     Bound, Fit, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
-    build_cond_doc, build_for_doc, build_statement_element, group_bracketing, statement_segments,
+    build_cond_doc, build_for_doc, build_statement_element, group_bracketing, holds_forced_break,
+    statement_segments,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -134,6 +135,26 @@ fn emit_tokens(
                 // their intra-arg newlines, flipping this call's fits/explode decision on the
                 // next pass and breaking idempotency. No edge pad: `space_equals` runs first and
                 // pre-spaces every same-line `=` edge, so this verbatim cannot write the tight one.
+                //
+                // Unless the re-laid call would be forced broken anyway — a magic trailing comma
+                // — where the passthrough's text form loses the force: the enclosing group the
+                // call sits in then measures a doc without the ForceBreak and joins what the
+                // previous pass broke, two passes for one line (#108's draw). A forced break has
+                // no fits decision to flip, so the re-laid form is the one every pass reaches. A
+                // `#` or `##` fragment in the arguments keeps the verbatim — its lines are not
+                // the layout's to own, the same guard the laid arm carries.
+                let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
+                if !holds_hash {
+                    let doc = build_call_body(inner, Fit::Measured);
+                    if holds_forced_break(&doc) {
+                        emit_str(out, col, t.text);
+                        emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+                        pending_func_def =
+                            next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
+                        i = close + 1;
+                        continue;
+                    }
+                }
                 for tok in &toks[i..=close] {
                     emit_str(out, col, tok.text);
                 }
@@ -248,6 +269,17 @@ fn emit_tokens(
                 ";" if paren_depth == 0 => in_init = false,
                 _ => {}
             }
+        }
+        // A `{` after a `[` is one construct — the juxtaposed-bracket join the group doc writes
+        // tight. A refused bracket group falls back to this walk, and a gap kept there would
+        // re-read as the author's own on the next pass and join then: two passes for one line,
+        // keyed on whitespace where the doc keys on tokens (#108's fresh draw).
+        if is_trivia(&t)
+            && prev_nontrivia(toks, i).is_some_and(|j| toks[j].text == "[")
+            && next_nontrivia(toks, i + 1).is_some_and(|j| toks[j].text == "{")
+        {
+            i += 1;
+            continue;
         }
         emit_str(out, col, t.text);
         i += 1;

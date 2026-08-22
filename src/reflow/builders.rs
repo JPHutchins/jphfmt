@@ -11,11 +11,12 @@
 
 use super::tokens::{
     closes_literal_type, element_join_respaced, has_middle_newline, has_non_trivia, has_top_level,
-    has_top_level_question, holds_directive, is_balanced, is_bit_field_colon, is_call_head_pair,
-    is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket,
-    next_nontrivia, opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
-    respaced_when_joined_top, segments_at, spans_lines, split_chain, split_designators,
-    split_on_commas, split_top_level, split_top_level_with_cuts, star_gap_respaced,
+    has_top_level_question, holds_directive, holds_head_split, is_balanced, is_bit_field_colon,
+    is_call_head_pair, is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace,
+    match_bracket, next_nontrivia, opens_with_separator, operand_span, prev_nontrivia,
+    respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines, split_chain,
+    split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
+    star_gap_respaced,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -31,9 +32,22 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     // that reach here nested need the same contract: collapsing the break joins what the author
     // separated, and a later pass may respace the join — `f(a\n:0)` to `f(a :0)`, which
     // `space_bit_fields` tightens (#121's search).
-    if has_middle_newline(inner) {
+    //
+    // Unless the laid-out form is forced broken anyway — a magic trailing comma — where the
+    // passthrough's text form loses the force: an enclosing group then measures a doc without the
+    // ForceBreak and joins what the previous pass broke, two passes for one line (#108's draw). A
+    // forced break has no fits decision to flip, so the laid form is the one every pass reaches.
+    // A `#` fragment keeps the verbatim — its lines are not the layout's to own, the guard every
+    // laid path carries.
+    let laid = laid_call_body(inner, fit);
+    let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
+    if has_middle_newline(inner) && (!holds_forced_break(&laid) || holds_hash) {
         return render_passthrough("(", inner, ")");
     }
+    laid
+}
+
+fn laid_call_body(inner: &[Token], fit: Fit) -> Doc {
     let args = split_on_commas(inner);
     // An empty element is a hole a macro invocation spells with a bare comma — `PICK(x, , y)`, valid C99
     // and later. There is no element to lay out for it, and dropping it drops the comma that spells it,
@@ -69,7 +83,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
         .map(|a| build_element_doc(a, bound))
         .collect();
     build_container(
-        &pad_for(inner, &PARENS),
+        pad_for(inner, &PARENS),
         elements,
         Seps::Every(","),
         None,
@@ -111,7 +125,7 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
     );
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
-    build_container(&bracketing, docs, Seps::Every(","), Some(","), fit)
+    build_container(bracketing, docs, Seps::Every(","), Some(","), fit)
 }
 
 /// One `{}` element: its juxtaposed items each on their own line when the list breaks, so a
@@ -185,7 +199,7 @@ fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
 
 /// The bracketing a `(` or `[` opens when it is a *group* this pass lays out. A call's `(` is matched
 /// before this by [`call_head_before`] and a `{` body is a different container, so neither is here.
-pub(super) fn group_bracketing(t: &Token) -> Option<&'static Bracketing<'static>> {
+pub(super) fn group_bracketing(t: &Token) -> Option<&'static Bracketing> {
     match t.text {
         "(" => Some(&PARENS),
         "[" => Some(&BRACKETS),
@@ -240,10 +254,16 @@ fn build_expr_doc(toks: &[Token]) -> Doc {
         // not at the operator, which stays with its right operand on the call's close line. The
         // headless position bounds it, an [`Bracketing::OnBreak`] in all but spelling.
         if !unboundable && let Some((elements, seps)) = conjunct_element(&segments, &ops) {
-            return build_bounded_doc("", elements, seps, Fit::Measured, Bound::Parens);
+            return build_bounded_doc(
+                Doc::concat([]),
+                elements,
+                seps,
+                Fit::Measured,
+                Bound::Parens,
+            );
         }
         return build_container(
-            &Bracketing::Hanging,
+            Bracketing::Hanging,
             segment_docs(&segments),
             chain_seps(&ops),
             None,
@@ -448,7 +468,7 @@ impl Pad {
 /// How a container is bracketed — the only thing that differs between one construct and another,
 /// beyond its separators.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Bracketing<'a> {
+pub(super) enum Bracketing {
     /// The enclosing container's brackets: elements that are its whole span add nothing of their own,
     /// and take no indent of their own either, because that container already indented them.
     Enclosing,
@@ -464,7 +484,13 @@ pub(super) enum Bracketing<'a> {
     },
     /// Brackets that appear only on the break, after `head` when there is one — the only tokens
     /// jphfmt writes, legal because the elements are already an implicit container.
-    OnBreak { head: &'a str },
+    ///
+    /// The head is a document, not text. It holds whatever preceded the operands — an assignment's
+    /// left side, a `return` — and a call or a group in there is a construct with a width of its own.
+    /// Rendering it flat measured nothing, so a call too long for the line stayed flat on the first
+    /// pass and was laid out on the second, once the operands below it had broken and the span
+    /// reached a different handler (#108).
+    OnBreak { head: Doc },
 }
 
 /// The one layout every container in the language gets (§2.2): the elements in order, each `seps[i]`
@@ -476,7 +502,7 @@ pub(super) enum Bracketing<'a> {
 /// the operator trails and the ternary `:` trails. What differs between them is the four values passed
 /// here, not the shape they are laid out in (#71).
 fn build_container(
-    bracketing: &Bracketing,
+    bracketing: Bracketing,
     elements: Vec<Doc>,
     seps: Seps,
     trailing: Option<&str>,
@@ -498,33 +524,50 @@ fn build_container(
             open_pad,
             close_pad,
         } => fit.wrap(Doc::concat([
-            Doc::text(*open),
+            Doc::text(open),
             nested(open_pad.doc(), items),
             close_pad.doc(),
-            Doc::text(*close),
+            Doc::text(close),
         ])),
-        Bracketing::OnBreak { head } => fit.wrap(Doc::concat(
-            (!head.is_empty())
-                .then(|| Doc::Text(format!("{head} ")))
-                .into_iter()
-                .chain([
-                    Doc::IfBreak {
-                        broken: "(".to_owned(),
-                        flat: String::new(),
-                    },
-                    nested(Doc::SoftLine, items),
-                    Doc::SoftLine,
-                    Doc::IfBreak {
-                        broken: ")".to_owned(),
-                        flat: String::new(),
-                    },
-                ]),
-        )),
+        // The head sits *outside* the group the operands break as. Inside it, the head's own groups
+        // would be measured together with the operands and break whenever the operands did — while
+        // the next pass, reading the parentheses this wrote, measures each of them alone and reaches
+        // the other answer. A head that is text cannot show that; a head that is a document can, so
+        // the two must not share a fit.
+        Bracketing::OnBreak { head } => {
+            // The boundary after the head's trailing space: the head's own groups are measured
+            // with the head's line and nothing past it — the operands have a fit of their own,
+            // and a width read across them is one the next pass, measuring the head alone, does
+            // not keep (#108's review). The wrap follows the head through [`Doc::HeadThen`], so
+            // a head that breaks indents the wrap with its own lines — the parentheses the next
+            // pass reads back as the operand's own group sit exactly there. The bracketing is
+            // owned here, so `head` moves.
+            let wrap = fit.wrap(Doc::concat([
+                Doc::IfBreak {
+                    broken: "(".to_owned(),
+                    flat: String::new(),
+                },
+                nested(Doc::SoftLine, items),
+                Doc::SoftLine,
+                Doc::IfBreak {
+                    broken: ")".to_owned(),
+                    flat: String::new(),
+                },
+            ]));
+            if head.is_empty() {
+                wrap
+            } else {
+                Doc::HeadThen(
+                    Box::new(head),
+                    Box::new(Doc::concat([Doc::text(" "), Doc::Boundary, wrap])),
+                )
+            }
+        }
     }
 }
 
 /// The author's `(…)` around a clause run: a `for` header, a condition, a parenthesized chain.
-pub(super) const PARENS: Bracketing<'static> = Bracketing::Written {
+pub(super) const PARENS: Bracketing = Bracketing::Written {
     open: "(",
     close: ")",
     open_pad: Pad::Tight,
@@ -532,7 +575,7 @@ pub(super) const PARENS: Bracketing<'static> = Bracketing::Written {
 };
 
 /// The author's `[…]` around an index.
-pub(super) const BRACKETS: Bracketing<'static> = Bracketing::Written {
+pub(super) const BRACKETS: Bracketing = Bracketing::Written {
     open: "[",
     close: "]",
     open_pad: Pad::Tight,
@@ -547,8 +590,20 @@ fn edge_needs_pad(inner: &[Token], edge: Option<usize>) -> bool {
     edge.is_some_and(|k| inner[k].text == "=")
 }
 
+/// Whether `doc` holds a [`Doc::ForceBreak`] anywhere inside it — a break no fit decision
+/// reaches, so the laid-out form is the one every pass produces.
+pub(super) fn holds_forced_break(doc: &Doc) -> bool {
+    match doc {
+        Doc::ForceBreak(_) => true,
+        Doc::Concat(items) => items.iter().any(holds_forced_break),
+        Doc::Nest(inner) | Doc::Group(inner) => holds_forced_break(inner),
+        Doc::HeadThen(head, rest) => holds_forced_break(head) || holds_forced_break(rest),
+        Doc::Text(_) | Doc::Line | Doc::SoftLine | Doc::IfBreak { .. } | Doc::Boundary => false,
+    }
+}
+
 /// `bracketing`'s spelling, with the pads the edge tokens decide.
-fn pad_for<'a>(inner: &[Token], bracketing: &Bracketing<'a>) -> Bracketing<'a> {
+fn pad_for(inner: &[Token], bracketing: &Bracketing) -> Bracketing {
     let Bracketing::Written {
         open,
         close,
@@ -679,7 +734,7 @@ pub(super) enum Bound {
 }
 
 /// Lay `segments` out bounded per `bound`, after `head` when there is one.
-fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Seps, fit: Fit, bound: Bound) -> Doc {
+fn build_bounded_doc(head: Doc, segments: Vec<Doc>, seps: Seps, fit: Fit, bound: Bound) -> Doc {
     let bracketing = match bound {
         Bound::Enclosing => {
             // The enclosing bracket bounds the operands, which is only true when they are its whole
@@ -692,7 +747,7 @@ fn build_bounded_doc(head: &str, segments: Vec<Doc>, seps: Seps, fit: Fit, bound
         }
         Bound::Parens => Bracketing::OnBreak { head },
     };
-    build_container(&bracketing, segments, seps, None, fit)
+    build_container(bracketing, segments, seps, None, fit)
 }
 
 /// An operator chain or ternary with no parentheses of its own: flat, or one operand per line with the
@@ -712,16 +767,21 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     if respaced_when_joined(&toks[..start]) {
         return None;
     }
-    let head = render_segment(&toks[..start]);
+    // A head whose shape the two passes measure differently — a second construct after the
+    // first, or a breakable construct a bracket deep — is refused: the next pass lays it out one
+    // handler at a time, each against a trailing reserve that stops where this pass's single
+    // lookahead crosses, and the same tokens read two ways (§6, #108's review).
+    if holds_head_split(&toks[..start]) {
+        return None;
+    }
+    // Through the same builder the operands go through, not [`render_segment`]: whatever is in the
+    // head is a construct with its own width, and rendering it flat measured none of them (#108).
+    let head = build_expr_doc(&toks[..start]);
     // A head means these operands are only part of their container's span, so they are bounded
     // whatever they are; with no head it is the position that decides, and it decides the same for a
     // ternary and for a binary chain — unbounded operands read as elements of whatever list encloses
     // them either way (#59, #63).
-    let bound = if head.is_empty() {
-        headless
-    } else {
-        Bound::Parens
-    };
+    let bound = if start == 0 { headless } else { Bound::Parens };
     if let Some((segments, ops)) = split_chain(operands) {
         // A segment's collapse joins the break its span holds, so a segment that would join a
         // respaced pair is refused the way the head is — the canonical reading, since a segment's
@@ -735,7 +795,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // clause branch re-reads later agrees.
         if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_bounded_doc(
-                &head,
+                head,
                 elements,
                 seps,
                 Fit::Measured,
@@ -743,7 +803,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
             ));
         }
         return Some(build_bounded_doc(
-            &head,
+            head,
             segment_docs(&segments),
             chain_seps(&ops),
             Fit::Measured,
@@ -752,7 +812,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     }
     // §2.4's chain, with the `:` trailing, for a ternary the author left unparenthesized.
     let (arms, seps, fit) = ternary_layout(operands)?;
-    Some(build_bounded_doc(&head, arms, seps, fit, bound))
+    Some(build_bounded_doc(head, arms, seps, fit, bound))
 }
 
 /// The trailing separators for an operator chain: ` |`, ` &&`, and so on. The one construct whose
@@ -882,7 +942,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         // layout re-reads, so it must lay out to the same shape.
         if let Some((elements, seps)) = conjunct_element(&segments, &ops) {
             return Some(build_container(
-                bracketing,
+                bracketing.clone(),
                 elements,
                 seps,
                 None,
@@ -896,7 +956,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
             return None;
         }
         return Some(build_container(
-            bracketing,
+            bracketing.clone(),
             segment_docs(&segments),
             chain_seps(&ops),
             None,
@@ -904,7 +964,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         ));
     }
     let (arms, seps, fit) = ternary_layout(inner)?;
-    Some(build_container(bracketing, arms, seps, None, fit))
+    Some(build_container(bracketing.clone(), arms, seps, None, fit))
 }
 
 /// A bracketed group the author wrote — `(…)` around an expression, `[…]` around an index. The
@@ -941,7 +1001,7 @@ pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
     let clauses = statement_segments(inner);
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
     build_container(
-        &pad_for(inner, &PARENS),
+        pad_for(inner, &PARENS),
         docs,
         Seps::Every(";"),
         None,
@@ -985,7 +1045,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         // where that holds: a second element would be juxtaposed against the first with nothing
         // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
-            &pad_for(inner, &PARENS),
+            pad_for(inner, &PARENS),
             vec![build_element_doc(inner, Bound::Enclosing)],
             Seps::Each(Vec::new()),
             None,
@@ -1150,5 +1210,15 @@ mod tests {
             rendered,
             "(\n\tfirst_argument,\n\tinner_function_with_a_very_long_name(\n\t\tnested_argument_one,\n\t\tnested_argument_two,\n\t\tnested_argument_three\n\t)\n)"
         );
+    }
+
+    #[test]
+    fn tmp_probe_seed1() {
+        use crate::doc::render;
+        use crate::lexer::tokenize;
+        let toks = tokenize("x&return\"\"x+f;");
+        let doc = build_chain_doc(&toks, Bound::Parens);
+        eprintln!("DOC {doc:#?}");
+        eprintln!("RENDER {:?}", doc.as_ref().map(|d| render(d, 1, 0, 0)));
     }
 }

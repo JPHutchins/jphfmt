@@ -808,6 +808,7 @@ fn loosest_cuts(inner: &[Token]) -> Vec<usize> {
     // those operators are in its left side, and no later token can put them back. One fold, so no
     // intermediate list of candidates is built for a rule that only ever keeps the loosest.
     let nothing = (CHAIN_CLASSES.len(), Vec::new());
+
     at_depth_zero(inner)
         .fold(nothing, |(loosest, mut cuts), (j, t)| {
             if assigns(t) {
@@ -1032,6 +1033,127 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
         toks.iter()
             .any(|t| t.kind == TokenKind::Punct && t.text == "#")
     }
+}
+
+/// Whether a chain's head holds a shape the two passes measure differently. Pass 1's single
+/// lookahead flattens through every construct in the head; pass 2 lays each out one handler at a
+/// time, each reserve stopping at the next bracket. They agree unless the head holds a
+/// *breakable* construct a bracket deep — a chain operator or `?`, a `,` list a builder actually
+/// breaks (a call's arguments, a brace list — not a comma operator in a group), or a call —
+/// which refuses, unless the call sits directly in the head's outermost group or subscript
+/// and no chain operator or `?` marks that bracket — before or after the call — whose author's
+/// brackets read back verbatim; or a second construct after a breakable first —
+/// `f(x)(y)`, a double assignment's `…] = f(x) =` — which pass 1's parens would turn into pass
+/// 2's second construct and refuse. Unbreakable nested content — a cast `(size_t)i`, parens
+/// around an atom `(a)`, a subscript chain `a[0][1]`, a call through a group `(*fp)(x)` —
+/// measures the same on both passes and is allowed (§6, #108's review). One pass; returns at
+/// the first offending bracket.
+pub(super) fn holds_head_split(toks: &[Token]) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        /// A call's `(` — breakable whatever its content is.
+        Call,
+        /// A group's `(` — a cast's or a parenthesized expression's, whose comma is an operator.
+        Group,
+        /// A `[` subscript — its comma is an operator too, and no builder breaks it as a list.
+        Subscript,
+        /// A `{` brace list, whose comma a builder does break.
+        Brace,
+    }
+    let mut frames: Vec<(Kind, bool, bool)> = Vec::new();
+    let mut close_seen = false;
+    let mut closed_breakable = false;
+    for (i, t) in toks.iter().enumerate().filter(|(_, t)| !is_trivia(t)) {
+        match t.text {
+            "(" | "[" | "{" => {
+                // A second construct after a breakable first: pass 1's lookahead crosses it
+                // where pass 2's reserve stops at the bracket.
+                if close_seen && closed_breakable {
+                    return true;
+                }
+                let kind = match t.text {
+                    "(" if is_call_head_pair(toks, i) => Kind::Call,
+                    "[" if is_subscript(toks, i) => Kind::Subscript,
+                    "(" | "[" => Kind::Group,
+                    _ => Kind::Brace,
+                };
+                frames.push((kind, false, false));
+            }
+            ")" | "]" | "}" => {
+                let (kind, chain_marked, has_call) =
+                    frames.pop().unwrap_or((Kind::Group, false, false));
+                let breakable = chain_marked || has_call || kind == Kind::Call;
+                // A breakable construct a bracket deep refuses — the head's own outermost bracket
+                // is the one construct the boundary covers. The exemption: a call directly inside
+                // the head's outermost group or subscript — `(f(x)) + b =` and `x[f(y)] + z =`
+                // re-parse as themselves: the author's brackets read back verbatim, so pass 1's
+                // operand parens never become pass 2's second construct (the force-allow build is
+                // stable and compliant). A chain operator or `?` in the call's own arguments, or
+                // in the enclosing bracket before the call — `arr[f(a | b)]`, `arr[a | f(y)]` —
+                // is the deep class: pass 1's lookahead crosses the call's bracket where pass 2's
+                // reserve stops, so it stays refused. Neither mark is set by a `,` list — the
+                // call's own builder breaks it the same way on both passes.
+                let candidate = kind == Kind::Call
+                    && !chain_marked
+                    && frames.len() == 1
+                    && !frames[0].1
+                    && (frames[0].0 == Kind::Group || frames[0].0 == Kind::Subscript);
+                if breakable && !frames.is_empty() && !candidate {
+                    return true;
+                }
+                // The candidate's breakability moves to the enclosing frame — its close leaves
+                // `closed_breakable` armed, so an open or `?` after the bracket is still the
+                // second-construct class (`(f(x))(y)`, `(f(x)) ? a : b`). A chain mark that
+                // arrives *after* the call — `arr[f(y) | a]` — marks the frame instead, and its
+                // close refuses: the same two-pass disagreement as the mark-before order.
+                if candidate {
+                    frames.last_mut().unwrap().2 = true;
+                }
+                if chain_marked && has_call {
+                    return true;
+                }
+                close_seen = true;
+                closed_breakable = breakable;
+            }
+            // A ternary after a construct at the head's own level: pass 1's operand parens
+            // become pass 2's second construct and the gate refuses its own output. A `,` marks
+            // only a brace list — a call's arguments are the call's own builder, broken the same
+            // way on both passes, so a call stays exemptible with them; a group's and a
+            // subscript's commas are operators no layout splits. A `?` marks any enclosing
+            // frame: a ternary in the head's bracket, before or after the call, alternates once
+            // the operands grow (`x[a ? f(y) : b] =` at w=19-21) — the walk's ternary arms and
+            // the head's own groups measure the call against different budgets.
+            "?" | "," => {
+                if frames.is_empty() {
+                    // A ternary after a *breakable* construct at the head's own level: pass 1's
+                    // operand parens become pass 2's second construct. After an unbreakable one
+                    // the head re-parses as itself — `(a) ? b : c =` and `x[0] ? a : b =` are the
+                    // base's stable class.
+                    if close_seen && closed_breakable && t.text == "?" {
+                        return true;
+                    }
+                } else if let Some((kind, breakable, _)) = frames.last_mut()
+                    && (t.text == "?" || *kind == Kind::Brace)
+                {
+                    *breakable = true;
+                }
+            }
+            _text => {
+                if is_chain_break(toks, i) {
+                    // A depth-zero binary chain operator after any close passes: the head
+                    // re-parses as itself — the closed construct's brackets are the author's and
+                    // read back verbatim, so pass 1's operand parens cannot become pass 2's
+                    // second construct. Only an open or a `?` after a breakable close refuses.
+                    if !frames.is_empty()
+                        && let Some((_, breakable, _)) = frames.last_mut()
+                    {
+                        *breakable = true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Whether what follows a `#` on its logical line makes it a directive's.
