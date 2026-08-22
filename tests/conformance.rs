@@ -2071,6 +2071,21 @@ fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() 
         ),
     ] {
         assert_laid_out(src, width, expected);
+fn a_hash_fragment_in_a_bracket_group_measures_the_same_both_passes() {
+    // #131: a `#` fragment inside a bracket group was measured one way on pass 1 and another on
+    // pass 2 — the group broke on the first pass and rejoined on the second, #112's class one
+    // bracket in. #122's merged guards refuse the `#`-holding construct's re-lay, so the walk
+    // keeps the author's form on every pass. The issue's own shape and width, pinned.
+    let src = "[# _0<a\"A&_&.aA]a&A&AA\t#&]0&\"]A\t";
+    let once = jphfmt::format_with_width(src, 35);
+    assert_eq!(once, "[# _0<a\"A&_&.aA]a&A&AA\t#&]0&\"]A\n");
+    assert_eq!(
+        jphfmt::format_with_width(&once, 35),
+        once,
+        "and it is a fixpoint"
+    );
+    // The class members one level deeper, stable at every width.
+    for src in ["x = [#a & b] + c | d;\n", "x = [f(#a) | b] = c | d;\n"] {
         for width in 1..=32 {
             let once = jphfmt::format_with_width(src, width);
             assert_eq!(
