@@ -2080,6 +2080,21 @@ fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() 
             );
         }
     }
+fn a_subscript_in_a_chain_head_is_laid_out_on_the_first_pass() {
+    // #127: the subscript in a chain's head — `.[0:?]` — rendered as flat text on pass 1 and
+    // was laid out only on pass 2, once the broken operands had made the statement a different
+    // shape. #108's gate refuses the head as the second-construct class, so the walk lays the
+    // subscript out on the first pass and every pass agrees. The issue's own width and shape,
+    // pinned exactly.
+    let src = ".[0:?]=A&\"\ta&&a0aa0A0A\"_A;";
+    let expected = ".[\n\t0 :\n\t?\n] = (\n\tA &\n\t\"\ta&&a0aa0A0A\"_A\n);\n";
+    let once = jphfmt::format_with_width(src, 1);
+    assert_eq!(once, expected);
+    assert_eq!(
+        jphfmt::format_with_width(&once, 1),
+        once,
+        "and it is a fixpoint"
+    );
 }
 
 #[test]
