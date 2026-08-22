@@ -12,6 +12,9 @@ concurrency: mutation-testing-report
 jobs:
   mutants:
     runs-on: ubuntu-latest
+    # A sweep that outlives this is a run that stopped answering; a stuck run fails loudly instead
+    # of holding the rolling-issue lock until GitHub kills it.
+    timeout-minutes: 180
     permissions:
       contents: read
       issues: write
@@ -46,6 +49,17 @@ jobs:
         continue-on-error: true
         run: cargo mutants --jobs 8
 
+      # A runner shutdown mid-sweep leaves no outcomes.json with every mutant's data collected up
+      # to the kill — the interruption signature #136 records. One retry: a build failure re-fails
+      # in seconds, a preemption retries the sweep; the report step below still gates on outcomes.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          if [ ! -f mutants.out/outcomes.json ]; then
+            echo "::warning::no outcomes.json — retrying once after what is usually a runner preemption"
+            cargo mutants --jobs 8
+          fi
+
       # `cargo mutants` also exits non-zero when it cannot build at all, and then there is no
       # outcomes.json — say so, rather than letting the report fail with a file-not-found.
       - id: report
@@ -61,8 +75,9 @@ jobs:
             mutants-report.md >>"$GITHUB_OUTPUT"
 
       # Every survivor's log and diff, for the ones the issue body has no room to spell out. Kept
-      # even when the report step failed, since that is when they are worth reading.
-      - if: (success() || failure()) && steps.cache.outputs.cache-hit != 'true'
+      # even when the report step failed, since that is when they are worth reading — and on a
+      # cancellation, where the partial outcomes are all that survives the run (#136).
+      - if: (success() || failure() || cancelled()) && steps.cache.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mutants-out
