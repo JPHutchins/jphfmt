@@ -1967,6 +1967,60 @@ fn assert_laid_out(src: &str, width: usize, expected: &str) {
 }
 
 #[test]
+fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() {
+    // #125: a chain inside parentheses in an assignment's *left* side — the head of the second
+    // `=` — was cut only on the second pass: pass 1 kept `(a | b)` flat, pass 2 broke it, and
+    // only pass 3 was stable. #108's head gate refuses the double assignment's head as the
+    // second-construct class — pass 1's parens would read back as construct two on pass 2 — so
+    // the walk lays the parenthesized chain out on the first pass and every pass agrees. The
+    // issue's own widths and the deeper variants, pinned.
+    for (src, width, expected) in [
+        (
+            "s = (a | b) = c | d;\n",
+            8,
+            "s = (\n\ta |\n\tb\n) = (\n\tc |\n\td\n);\n",
+        ),
+        (
+            "s = (a | b) = c | d;\n",
+            12,
+            "s = (\n\ta |\n\tb\n) = c | d;\n",
+        ),
+        (
+            "s = x[(a | b)] = c | d;\n",
+            8,
+            "s = x[(\n\ta |\n\tb\n)] = c | d;\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(once, expected, "{src:?} at {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be a fixpoint: {src:?} at {width}"
+        );
+    }
+    // The class the issue named, one bracket deeper and with longer operands: stable at every
+    // width 1-32 on the merged gate.
+    for src in [
+        "s = ((a | b)) = c | d;\n",
+        "s = (aaaa | bbbb) = cc | dd;\n",
+        "s = (a ? b : c) = d | e;\n",
+        "s = (a | b) = c | d = e | f;\n",
+        "s = (f(x)) = c | d;\n",
+        "s = (a | b) + e = c | d;\n",
+    ] {
+        for width in 1..=32 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "{src:?} at {width}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_chain_head_is_measured_like_its_operands() {
     // #108. The head held whatever precedes the operands — an assignment's left side — and was
     // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
