@@ -1967,6 +1967,33 @@ fn assert_laid_out(src: &str, width: usize, expected: &str) {
 }
 
 #[test]
+fn a_hash_fragment_in_a_bracket_group_measures_the_same_both_passes() {
+    // #131: a `#` fragment inside a bracket group was measured one way on pass 1 and another on
+    // pass 2 — the group broke on the first pass and rejoined on the second, #112's class one
+    // bracket in. #122's merged guards refuse the `#`-holding construct's re-lay, so the walk
+    // keeps the author's form on every pass. The issue's own shape and width, pinned.
+    let src = "[# _0<a\"A&_&.aA]a&A&AA\t#&]0&\"]A\t";
+    let once = jphfmt::format_with_width(src, 35);
+    assert_eq!(once, "[# _0<a\"A&_&.aA]a&A&AA\t#&]0&\"]A\n");
+    assert_eq!(
+        jphfmt::format_with_width(&once, 35),
+        once,
+        "and it is a fixpoint"
+    );
+    // The class members one level deeper, stable at every width.
+    for src in ["x = [#a & b] + c | d;\n", "x = [f(#a) | b] = c | d;\n"] {
+        for width in 1..=32 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "{src:?} at {width}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_chain_head_is_measured_like_its_operands() {
     // #108. The head held whatever precedes the operands — an assignment's left side — and was
     // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
