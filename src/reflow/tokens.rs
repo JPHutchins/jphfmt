@@ -1040,11 +1040,13 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
 /// time, each reserve stopping at the next bracket. They agree unless the head holds a
 /// *breakable* construct a bracket deep — a chain operator or `?`, a `,` list a builder actually
 /// breaks (a call's arguments, a brace list — not a comma operator in a group), or a call —
-/// which refuses; or a second construct after a breakable first — `f(x)(y)`, a double
-/// assignment's `…] = f(x) =` — which pass 1's parens would turn into pass 2's second construct
-/// and refuse. Unbreakable nested content — a cast `(size_t)i`, parens around an atom `(a)`, a
-/// subscript chain `a[0][1]`, a call through a group `(*fp)(x)` — measures the same on both
-/// passes and is allowed (§6, #108's review). One pass; returns at the first offending bracket.
+/// which refuses, unless the call sits directly in the head's outermost group or subscript,
+/// whose author's brackets read back verbatim; or a second construct after a breakable first —
+/// `f(x)(y)`, a double assignment's `…] = f(x) =` — which pass 1's parens would turn into pass
+/// 2's second construct and refuse. Unbreakable nested content — a cast `(size_t)i`, parens
+/// around an atom `(a)`, a subscript chain `a[0][1]`, a call through a group `(*fp)(x)` —
+/// measures the same on both passes and is allowed (§6, #108's review). One pass; returns at
+/// the first offending bracket.
 pub(super) fn holds_head_split(toks: &[Token]) -> bool {
     #[derive(Clone, Copy, PartialEq)]
     enum Kind {
@@ -1077,25 +1079,40 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                 frames.push((kind, false));
             }
             ")" | "]" | "}" => {
-                let (kind, breakable) = frames.pop().unwrap_or((Kind::Group, false));
-                let breakable = breakable || kind == Kind::Call;
+                let (kind, marked) = frames.pop().unwrap_or((Kind::Group, false));
+                let breakable = marked || kind == Kind::Call;
                 // A breakable construct a bracket deep refuses — the head's own outermost bracket
-                // is the one construct the boundary covers. The one exemption: a call directly
-                // inside the head's outermost *group* — `(f(x)) + b =` re-parses as itself, the
-                // author's parens read back verbatim, so pass 1's operand parens never become
-                // pass 2's second construct (the force-allow build is stable and compliant).
-                let group_exempt =
-                    kind == Kind::Call && frames.len() == 1 && frames[0].0 == Kind::Group;
-                if breakable && !frames.is_empty() && !group_exempt {
+                // is the one construct the boundary covers. The exemption: a call directly inside
+                // the head's outermost group or subscript — `(f(x)) + b =` and `x[f(y)] + z =`
+                // re-parse as themselves: the author's brackets read back verbatim, so pass 1's
+                // operand parens never become pass 2's second construct (the force-allow build is
+                // stable and compliant). A call *marked* by a chain operator or `?` in its own
+                // arguments — `arr[f(a | b)]` — is the deep class: pass 1's lookahead crosses the
+                // call's bracket where pass 2's reserve stops, so it stays refused.
+                let exempt = kind == Kind::Call
+                    && !marked
+                    && frames.len() == 1
+                    && (frames[0].0 == Kind::Group || frames[0].0 == Kind::Subscript);
+                if breakable && !frames.is_empty() && !exempt {
                     return true;
+                }
+                // The exemption's breakability is the enclosing frames': mark each one, so the
+                // last close re-arms `closed_breakable` — an open or `?` after the bracket is
+                // still the second-construct class the gate refuses (`(f(x))(y)`,
+                // `(f(x)) ? a : b`).
+                if exempt {
+                    for (_, frame_breakable) in &mut frames {
+                        *frame_breakable = true;
+                    }
                 }
                 close_seen = true;
                 closed_breakable = breakable;
             }
             // A ternary after a construct at the head's own level: pass 1's operand parens
             // become pass 2's second construct and the gate refuses its own output. A `,` marks
-            // only a list a builder actually breaks — a call's arguments or a brace list; a
-            // group's and a subscript's commas are operators no layout splits.
+            // only a brace list — a call's arguments are the call's own builder, broken the same
+            // way on both passes, so a call stays exemptible with them; a group's and a
+            // subscript's commas are operators no layout splits.
             "?" | "," => {
                 if frames.is_empty() {
                     // A ternary after a *breakable* construct at the head's own level: pass 1's
@@ -1106,7 +1123,7 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                         return true;
                     }
                 } else if let Some((kind, breakable)) = frames.last_mut()
-                    && (t.text == "?" || *kind == Kind::Call || *kind == Kind::Brace)
+                    && (t.text == "?" || *kind == Kind::Brace)
                 {
                     *breakable = true;
                 }

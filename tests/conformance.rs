@@ -2144,9 +2144,52 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             "void f(void) {\n\tx[\n\t\ta +\n\t\tb\n\t] + c = (\n\t\td |\n\t\te\n\t);\n}\n",
             14,
         ),
+        (
+            "void f(void) {\n\tx[f(y)] + z = c | d;\n}\n",
+            "void f(void) {\n\tx[f(\n\t\ty\n\t)] + z = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            16,
+        ),
     ] {
         assert_laid_out(src, width, expected);
     }
+    // The round-12 classes. A call in the author's group with a second construct after it —
+    // `(f(x))(y)`, `(f(x))[y]` — and a ternary after the exempted call's close are the
+    // second-construct class the gate refuses: pass 1's operand parens would read back as
+    // construct two on pass 2. The exemption re-arms the breakability it exempts, so each is
+    // refused again and the next pass keeps whatever the refusal laid out — pinned at the widths
+    // in the band that used to alternate or overrun.
+    let juxtaposed_call = "void f(void) {\n\t(f(x))(y) = c | d;\n}\n";
+    let juxtaposed_subscript = "void f(void) {\n\t(f(x))[y] = c | d;\n}\n";
+    let ternary_after_exempt = "void f(void) {\n\t(f(x)) ? a : b = c | d;\n}\n";
+    for (src, width) in [
+        (juxtaposed_call, 12),
+        (juxtaposed_call, 16),
+        (juxtaposed_subscript, 12),
+        (juxtaposed_subscript, 16),
+        (ternary_after_exempt, 16),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "{src:?} at {width}"
+        );
+    }
+    // The same shapes at a width the refusal's own layout satisfies, with every line within it.
+    assert_laid_out(juxtaposed_call, 22, juxtaposed_call);
+    assert_laid_out(juxtaposed_subscript, 22, juxtaposed_subscript);
+    assert_laid_out(
+        ternary_after_exempt,
+        23,
+        "void f(void) {\n\t(f(\n\t\tx\n\t)) ? a : b = c | d;\n}\n",
+    );
+    // The depth-2 residual: `f(` after a `(` reads as a group, not a call, so the exemption
+    // cannot reach it and the chain stays refused — stable, with the compliant band pinned.
+    assert_laid_out(
+        "void f(void) {\n\t((f(x))) + b = c | d;\n}\n",
+        20,
+        "void f(void) {\n\t((f(\n\t\tx\n\t))) + b = c | d;\n}\n",
+    );
 }
 
 #[test]
@@ -2226,6 +2269,24 @@ fn a_group_in_a_chain_operand_keeps_the_break_a_later_pass_would_respace() {
         let once = format(src);
         assert_eq!(format(&once), once, "must be idempotent: {src:?}");
         assert_eq!(significant(&once), significant(src));
+    }
+}
+
+#[test]
+fn a_bracket_and_a_brace_join_by_tokens_not_the_authors_gap() {
+    // The juxtaposed-bracket join the group doc writes tight. A refused bracket group falls back
+    // to the token walk, and a gap kept there re-reads as the author's own on the next pass and
+    // joins then — two passes for one line, keyed on whitespace where the doc keys on tokens
+    // (#108's fresh draw found `[ {}x&x\n;]` alternating).
+    for src in [
+        "[ {}x&x\n;]",
+        "[ {}x & x;]",
+        "[{}x & x;]",
+        "arr[ {1, 2}] = x;",
+    ] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert!(!once.contains("[ {"), "the join is tight: {src:?}");
     }
 }
 

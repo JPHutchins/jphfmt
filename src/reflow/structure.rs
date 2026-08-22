@@ -249,6 +249,17 @@ fn emit_tokens(
                 _ => {}
             }
         }
+        // A `{` after a `[` is one construct — the juxtaposed-bracket join the group doc writes
+        // tight. A refused bracket group falls back to this walk, and a gap kept there would
+        // re-read as the author's own on the next pass and join then: two passes for one line,
+        // keyed on whitespace where the doc keys on tokens (#108's fresh draw).
+        if is_trivia(&t)
+            && prev_nontrivia(toks, i).is_some_and(|j| toks[j].text == "[")
+            && next_nontrivia(toks, i + 1).is_some_and(|j| toks[j].text == "{")
+        {
+            i += 1;
+            continue;
+        }
         emit_str(out, col, t.text);
         i += 1;
     }
