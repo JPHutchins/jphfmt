@@ -1079,9 +1079,14 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
             ")" | "]" | "}" => {
                 let (kind, breakable) = frames.pop().unwrap_or((Kind::Group, false));
                 let breakable = breakable || kind == Kind::Call;
-                // A breakable construct a bracket deep — the head's own outermost bracket is the
-                // one construct the boundary covers.
-                if breakable && !frames.is_empty() {
+                // A breakable construct a bracket deep refuses — the head's own outermost bracket
+                // is the one construct the boundary covers. The one exemption: a call directly
+                // inside the head's outermost *group* — `(f(x)) + b =` re-parses as itself, the
+                // author's parens read back verbatim, so pass 1's operand parens never become
+                // pass 2's second construct (the force-allow build is stable and compliant).
+                let group_exempt =
+                    kind == Kind::Call && frames.len() == 1 && frames[0].0 == Kind::Group;
+                if breakable && !frames.is_empty() && !group_exempt {
                     return true;
                 }
                 close_seen = true;
@@ -1107,7 +1112,7 @@ pub(super) fn holds_head_split(toks: &[Token]) -> bool {
                 }
             }
             _text => {
-                if is_chain_break(toks, i) && !is_trivia(t) {
+                if is_chain_break(toks, i) {
                     // A depth-zero binary chain operator after any close passes: the head
                     // re-parses as itself — the closed construct's brackets are the author's and
                     // read back verbatim, so pass 1's operand parens cannot become pass 2's

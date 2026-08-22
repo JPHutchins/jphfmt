@@ -1950,11 +1950,33 @@ fn a_parenthesized_assignment_keeps_its_operator_spaced() {
     );
 }
 
+/// Format `src` at `width` once and assert the three things every head pin asserts: the exact
+/// output, the fixpoint, and every line within the width. The one recipe — a case that forgets the
+/// width bound would otherwise regress silently.
+fn assert_laid_out(src: &str, width: usize, expected: &str) {
+    let once = jphfmt::format_with_width(src, width);
+    assert_eq!(once, expected, "{src:?}");
+    assert_eq!(
+        jphfmt::format_with_width(&once, width),
+        once,
+        "and it is a fixpoint"
+    );
+    for line in once.lines() {
+        assert!(display_width(line) <= width, "over the limit: {line:?}");
+    }
+}
+
 #[test]
 fn a_chain_head_is_measured_like_its_operands() {
     // #108. The head held whatever precedes the operands — an assignment's left side — and was
     // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
     // limit outright: at width 40 the head alone is 50 columns.
+    //
+    // This shape's call is breakable (its `,` list), so the head gate refuses the *chain* and the
+    // statement walker's subscript arm lays the head out — the fallback path, not the boundary
+    // mechanism. The boundary path is pinned by the gate-passing heads in
+    // [`a_chain_head_does_not_alternate_with_the_wrapped_operands`] (`(f(x)) + b =`,
+    // `x[a + b] + c =`, and the unbreakable heads).
     //
     // Asserted three ways, because the layout alone is not enough: a pass-1 layout that no second
     // pass reproduces is what #108 *is*, so an exact-output test that never formats its own output
@@ -1975,16 +1997,7 @@ fn a_chain_head_is_measured_like_its_operands() {
             "void f(void) {\n\tarr[a + b] = (\n\t\ta |\n\t\tb\n\t);\n}\n",
         ),
     ] {
-        let out = jphfmt::format_with_width(src, width);
-        assert_eq!(out, expected, "input {src:?} at width {width}");
-        assert_eq!(
-            jphfmt::format_with_width(&out, width),
-            out,
-            "must be a fixpoint: {src:?} at width {width}"
-        );
-        for line in out.lines() {
-            assert!(display_width(line) <= width, "over the limit: {line:?}");
-        }
+        assert_laid_out(src, width, expected);
         // Measured is not the same as broken: a head that fits is still written flat.
         assert_eq!(jphfmt::format_with_width(src, 100), src);
     }
@@ -2123,7 +2136,7 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
         ),
         (
             "void f(void) {\n\t(f(x)) + b = c | d;\n}\n",
-            "void f(void) {\n\t(f(\n\t\tx\n\t)) + b = c | d;\n}\n",
+            "void f(void) {\n\t(f(x)) + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
             19,
         ),
         (
@@ -2132,16 +2145,7 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             14,
         ),
     ] {
-        let once = jphfmt::format_with_width(src, width);
-        assert_eq!(once, expected, "{src:?}");
-        assert_eq!(
-            jphfmt::format_with_width(&once, width),
-            once,
-            "and it is a fixpoint"
-        );
-        for line in once.lines() {
-            assert!(display_width(line) <= width, "over the limit: {line:?}");
-        }
+        assert_laid_out(src, width, expected);
     }
 }
 
@@ -2149,15 +2153,25 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
 fn a_call_in_a_chain_head_is_laid_out_on_the_first_pass() {
     // #108's other half. A head rendered flat is laid out anyway on the *next* pass — the operands
     // below it have broken by then, so the span reaches a handler that does measure it — and the
-    // two passes disagreed about the same tokens.
-    for (src, width) in [("0(A<0)=0:??;", 1), ("a\tA(*)''00 .=a<A;", 1)] {
-        let once = jphfmt::format_with_width(src, width);
+    // two passes disagreed about the same tokens. The layout is pinned, not only the fixpoint: a
+    // flat head that both passes converge on is green on the very defect this test names.
+    for (src, expected) in [
+        ("0(A<0)=0:??;", "0(\n\tA <\n\t0\n) = (\n\t0 :\n\t??\n);\n"),
+        (
+            "a\tA(*)\'\'00 .=a<A;",
+            "a A(\n\t*\n)''00 . = (\n\ta <\n\tA\n);\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, 1);
+        assert_eq!(once, expected, "the head's call breaks on the first pass");
         assert_eq!(
-            jphfmt::format_with_width(&once, width),
+            jphfmt::format_with_width(&once, 1),
             once,
-            "must be idempotent: {src:?} at width {width}"
+            "and it is a fixpoint"
         );
     }
+    // The width bound is meaningless at width 1 — `0(` is two columns of unbreakable content —
+    // so this test pins the layout and the fixpoint, not the width.
 }
 
 #[test]
