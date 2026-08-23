@@ -48,7 +48,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prior=$(gh run list --workflow mutants --json databaseId,headSha,conclusion,status \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .databaseId != ${{ github.run_id }} and .conclusion == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .databaseId != ${{ github.run_id }} and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
           if [ -n "$prior" ]; then
             mkdir -p prior
             gh run download "$prior" -n "mutants-out-${{ strategy.job-index }}" -D prior \
@@ -113,7 +113,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prior=$(gh run list --workflow mutants --json databaseId,headSha,conclusion \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .conclusion == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
           if [ -n "$prior" ]; then
             mkdir -p prior
             gh run download "$prior" -D prior >/dev/null 2>&1 || true
