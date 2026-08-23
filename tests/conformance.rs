@@ -2083,6 +2083,29 @@ fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() 
 }
 
 #[test]
+fn a_hash_fragment_in_a_bracket_group_measures_the_same_both_passes() {
+    // #131: a `#` fragment inside a bracket group was measured one way on pass 1 and another on
+    // pass 2 — the group broke on the first pass and rejoined on the second. The guard that
+    // closed it is the bracketed-group handler's any-`#` refusal outside a define body, merged in
+    // #135, whose own pins live in `a_construct_does_not_measure_across_a_directive`. The issue's
+    // own shape and width, pinned — the walk keeps the author's form.
+    assert_laid_out(
+        "[# _0<a\"A&_&.aA]a&A&AA\t#&]0&\"]A\t",
+        35,
+        "[# _0<a\"A&_&.aA]a&A&AA\t#&]0&\"]A\n",
+    );
+    // The class members one level deeper: the refusal is a passthrough, so each width asserts the
+    // guard's own claim — the author's form, unchanged — not only the fixpoint the pre-fix tree
+    // could also settle on.
+    for src in ["x = [#a & b] + c | d;\n", "x = [f(#a) | b] = c | d;\n"] {
+        for width in 1..=32 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(once, src, "the author's form passes through at {width}");
+        }
+    }
+}
+
+#[test]
 fn a_subscript_in_a_chain_head_is_laid_out_on_the_first_pass() {
     // #127: the subscript in a chain's head — `.[0:?]` — rendered as flat text on pass 1 and
     // was laid out only on pass 2, once the broken operands had made the statement a different
