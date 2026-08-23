@@ -15,13 +15,14 @@ jobs:
     permissions:
       contents: read
     outputs:
-      files: ${{ steps.list.outputs.files }}
+      matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
       - id: list
         run: |
-          files=$(find src -name '*.rs' | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "files=$files" >>"$GITHUB_OUTPUT"
+          matrix=$(find src -name '*.rs' | sort \
+            | jq -R -s -c 'split("\n") | map(select(length > 0) | {file: ., slug: (. | gsub("/"; "-"))})')
+          echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
             echo "::warning::.rs files outside src/ are not sharded and are not mutated:"
@@ -41,8 +42,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      matrix:
-        file: ${{ fromJson(needs.plan.outputs.files) }}
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
       - id: prior
@@ -55,7 +55,7 @@ jobs:
           skip=false
           if [ -n "$prior" ]; then
             mkdir -p prior
-            if gh run download "$prior" -n "mutants-out-${{ strategy.job-index }}" -D prior \
+            if gh run download "$prior" -n "mutants-out-${{ matrix.slug }}" -D prior \
                 >/dev/null 2>&1 \
               && jq -e . prior/outcomes.json >/dev/null 2>&1; then
               echo "shard already analyzed in run $prior — skipping"
@@ -74,15 +74,15 @@ jobs:
         continue-on-error: true
         run: cargo mutants --file "${{ matrix.file }}" --output mutants.out
       - if: steps.prior.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # A "Re-run all jobs" re-executes this shard in the same run, where artifact names are
-          # immutable without this; same-SHA same-index outcomes are identical content either way.
+          # immutable without this; same-SHA same-file outcomes are identical content either way.
           overwrite: true
           # The whole directory: outcomes.json plus each survivor's log and diff, which the
-          # report's footer points readers at. upload-artifact stores the directory's files at
-          # the artifact root, so every downloader extracts outcomes.json flat.
-          name: mutants-out-${{ strategy.job-index }}
+          # report's footer points readers at. The artifact name is the file's own, slashed to
+          # dashes, so the report reads which shard is which at a glance.
+          name: mutants-out-${{ matrix.slug }}
           path: mutants.out/
 
   report:
@@ -100,43 +100,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bound=$(jq length <<< '${{ needs.plan.outputs.files || '[]' }}' 2>/dev/null || echo 0)
-          for index in $(seq 0 $((bound - 1))); do
-            mkdir -p "prior-$index"
+          for slug in $(jq -r '.[].slug' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            mkdir -p "prior-$slug"
             while read -r prior; do
               [ -z "$prior" ] && break
-              gh run download "$prior" -n "mutants-out-$index" -D "prior-$index" \
-                >/dev/null 2>&1 && jq -e . "prior-$index/outcomes.json" >/dev/null 2>&1 && break
+              gh run download "$prior" -n "mutants-out-$slug" -D "prior-$slug" \
+                >/dev/null 2>&1 && jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1 && break
             done < <(gh run list --workflow mutants --limit 100 \
               --json databaseId,headSha,status \
               --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
-            if ! jq -e . "prior-$index/outcomes.json" >/dev/null 2>&1; then
-              rm -rf "prior-$index"
+            if ! jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1; then
+              rm -rf "prior-$slug"
             fi
           done
       - name: Download the current run's shard artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bound=$(jq length <<< '${{ needs.plan.outputs.files || '[]' }}' 2>/dev/null || echo 0)
-          for index in $(seq 0 $((bound - 1))); do
-            mkdir -p "merged/mutants-out-$index"
-            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$index" -D "merged/mutants-out-$index" \
-              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$index"
+          for slug in $(jq -r '.[].slug' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            mkdir -p "merged/mutants-out-$slug"
+            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$slug" -D "merged/mutants-out-$slug" \
+              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$slug"
           done
       - id: merge
         name: Merge the shards' outcomes
         run: |
-          python3 - '${{ needs.plan.outputs.files || '[]' }}' <<'PYEOF'
+          python3 - '${{ needs.plan.outputs.matrix || '[]' }}' <<'PYEOF'
           import json, os, sys
-          files = json.loads(sys.argv[1])
+          shards = json.loads(sys.argv[1])
           merged: dict = {"outcomes": []}
           missing: list[str] = []
-          for index, path in enumerate(files):
+          for shard in shards:
+              path = shard["file"]
+              slug = shard["slug"]
               found = None
               for candidate in (
-                  f"merged/mutants-out-{index}/outcomes.json",
-                  f"prior-{index}/outcomes.json",
+                  f"merged/mutants-out-{slug}/outcomes.json",
+                  f"prior-{slug}/outcomes.json",
               ):
                   if not os.path.exists(candidate):
                       continue
@@ -168,7 +168,7 @@ jobs:
           if empty:
               open("merged/empty.txt", "w").write("no shard produced outcomes — the sweep did not run\n")
           if missing:
-              print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {missing_text}")
+              print(f"::warning::{len(missing)} of {len(shards)} shards left no outcomes: {missing_text}")
           print(f"missing={'true' if missing else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
           print(f"empty={'true' if empty else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
           PYEOF
