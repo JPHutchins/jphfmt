@@ -22,6 +22,11 @@ jobs:
         run: |
           files=$(find src -name '*.rs' | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "files=$files" >>"$GITHUB_OUTPUT"
+          outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
+          if [ -n "$outside" ]; then
+            echo "::warning::.rs files outside src/ are not sharded and are not mutated:"
+            echo "$outside" | sed 's/^/  /' >&2
+          fi
 
   # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
   # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
@@ -122,7 +127,7 @@ jobs:
       - id: merge
         name: Merge the shards' outcomes
         run: |
-          python3 - "${{ needs.plan.outputs.files || '[]' }}" <<'PYEOF'
+          python3 - '${{ needs.plan.outputs.files || '[]' }}' <<'PYEOF'
           import json, os, sys
           files = json.loads(sys.argv[1])
           merged: dict = {"outcomes": []}
@@ -159,12 +164,29 @@ jobs:
           json.dump(merged, open("merged/outcomes.json", "w"))
           missing_text = "\n".join(missing)
           open("merged/missing.txt", "w").write(missing_text)
+          empty = len(merged["outcomes"]) == 0
+          if empty:
+              open("merged/empty.txt", "w").write("no shard produced outcomes — the sweep did not run\n")
           if missing:
               print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {missing_text}")
           print(f"missing={'true' if missing else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
+          print(f"empty={'true' if empty else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
           PYEOF
       - id: report
         run: |
+          if [ -f merged/empty.txt ]; then
+            {
+              echo "The mutation sweep ran no shard: every shard failed or left no outcomes."
+              echo
+              echo '```'
+              cat merged/missing.txt
+              echo '```'
+              echo "A re-dispatch resumes the shards that died."
+            } > mutants-report.md
+            echo "missed=0" >>"$GITHUB_OUTPUT"
+            echo "title=Mutation sweep: no shard produced outcomes" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
             "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -197,7 +219,7 @@ jobs:
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' ''
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
