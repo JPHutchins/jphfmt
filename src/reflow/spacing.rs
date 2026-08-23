@@ -178,31 +178,30 @@ fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
 /// initializer's `=` must stay visible through it (`int m[] = {{a*b}, …}`), and its own elements
 /// read the same statement level as it does.
 ///
-/// An opener met at depth zero closes no group to the left, so its interior reaches past the
-/// brace: a statement body's enclosing group is a statement expression whose opener must mask —
-/// the `=` assigning the whole expression is not the body's verdict — and an expression body's is
-/// the layout's bounding group, transparent, the `=` left of it deciding (#143).
+/// A `{` directly closing a control header's or function definition's `)` is that construct's
+/// block before any of the scan below. An opener met at depth zero closes no group to the left, so
+/// its interior reaches past the brace: a statement body's enclosing group is a statement
+/// expression whose opener must mask — the `=` assigning the whole expression is not the body's
+/// verdict — and an expression body's is the layout's bounding group, transparent, the `=` left
+/// of it deciding (#143).
 fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
     if opens_literal(toks, open) {
         return false;
     }
-    let control_body = pieces
+    if pieces
         .get(open.saturating_sub(1))
         .is_some_and(|p| p.1.text == ")")
-        && enclosing_open(pieces, open - 1)
-            .and_then(|o| o.checked_sub(1))
-            .is_some_and(|before| heads_body(&pieces[before].1));
-    if control_body {
+        && body_after_close(pieces, open - 1)
+    {
         return true;
     }
-    let statement_body = holds_statement_boundary(pieces, open);
     let mut depth = 0i32;
     for k in (0..open).rev() {
         match pieces[k].1.text {
-            ")" | "]" => depth += 1,
+            ")" | "]" => depth = if depth < 0 { depth - 1 } else { depth + 1 },
             "(" | "[" => {
                 depth = match depth {
-                    0 if statement_body => -1,
+                    0 if holds_statement_boundary(pieces, open) => -1,
                     0 => 0,
                     _ => depth - 1,
                 };
@@ -215,16 +214,24 @@ fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
     true
 }
 
+/// Whether the `)` at `close` ends a control header or function definition, making the `{` after
+/// it that construct's body — the one spelling for [`opens_block`]'s early return and
+/// [`space_braces`]'s K&R attach.
+fn body_after_close(pieces: &[Piece], close: usize) -> bool {
+    enclosing_open(pieces, close)
+        .and_then(|o| o.checked_sub(1))
+        .is_some_and(|before| heads_body(&pieces[before].1))
+}
+
 /// A `;` at the brace's own depth with content after it — a statement boundary, which an
-/// initializer's elements cannot hold. A trailing `;` does not qualify: the layout writes one
-/// after a statement expression's last element, and reading it as statements would flip the
-/// verdict on the next pass. An `=` cannot tell them apart — an element is an
-/// assignment-expression, `int a[] = { x = 1 };`.
+/// initializer's elements cannot hold. A trailing `;`, the layout's magic trailing comma after
+/// one, or a comment does not qualify, or the next pass reads its own additions as statements.
+/// An `=` cannot tell them apart — an element is an assignment-expression, `int a[] = { x = 1 };`.
 fn holds_statement_boundary(pieces: &[Piece], open: usize) -> bool {
     let mut depth = 0i32;
     let mut boundary = false;
     for piece in pieces.iter().skip(open + 1) {
-        if depth == 0 && boundary && piece.1.text != "}" {
+        if depth == 0 && boundary && !is_comment(&piece.1) && !matches!(piece.1.text, "}" | ",") {
             return true;
         }
         match piece.1.text {
@@ -379,10 +386,7 @@ fn space_braces(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
         if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
-            let function_or_control = enclosing_open(pieces, j - 1)
-                .and_then(|open| open.checked_sub(1))
-                .is_some_and(|before| heads_body(&pieces[before].1));
-            if function_or_control {
+            if body_after_close(pieces, j - 1) {
                 pieces[j].0 = " ".to_owned();
             } else if closes_literal_type(&toks, j - 1) {
                 pieces[j].0.clear();

@@ -664,10 +664,30 @@ fn a_statement_expressions_declarators_stay_spaced_across_the_enclosing_group() 
         "int a[] = { ({ S *p = q; p; }), 1 };",
         "x = f(({ q; S *p = q; }));",
         "x = ({ if (c) { S *p; } p; });",
+        "f((x = y), ({ q; S *p = q; }));",
     ] {
         let once = format(src);
         assert!(once.contains("S * p"), "the declarator is spaced: {once:?}");
         assert_eq!(format(&once), once, "and it is a fixpoint");
+    }
+    // A single trailing `;`, a trailing comment, or a nested brace whose only `;` trails keeps
+    // the expression verdict — the multiply stays tight, and the layout's magic trailing comma
+    // after the `;` does not flip it on the next pass.
+    for src in [
+        "x = ({ A*a; });",
+        "x = ({ A*a; /* c */ });",
+        "x = ({ { S *p = q; } y; });",
+    ] {
+        let once = jphfmt::format_with_width(src, 1);
+        assert!(
+            !once.contains("A * a") && !once.contains("S * p"),
+            "kept tight: {once:?}"
+        );
+        assert_eq!(
+            jphfmt::format_with_width(&once, 1),
+            once,
+            "and it is a fixpoint"
+        );
     }
 }
 
