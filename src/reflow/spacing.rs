@@ -177,21 +177,76 @@ fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
 /// different answer than the pass that read the author's (#130). A brace is transparent: an
 /// initializer's `=` must stay visible through it (`int m[] = {{a*b}, …}`), and its own elements
 /// read the same statement level as it does.
+///
+/// A `{` directly closing a control header's or function definition's `)` is that construct's
+/// block before any of the scan below. An opener met at depth zero closes no group to the left, so
+/// its interior reaches past the brace: a statement body's enclosing group is a statement
+/// expression whose opener must mask — the `=` assigning the whole expression is not the body's
+/// verdict — and an expression body's is the layout's bounding group, transparent, the `=` left
+/// of it deciding (#143).
 fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
     if opens_literal(toks, open) {
         return false;
     }
+    if open
+        .checked_sub(1)
+        .is_some_and(|close| pieces[close].1.text == ")" && body_after_close(pieces, close))
+    {
+        return true;
+    }
+    let mut statement_body = None;
     let mut depth = 0i32;
     for k in (0..open).rev() {
         match pieces[k].1.text {
-            ")" | "]" => depth += 1,
-            "(" | "[" => depth = depth.saturating_sub(1),
+            ")" | "]" => depth = if depth < 0 { depth - 1 } else { depth + 1 },
+            "(" | "[" => {
+                depth = match depth {
+                    0 if *statement_body
+                        .get_or_insert_with(|| holds_statement_boundary(pieces, open)) =>
+                    {
+                        -1
+                    }
+                    0 => 0,
+                    _ => depth - 1,
+                };
+            }
             ";" if depth == 0 => return true,
             "=" if depth == 0 => return false,
             _ => {}
         }
     }
     true
+}
+
+/// Whether the `)` at `close` ends a control header or function definition, making the `{` after
+/// it that construct's body — the one spelling for [`opens_block`]'s early return and
+/// [`space_braces`]'s K&R attach.
+fn body_after_close(pieces: &[Piece], close: usize) -> bool {
+    enclosing_open(pieces, close)
+        .and_then(|o| o.checked_sub(1))
+        .is_some_and(|before| heads_body(&pieces[before].1))
+}
+
+/// A `;` at the brace's own depth with content after it — a statement boundary, which an
+/// initializer's elements cannot hold. A trailing `;`, the layout's magic trailing comma after
+/// one, or a comment does not qualify, or the next pass reads its own additions as statements.
+/// An `=` cannot tell them apart — an element is an assignment-expression, `int a[] = { x = 1 };`.
+fn holds_statement_boundary(pieces: &[Piece], open: usize) -> bool {
+    let mut depth = 0i32;
+    let mut boundary = false;
+    for piece in pieces.iter().skip(open + 1) {
+        if depth == 0 && boundary && !is_comment(&piece.1) && !matches!(piece.1.text, "}" | ",") {
+            return true;
+        }
+        match piece.1.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" if depth == 0 => return false,
+            ")" | "]" | "}" => depth -= 1,
+            ";" if depth == 0 => boundary = true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether the `{` at `open` follows a compound literal's `(T)`. The piece list is the token stream
@@ -335,10 +390,7 @@ fn space_braces(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
         if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
-            let function_or_control = enclosing_open(pieces, j - 1)
-                .and_then(|open| open.checked_sub(1))
-                .is_some_and(|before| heads_body(&pieces[before].1));
-            if function_or_control {
+            if body_after_close(pieces, j - 1) {
                 pieces[j].0 = " ".to_owned();
             } else if closes_literal_type(&toks, j - 1) {
                 pieces[j].0.clear();
