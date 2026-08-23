@@ -5,99 +5,11 @@ on:
     - cron: '3 3 * * *'
   workflow_dispatch:
 
-# Serializes runs: the rolling issue is found by a query, so two runs at once could both miss it and
-# both create one. Queues rather than cancels — a 30-minute analysis is not worth restarting.
-concurrency: mutation-testing-report
-
 jobs:
-  mutants:
-    runs-on: ubuntu-latest
-    # A sweep that outlives this is a run that stopped answering; a stuck run fails loudly instead
-    # of holding the rolling-issue lock until GitHub kills it.
-    timeout-minutes: 180
+  run:
+    uses: ./.github/workflows/mutants-run.yaml
     permissions:
       contents: read
       issues: write
-    steps:
-      - uses: actions/checkout@v7
-
-      # The report doubles as the already-analyzed sentinel, so it is written survivors or none.
-      - uses: actions/cache@v4
-        id: cache
-        with:
-          path: mutants-report.md
-          key: mutants-${{ github.sha }}
-
-      - if: steps.cache.outputs.cache-hit == 'true'
-        run: echo "Commit ${{ github.sha }} already analyzed — skipping."
-
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.cache.outputs.cache-hit != 'true'
-
-      - uses: taiki-e/install-action@v2
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          tool: cargo-mutants
-
-      - uses: astral-sh/setup-uv@v6
-        if: steps.cache.outputs.cache-hit != 'true'
-
-      # Surviving mutants are a non-zero exit, which is a finding rather than a failure: what the
-      # steps below gate on is the count the report reads, not this step's outcome.
-      - id: mutants
-        if: steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: cargo mutants --jobs 8
-
-      # A runner shutdown mid-sweep leaves no outcomes.json with every mutant's data collected up
-      # to the kill — the interruption signature #136 records. One retry: a build failure re-fails
-      # in seconds, a preemption retries the sweep; the report step below still gates on outcomes.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: |
-          if [ ! -f mutants.out/outcomes.json ]; then
-            echo "::warning::no outcomes.json — retrying once after what is usually a runner preemption"
-            cargo mutants --jobs 8
-          fi
-
-      # `cargo mutants` also exits non-zero when it cannot build at all, and then there is no
-      # outcomes.json — say so, rather than letting the report fail with a file-not-found.
-      - id: report
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          if [ ! -f mutants.out/outcomes.json ]; then
-            echo "::error::cargo mutants wrote no outcomes.json — it failed before testing a mutant; see the step above"
-            exit 1
-          fi
-          uv run .github/workflows/mutants_report.py report mutants.out/outcomes.json \
-            "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
-            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            mutants-report.md >>"$GITHUB_OUTPUT"
-
-      # Every survivor's log and diff, for the ones the issue body has no room to spell out. Kept
-      # even when the report step failed, since that is when they are worth reading — and on a
-      # cancellation, where the partial outcomes are all that survives the run (#136).
-      - if: (success() || failure() || cancelled()) && steps.cache.outputs.cache-hit != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mutants-out
-          path: mutants.out/
-
-      # One rolling issue, rewritten each run: a nightly on a moving `main` would otherwise open one
-      # per commit. An empty number means there is none open, and the action creates it.
-      - id: rolling
-        if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          number=$(gh issue list --label mutation-testing --state open --limit 1 \
-            --json number --jq '.[0].number // ""')
-          echo "number=$number" >>"$GITHUB_OUTPUT"
-
-      - if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
-        uses: peter-evans/create-issue-from-file@v6
-        with:
-          issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}
-          content-filepath: mutants-report.md
-          labels: 'mutation-testing'
+    with:
+      sha: ${{ github.sha }}

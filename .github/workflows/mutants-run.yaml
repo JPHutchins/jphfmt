@@ -1,0 +1,102 @@
+# The mutation sweep itself, reusable: both the nightly trigger (mutants.yaml) and the
+# fresh-runner retry (mutants-retry.yaml) call this with the SHA to analyze, so the sweep and the
+# report cannot drift between the two.
+
+name: mutants-run
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+
+# Serializes runs: the rolling issue is found by a query, so two runs at once could both miss it
+# and both create one. Queues rather than cancels — a 30-minute analysis is not worth restarting.
+concurrency: mutation-testing-report
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    # Twice the observed worst sweep; a run that outlives this stopped answering, and the retry
+    # workflow re-runs a cancelled conclusion on a fresh runner.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+
+      # The report doubles as the already-analyzed sentinel, so it is written survivors or none.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: mutants-report.md
+          key: mutants-${{ inputs.sha }}
+
+      - if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "Commit ${{ inputs.sha }} already analyzed — skipping."
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - uses: taiki-e/install-action@v2
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          tool: cargo-mutants
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      # Surviving mutants are a non-zero exit, which is a finding rather than a failure: what the
+      # steps below gate on is the count the report reads, not this step's outcome.
+      - id: mutants
+        if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: cargo mutants --jobs 8
+
+      # `cargo mutants` also exits non-zero when it cannot build at all, and a runner shutdown
+      # mid-sweep leaves no outcomes.json — either way the file is absent or truncated, so the
+      # gate validates the JSON rather than its existence and the run fails loudly for the retry
+      # workflow to pick up.
+      - id: report
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if ! jq -e . mutants.out/outcomes.json >/dev/null 2>&1; then
+            echo "::error::mutants.out/outcomes.json is missing or not well-formed JSON — the sweep did not finish; see the step above"
+            exit 1
+          fi
+          uv run .github/workflows/mutants_report.py report mutants.out/outcomes.json \
+            "$GITHUB_REPOSITORY" "${{ inputs.sha }}" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            mutants-report.md >>"$GITHUB_OUTPUT"
+
+      # Every survivor's log and diff, for the ones the issue body has no room to spell out. Kept
+      # even when the report step failed, since that is when they are worth reading — and on a
+      # cancellation, where the partial outcomes are all that survives the run (#136).
+      - if: (success() || failure() || cancelled()) && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-out
+          path: mutants.out/
+
+      # One rolling issue, rewritten each run: a nightly on a moving `main` would otherwise open one
+      # per commit. An empty number means there is none open, and the action creates it.
+      - id: rolling
+        if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list --label mutation-testing --state open --limit 1 \
+            --json number --jq '.[0].number // ""')
+          echo "number=$number" >>"$GITHUB_OUTPUT"
+
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
+        uses: peter-evans/create-issue-from-file@v6
+        with:
+          issue-number: ${{ steps.rolling.outputs.number }}
+          title: ${{ steps.report.outputs.title }}
+          content-filepath: mutants-report.md
+          labels: 'mutation-testing'
