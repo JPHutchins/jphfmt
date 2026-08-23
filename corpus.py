@@ -8,7 +8,9 @@ Two properties no fixture can state, over real headers rather than reductions:
 
 * **idempotent** — formatting the output returns it unchanged;
 * **compiles no worse** — ``gcc -fsyntax-only`` reports no more errors on the output than on the
-  input, and does not crash on output that the input did not crash it on;
+  input, and does not crash on output that the input did not crash it on; for files where gcc
+  halts at a fatal error the comparison is by severity — the halt's message and prefix count — not
+  the total count;
 * **keeps what was written** — the output holds at least as many characters that are neither
   whitespace nor ``\\`` as the input did. Without it a formatter that emits nothing reads as clean on
   every file, since empty output is both a fixpoint and free of compiler errors.
@@ -57,17 +59,25 @@ GCC_FLAGS = ("-std=c2x", "-fsyntax-only", "-fdiagnostics-plain-output")
 # memory read as clean.
 #
 # One pattern, and `fatal` is a group on it rather than a second search, read only at the diagnostic's
-# own location, which gcc always starts at column zero. The file part runs through the colon its line
-# number follows — `#line 1 "a:b.c"` puts a `:` inside it and `#line 1 ""` leaves it empty, and either
-# must still measure rather than read as a `ToolFailed` that fails the whole run. The line number
-# itself is required, so `cc1: fatal error: …` — the tool failing, not a diagnostic — matches nothing,
-# as it must, and it is ASCII, as gcc writes it under `LC_ALL=C`. What is given up is a *message*
-# whose own line starts location-shaped at column zero — a quoted `#error "x\ncfg.h:1: fatal error:
-# FOE"` — which this reads as a fatal diagnostic. No corpus file spells one.
-DIAGNOSTIC = re.compile(r"(?m)^(?![ \t])(?:[^\n]*?:)?[0-9]+(?::[0-9]+)?: (?P<fatal>fatal )?error: ")
+# own location, which gcc always starts at column zero — the anchor refuses every whitespace prefix,
+# a `\f`/`\v`/`\r`-led line is not a shape gcc writes. The file part runs through the colon
+# its line number follows — `#line 1 "a:b.c"` puts a `:` inside it and `#line 1 ""` leaves it empty
+# but keeps the colon, and either must still measure rather than read as a `ToolFailed` that fails the
+# whole run. It is required, so a bare `123: error:` — no file part, no leading colon, not a gcc
+# shape — matches nothing, and the line number itself is required, so `cc1: fatal error: …` — the tool
+# failing, not a diagnostic — matches nothing either, as it must, and it is ASCII, as gcc writes it
+# under `LC_ALL=C`. Stated, not silent: a two-number shape like `1:2: error:` reads as file `1`,
+# line 2 — a file of that name and a message spelled that way are indistinguishable — and gcc
+# always writes the file part, so no run measures through one. What is given up is a *message* whose
+# own line starts location-shaped at column
+# zero — a quoted `#error "x\ncfg.h:1: fatal error: FOE"` — which this reads as a fatal diagnostic.
+# No corpus file spells one.
+DIAGNOSTIC = re.compile(r"(?m)^(?=\S)(?:[^\n]*?:)[0-9]+(?::[0-9]+)?: (?P<fatal>fatal )?error: ")
 # `error:` is what this counts, and gcc translates its diagnostics wherever a locale catalog is
-# installed. A localized gcc would report zero errors for every file in the corpus.
-ENGLISH = {**os.environ, "LC_ALL": "C"}
+# installed. A localized gcc would report zero errors for every file in the corpus. `LANGUAGE`
+# overrides `LC_ALL` in glibc — a translated catalog installed makes gcc translate with only
+# `LC_ALL` set — so both are scrubbed.
+ENGLISH = {**os.environ, "LC_ALL": "C", "LANGUAGE": "C"}
 # Whitespace is the formatter's to place, and so is a `\` continuation: a two-line macro that comes to
 # fit on one keeps every character of its body and needs no continuation to hold it together.
 OWNED = " \t\r\n\v\f\\"
@@ -88,7 +98,8 @@ class Halted(NamedTuple):
 	compiles — plus how many plain errors it counted first, which the halt-vs-halt comparison carries
 	because a formatter may introduce one without moving the halt. A missing `#include`, or a header
 	that is not C — `simdjson.h` stops at `<cstddef>` — reports exactly one error, which the input and
-	the output share, so the comparison passes having syntax-checked nothing on either side."""
+	the output share, so the comparison passes on the prefix alone: the two sides halted at the same
+	place with the same count, and nothing after the halt was read on either side."""
 
 	detail: str
 	count: int
@@ -394,7 +405,7 @@ def as_verdict(path: Path, outcome: Failed | Hung) -> Verdict:
 
 def worse_than(after: Compile, before: Compile) -> bool:
 	"""Whether `after` outranks `before`: by severity — which for two halts is their prefix error
-	counts — or by halting at a different place, the one difference severity cannot see.
+	counts — or by halting on a different message, the one difference severity cannot see.
 
 	>>> worse_than(Errors(2), Errors(1))
 	True
@@ -448,9 +459,9 @@ def check(binary: Path, path: Path) -> tuple[tuple[Verdict, ...], Unmeasured | N
 	# this cannot resolve, where both sides report the same one fatal error.
 	#
 	# The after side still compiles for a halt: a machine failure ranks above it, so output that makes
-	# gcc crash or hang where the input merely halted is a `Regressed`, and two halts compare by place —
-	# output that halts somewhere else changed what the file's includes resolve to. Only a
-	# machine-failure baseline skips the comparison — nothing can outrank it.
+	# gcc crash or hang where the input merely halted is a `Regressed`, and two halts compare by
+	# message — output that halts on a different one changed what the file's includes resolve to.
+	# Only a machine-failure baseline skips the comparison — nothing can outrank it.
 	before = measure("before", original, path)
 	if not isinstance(before, Errors | Halted):
 		return (unstable + lost, Unmeasured(path, before), False)
@@ -529,13 +540,16 @@ def describe(result: Compile) -> str:
 		case Errors(count):
 			return f"{count} errors"
 		case Halted(detail, count):
-			return f"gcc gave up: {detail}" if count == 0 else f"gcc gave up: {count} errors, then {detail}"
+			error = "error" if count == 1 else "errors"
+			return f"gcc gave up: {detail}" if count == 0 else f"gcc gave up: {count} {error}, then {detail}"
 		case Crashed(signal):
 			return f"killed by signal {signal}"
 		case TimedOut(seconds):
 			return f"no answer in {seconds}s"
 		case ToolFailed(detail):
 			return f"gcc failed: {detail}"
+		case _:
+			raise AssertionError(f"unhandled Compile variant: {type(result).__name__}")
 
 
 def baseline_why(why: Crashed | TimedOut | ToolFailed) -> str:
@@ -644,6 +658,8 @@ def report(verdict: Verdict) -> str:
 		case Broke(path, error):
 			indented = error.replace("\n", "\n           ")
 			return f"HARNESS   {printable(path)}\n           {indented}"
+		case _:
+			raise AssertionError(f"unhandled Verdict variant: {type(verdict).__name__}")
 
 
 def main(argv: tuple[str, ...]) -> int:
@@ -665,13 +681,13 @@ def main(argv: tuple[str, ...]) -> int:
 		print(unusable, file=sys.stderr)
 		return 1
 	if not args.root.is_dir():
-		print(f"no corpus at {args.root} — pass --root", file=sys.stderr)
+		print(f"no corpus at {printable(args.root)} — pass --root", file=sys.stderr)
 		return 1
 	if not args.no_build and (unbuilt := unbuildable()) is not None:
 		print(unbuilt, file=sys.stderr)
 		return 1
 	if not args.binary.is_file():
-		print(f"no formatter at {args.binary} — pass --binary", file=sys.stderr)
+		print(f"no formatter at {printable(args.binary)} — pass --binary", file=sys.stderr)
 		return 1
 
 	files = discover(args.root, args.limit, args.depth)
@@ -685,8 +701,8 @@ def main(argv: tuple[str, ...]) -> int:
 		noun = "file" if len(files) == 1 else "files"
 		levels = "level" if args.depth == 1 else "levels"
 		print(
-			f"the walk found only {len(files)} {noun} within {args.depth} {levels} of {args.root}, "
-			f"not the {args.limit} asked for",
+			f"the walk found only {len(files)} {noun} within {args.depth} {levels} of "
+			f"{printable(args.root)}, not the {args.limit} asked for",
 			file=sys.stderr,
 		)
 
@@ -695,6 +711,7 @@ def main(argv: tuple[str, ...]) -> int:
 	clean = 0
 	error_counts = 0
 	both = 0
+	unmeasured_only = 0
 	unmeasured: list[Unmeasured] = []
 	# The pool is built inside the `try` so a Ctrl+C in the submission loop reaches the handler, and
 	# starts unbound so one delivered mid-construction does not meet the handler with nothing to shut
@@ -706,7 +723,11 @@ def main(argv: tuple[str, ...]) -> int:
 		pending = [pool.submit(checked, args.binary, path) for path in files]
 		for done in as_completed(pending):
 			verdicts, unmeasured_here, errors_baseline = done.result()
-			clean += not verdicts
+			# A file whose gcc baseline is a machine failure is not clean, even when no property
+			# failed on it: the reasons list owns it, and a headline that counted it clean would
+			# count the run's own failures as passes.
+			clean += not verdicts and unmeasured_here is None
+			unmeasured_only += not verdicts and unmeasured_here is not None
 			error_counts += errors_baseline
 			both += bool(verdicts) and unmeasured_here is not None
 			unmeasured.extend(filter(None, (unmeasured_here,)))
@@ -719,20 +740,20 @@ def main(argv: tuple[str, ...]) -> int:
 		# are that. gcc never answering, or gcc failing, is this machine failing, and a run that counts
 		# those clean reports a pass it did not earn — the shape `Unmeasured` was a hard verdict for
 		# before the corpus stopped excluding anything. When not one file produced an error count, gcc
-		# syntax-checked nothing — which a clean pass cannot be about either.
+		# never reported a full-file measure — which a clean pass cannot be about either.
 		unchecked = error_counts == 0
 		short = len(files) < args.limit
 		# The headline never claims a clean pass on a failing run, and says which of the reasons failed
 		# it. The gate is the same list — a run whose `why` is empty is the clean pass — so the exit
 		# code and the headline cannot drift apart. The checks clause excludes the machine-failure
 		# files, so the counts sum to the failing files instead of double-counting them.
-		checks = len(files) - clean - both
+		checks = len(files) - clean - both - unmeasured_only
 		why = (
-			[f"{checks} the checks reported on"] * (checks > 0)
-			+ [f"{len(groups.never_answered)} {NO_ANSWER} for"] * bool(groups.never_answered)
-			+ [f"{len(groups.failed)} {FAILED} for"] * bool(groups.failed)
+			[f"{checks} files the checks reported on"] * (checks > 0)
+			+ [f"{len(groups.never_answered)} files {NO_ANSWER} for"] * bool(groups.never_answered)
+			+ [f"{len(groups.failed)} files {FAILED} for"] * bool(groups.failed)
 			+ ["no file was syntax-checked"] * unchecked
-			+ [f"a corpus of {len(files)} where {args.limit} was asked for"] * short
+			+ [f"a corpus of {len(files)} files where {args.limit} was asked for"] * short
 		)
 		if not why:
 			print(f"{clean} of {len(files)} files clean")
@@ -742,15 +763,13 @@ def main(argv: tuple[str, ...]) -> int:
 	except KeyboardInterrupt:
 		# `with ThreadPoolExecutor(...)` waits for every queued file on the way out, so a Ctrl+C sat
 		# there for the rest of the run — for a corpus whose slowest file takes minutes, long enough to
-		# look like a hang. Cancel what has not started and let the running workers go. The `RuntimeError`
-		# is the interrupt landing after the success path's shutdown began: nothing is left to cancel.
+		# look like a hang. Cancel what has not started and let the running workers go. The handler
+		# cannot know which phase the interrupt landed in — the loop, or the success path's shutdown —
+		# so it claims no phase, only the state it accumulated.
 		if pool is not None:
-			try:
-				pool.shutdown(wait=False, cancel_futures=True)
-			except RuntimeError:
-				pass
+			pool.shutdown(wait=False, cancel_futures=True)
 		report_unmeasured(failures(tuple(unmeasured)))
-		print(f"interrupted after {clean} clean of {len(files)}", file=sys.stderr)
+		print("interrupted", file=sys.stderr)
 		return 130
 
 
