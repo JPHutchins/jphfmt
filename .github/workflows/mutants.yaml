@@ -45,7 +45,8 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
       - id: prior
