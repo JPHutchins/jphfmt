@@ -253,8 +253,9 @@ def body(outcomes: Json, tally: Counts, repo: str, sha: str, run: str) -> str:
 		"",
 	)
 	footer = (
-		"<sub>Logs and a per-mutant diff for every one of these are in the `mutants-out-<shard>` "
-		f"artifacts of [the run]({run}).</sub>\n"
+		"<sub>Logs and a per-mutant diff for each survivor this run re-ran are in the "
+		f"`mutants-out-<shard>` artifacts of [the run]({run}); shards resumed from a prior run "
+		"keep their logs in that run's artifacts.</sub>\n"
 	)
 	note = (
 		f"<sub>{{}} further survivors are omitted to fit GitHub's issue body limit; the artifacts "

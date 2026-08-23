@@ -71,6 +71,9 @@ jobs:
       - if: steps.prior.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
+          # A "Re-run all jobs" re-executes this shard in the same run, where artifact names are
+          # immutable without this; same-SHA same-index outcomes are identical content either way.
+          overwrite: true
           # The whole directory: outcomes.json plus each survivor's log and diff, which the
           # report's footer points readers at. upload-artifact stores the directory's files at
           # the artifact root, so every downloader extracts outcomes.json flat.
@@ -88,27 +91,34 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
-      - name: Merge the prior run's shards
+      - name: Download the prior runs' shards, newest first
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prior=$(gh run list --workflow mutants --limit 100 \
-            --json databaseId,headSha,status \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null || true)
-          if [ -n "$prior" ]; then
-            bound=$(jq length <<< '${{ needs.plan.outputs.files }}')
-            for index in $(seq 0 $((bound - 1))); do
-              mkdir -p "prior-$index"
+          bound=$(jq length <<< '${{ needs.plan.outputs.files || '[]' }}' 2>/dev/null || echo 0)
+          for index in $(seq 0 $((bound - 1))); do
+            mkdir -p "prior-$index"
+            while read -r prior; do
+              [ -z "$prior" ] && break
               gh run download "$prior" -n "mutants-out-$index" -D "prior-$index" \
-                >/dev/null 2>&1 || rm -rf "prior-$index"
-            done
-          fi
+                >/dev/null 2>&1 && jq -e . "prior-$index/outcomes.json" >/dev/null 2>&1 && break
+            done < <(gh run list --workflow mutants --limit 100 \
+              --json databaseId,headSha,status \
+              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+            if ! jq -e . "prior-$index/outcomes.json" >/dev/null 2>&1; then
+              rm -rf "prior-$index"
+            fi
+          done
       - name: Download the current run's shard artifacts
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          path: merged
-          pattern: mutants-out-*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bound=$(jq length <<< '${{ needs.plan.outputs.files || '[]' }}' 2>/dev/null || echo 0)
+          for index in $(seq 0 $((bound - 1))); do
+            mkdir -p "merged/mutants-out-$index"
+            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$index" -D "merged/mutants-out-$index" \
+              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$index"
+          done
       - id: merge
         name: Merge the shards' outcomes
         run: |
@@ -128,6 +138,8 @@ jobs:
                   try:
                       data = json.load(open(candidate))
                   except (json.JSONDecodeError, OSError):
+                      continue
+                  if not isinstance(data, dict):
                       continue
                   found = (candidate, data)
                   break
@@ -149,7 +161,7 @@ jobs:
           open("merged/missing.txt", "w").write(missing_text)
           if missing:
               print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {missing_text}")
-          print(f"missing={'true' if missing else 'false'}") >> "$GITHUB_OUTPUT"
+          print(f"missing={'true' if missing else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
           PYEOF
       - id: report
         run: |
@@ -181,11 +193,11 @@ jobs:
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.missing == 'true' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing == ''
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
