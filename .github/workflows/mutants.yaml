@@ -14,22 +14,29 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
+      prior: ${{ steps.list.outputs.prior }}
     steps:
       - uses: actions/checkout@v7
       - id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # The sharded set is src/ by decision: those are the crate's mutation targets. The old
           # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
           # and build scripts are test runners, not mutation targets, and are out of scope.
-          # One cell per src file: {file, slug, index} — the index is the artifact identity, the
-          # slug is display only.
+          # One cell per src file: {file, index}.
           matrix=$(find src -name '*.rs' | sort \
             | jq -R -s -c 'split("\n") | map(select(length > 0)) | to_entries
-              | map(.value as $f | {file: $f, slug: ($f | gsub("[^A-Za-z0-9_.-]"; "_")), index: (.key | tostring)})')
+              | map(.value as $f | {file: $f, index: (.key | tostring)})')
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
+          prior=$(gh run list --workflow mutants --limit 100 \
+            --json databaseId,headSha,status,conclusion \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+          echo "prior=$prior" >>"$GITHUB_OUTPUT"
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
             echo "::warning::.rs files outside src/ are not sharded and are not mutated:"
@@ -69,9 +76,7 @@ jobs:
               break
             fi
             rm -rf prior
-          done < <(gh run list --workflow mutants --limit 100 \
-            --json databaseId,headSha,status,conclusion \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+          done < <(echo "${{ needs.plan.outputs.prior }}")
           echo "skip=$skip" >>"$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         if: steps.prior.outputs.skip != 'true'
@@ -85,6 +90,7 @@ jobs:
         env:
           FILE: ${{ matrix.file }}
         run: |
+          rc=0
           cargo mutants --jobs 8 --file "$FILE" --output mutants.out || rc=$?
           # Exit 2 (missed mutants) is a completed sweep; 4 and 70 abort it. The marker is what
           # the skip gate and the upload check read, so an aborted sweep leaves no artifact.
@@ -120,10 +126,10 @@ jobs:
             mkdir -p "prior-$idx"
             while read -r prior; do
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
-                >/dev/null 2>&1 && jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1 && break
-            done < <(gh run list --workflow mutants --limit 100 \
-              --json databaseId,headSha,status,conclusion \
-              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+                -p outcomes.json -p complete >/dev/null 2>&1 \
+                && jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1 \
+                && [ -f "prior-$idx/complete" ] && break
+            done < <(echo "${{ needs.plan.outputs.prior }}")
             if ! jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1; then
               rm -rf "prior-$idx"
             fi
@@ -135,58 +141,16 @@ jobs:
           for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
             mkdir -p "merged/mutants-out-$idx"
             gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
-              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$idx"
+              -p outcomes.json >/dev/null 2>&1 \
+              || gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
+                -p outcomes.json >/dev/null 2>&1 \
+              || rm -rf "merged/mutants-out-$idx"
           done
       - id: merge
         name: Merge the shards' outcomes
         run: |
-          python3 - '${{ needs.plan.outputs.matrix || '[]' }}' <<'PYEOF'
-          import json, os, sys
-          shards = json.loads(sys.argv[1])
-          merged: dict = {"outcomes": []}
-          missing: list[str] = []
-          for shard in shards:
-              path = shard["file"]
-              index = shard["index"]
-              found = None
-              for candidate in (
-                  f"merged/mutants-out-{index}/outcomes.json",
-                  f"prior-{index}/outcomes.json",
-              ):
-                  if not os.path.exists(candidate):
-                      continue
-                  try:
-                      data = json.load(open(candidate))
-                  except (json.JSONDecodeError, OSError):
-                      continue
-                  if not isinstance(data, dict):
-                      continue
-                  found = (candidate, data)
-                  break
-              if found is None:
-                  missing.append(path)
-                  continue
-              _, data = found
-              for outcome in data.get("outcomes") or []:
-                  if isinstance(outcome, dict):
-                      merged["outcomes"].append(outcome)
-              for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
-                  value = data.get(field) or 0
-                  if type(value) is not int:
-                      value = 0
-                  merged[field] = merged.get(field, 0) + value
-          os.makedirs("merged", exist_ok=True)
-          json.dump(merged, open("merged/outcomes.json", "w"))
-          missing_text = "\n".join(missing)
-          open("merged/missing.txt", "w").write(missing_text)
-          empty = len(merged["outcomes"]) == 0
-          if empty:
-              open("merged/empty.txt", "w").write("no shard produced outcomes — the sweep did not run\n")
-          if missing:
-              print(f"::warning::{len(missing)} of {len(shards)} shards left no outcomes: {missing_text}")
-          print(f"missing={'true' if missing else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
-          print(f"empty={'true' if empty else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
-          PYEOF
+          uv run .github/workflows/mutants_report.py merge '${{ needs.plan.outputs.matrix || '[]' }}' \
+            merged prior merged/outcomes.json merged/missing.txt merged/empty.txt >>"$GITHUB_OUTPUT"
       - id: report
         run: |
           if [ -f merged/empty.txt ]; then
@@ -205,7 +169,7 @@ jobs:
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
             "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            mutants-report.md >>"$GITHUB_OUTPUT"
+            mutants-report.md '${{ needs.plan.outputs.matrix || '[]' }}' >>"$GITHUB_OUTPUT"
           # A partial merge must never read as clean: the issue body names the shards that left
           # no outcomes, and the missed-count gate below cannot suppress an update on it.
           if [ -s merged/missing.txt ]; then

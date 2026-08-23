@@ -233,7 +233,54 @@ def title(tally: Counts, sha: str) -> str:
 	return f"Mutation testing: {tally.missed} surviving mutants at {sha[:7]}"
 
 
-def body(outcomes: Json, tally: Counts, repo: str, sha: str, run: str) -> str:
+
+def shard_map(shards: list[Any]) -> str:
+    """The footer's index-to-file lines, so an artifact name names its source.
+
+    >>> shard_map([{"file": "src/doc.rs", "index": "0"}])
+    '- `mutants-out-0` = `src/doc.rs`'
+    """
+    return "\n".join(
+        f"- `mutants-out-{one.get("index")}` = `{one.get("file")}`"
+        for one in shards
+        if isinstance(one, dict)
+    )
+
+
+def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[Json, list[str]]:
+    """One merged outcomes document and the shard files that left no readable one."""
+    outcomes: list[Any] = []
+    totals: dict[str, int] = {}
+    missing: list[str] = []
+    for shard in shards:
+        file, index = shard.get("file"), shard.get("index")
+        if not isinstance(file, str) or not isinstance(index, str):
+            raise SystemExit(f"shard cell malformed: {shard!r}")
+        candidates = (
+            Path(f"{merged_root}/mutants-out-{index}/outcomes.json"),
+            Path(f"{prior_root}-{index}/outcomes.json"),
+        )
+        found = next((path for path in candidates if path.exists()), None)
+        if found is None:
+            missing.append(file)
+            continue
+        data = loaded(found)
+        outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
+        for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
+            value = integer(data.get(field, 0))
+            if value is None:
+                raise SystemExit(f"{found}: {field}: expected a whole number, got {data.get(field)!r}")
+            totals[field] = totals.get(field, 0) + value
+    return {"outcomes": outcomes, **totals}, missing
+
+def body(
+    outcomes: Json,
+    tally: Counts,
+    repo: str,
+    sha: str,
+    run: str,
+    shards: list[Any] | None = None,
+) -> str:
 	found = survivors(outcomes)
 	commit = f"[`{sha[:7]}`](https://github.com/{repo}/tree/{sha})"
 	head = (f"## Mutation testing — {commit}", "", summary_table(tally), "")
@@ -252,10 +299,11 @@ def body(outcomes: Json, tally: Counts, repo: str, sha: str, run: str) -> str:
 		f"nothing pins that code down. Every entry links to its line at {commit}.",
 		"",
 	)
+	map_lines = f"\n{shard_map(shards)}\n" if shards else ""
 	footer = (
 		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<index>` "
 		f"artifacts of [the run]({run}) and of the prior completed runs whose shards it resumed; "
-		"the issue body names any shard that left no outcomes.</sub>\n"
+		"the issue body names any shard that left no outcomes.</sub>\n" + map_lines
 	)
 	note = (
 		f"<sub>{{}} further survivors are omitted to fit GitHub's issue body limit; the artifacts "
@@ -285,15 +333,33 @@ def main(argv: tuple[str, ...]) -> int:
 		case ("body", outcomes, repo, sha, run):
 			data, tally = tested(Path(outcomes))
 			print(body(data, tally, repo, sha, run), end="")
-		case ("report", outcomes, repo, sha, run, out):
+		case ("report", outcomes, repo, sha, run, out, shards_json):
 			data, tally = tested(Path(outcomes))
-			Path(out).write_text(body(data, tally, repo, sha, run), encoding="utf-8")
+			Path(out).write_text(
+				body(data, tally, repo, sha, run, json.loads(shards_json)), encoding="utf-8"
+			)
 			print(f"missed={tally.missed}")
 			print(f"title={title(tally, sha)}")
+		case ("merge", shards_json, merged_root, prior_root, out, missing_txt, empty_txt):
+			merged_doc, missing = merge_shards(
+				json.loads(shards_json), merged_root, prior_root
+			)
+			destination = Path(out)
+			destination.parent.mkdir(parents=True, exist_ok=True)
+			destination.write_text(json.dumps(merged_doc), encoding="utf-8")
+			Path(missing_txt).write_text("\n".join(missing), encoding="utf-8")
+			if missing:
+				print(f"::warning::{len(missing)} shards left no outcomes: {'\n'.join(missing)}")
+			print(f"missing={'true' if missing else 'false'}")
+			print(f"empty={'true' if not merged_doc['outcomes'] else 'false'}")
+			if not merged_doc["outcomes"]:
+				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
 		case _:
 			print(__doc__)
 			print("usage: mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE")
 			print("       mutants_report.py body OUTCOMES REPO SHA RUN_URL")
+			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
+			print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
 			return 2
 	return 0
 
