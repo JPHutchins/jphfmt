@@ -5,11 +5,171 @@ on:
     - cron: '3 3 * * *'
   workflow_dispatch:
 
+# Serializes runs: the rolling issue is found by a query, so two runs at once could both miss it
+# and both create one. Queues rather than cancels.
+concurrency: mutation-testing-report
+
 jobs:
-  run:
-    uses: ./.github/workflows/mutants-run.yaml
+  plan:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      files: ${{ steps.list.outputs.files }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        run: |
+          files=$(find src -name '*.rs' | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "files=$files" >>"$GITHUB_OUTPUT"
+
+  # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
+  # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
+  # outcomes artifact. A shard whose outcomes already exist from a prior run of this SHA skips,
+  # which is the resume: a re-dispatch after a shutdown re-runs only the shards that died.
+  shard:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJson(needs.plan.outputs.files) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - id: prior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prior=$(gh run list --workflow mutants --json databaseId,headSha,conclusion,status \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .databaseId != ${{ github.run_id }} and .conclusion == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+          if [ -n "$prior" ]; then
+            mkdir -p prior
+            gh run download "$prior" -n "mutants-out-${{ strategy.job-index }}" -D prior \
+              >/dev/null 2>&1 || true
+          fi
+          if [ -f prior/mutants.out/outcomes.json ]; then
+            echo "shard already analyzed in run $prior — skipping"
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >>"$GITHUB_OUTPUT"
+          fi
+      - id: sweep
+        if: steps.prior.outputs.skip != 'true'
+        continue-on-error: true
+        run: cargo mutants --file "${{ matrix.file }}" --output mutants.out
+      - if: steps.prior.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-out-${{ strategy.job-index }}
+          path: mutants.out/
+
+  report:
+    needs: shard
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: read
+      actions: read
       issues: write
-    with:
-      sha: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      - name: Merge the shards' outcomes
+        run: |
+          mkdir -p merged
+          python3 - "${{ needs.plan.outputs.files }}" <<'PYEOF'
+          import json, os, sys
+          files = json.loads(sys.argv[1])
+          merged = {"outcomes": []}
+          missing = []
+          for index, path in enumerate(files):
+              found = None
+              for root in ("merged", "prior"):
+                  candidate = f"{root}/mutants.out-{index}/outcomes.json"
+                  if os.path.exists(candidate):
+                      found = candidate
+                      break
+              if found is None:
+                  missing.append(path)
+                  continue
+              data = json.load(open(found))
+              outcomes = data.get("outcomes") or []
+              for outcome in outcomes:
+                  outcome["path"] = path
+                  merged["outcomes"].append(outcome)
+          json.dump(merged, open("merged/outcomes.json", "w"))
+          if missing:
+              print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {', '.join(missing)}")
+          PYEOF
+      - name: Merge the prior run's shards
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prior=$(gh run list --workflow mutants --json databaseId,headSha,conclusion \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .conclusion == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+          if [ -n "$prior" ]; then
+            mkdir -p prior
+            gh run download "$prior" -D prior >/dev/null 2>&1 || true
+          fi
+      - name: Download the current run's shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: merged
+          pattern: mutants-out-*
+      - name: Merge the shards' outcomes
+        run: |
+          python3 - "${{ needs.plan.outputs.files }}" <<'PYEOF'
+          import json, os, sys
+          files = json.loads(sys.argv[1])
+          merged = {"outcomes": []}
+          missing = []
+          for index, path in enumerate(files):
+              found = None
+              for root in ("merged", "prior"):
+                  candidate = f"{root}/mutants.out-{index}/outcomes.json"
+                  if os.path.exists(candidate):
+                      found = candidate
+                      break
+              if found is None:
+                  missing.append(path)
+                  continue
+              data = json.load(open(found))
+              for outcome in data.get("outcomes") or []:
+                  outcome["path"] = path
+                  merged["outcomes"].append(outcome)
+          json.dump(merged, open("merged/outcomes.json", "w"))
+          if missing:
+              print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {', '.join(missing)}")
+          PYEOF
+      - id: report
+        run: |
+          if [ ! -f merged/outcomes.json ]; then
+            echo "::error::no shard produced outcomes — the sweep did not run"
+            exit 1
+          fi
+          uv run .github/workflows/mutants_report.py report merged/outcomes.json \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            mutants-report.md >>"$GITHUB_OUTPUT"
+      - id: rolling
+        if: steps.report.outputs.missed != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list --label mutation-testing --state open --limit 1 \
+            --json number --jq '.[0].number // ""')
+          echo "number=$number" >>"$GITHUB_OUTPUT"
+      - if: steps.report.outputs.missed != '0'
+        uses: peter-evans/create-issue-from-file@v6
+        with:
+          issue-number: ${{ steps.rolling.outputs.number }}
+          title: ${{ steps.report.outputs.title }}
+          content-filepath: mutants-report.md
+          labels: 'mutation-testing'
