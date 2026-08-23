@@ -2080,6 +2080,9 @@ fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() 
             );
         }
     }
+}
+
+#[test]
 fn a_subscript_in_a_chain_head_is_laid_out_on_the_first_pass() {
     // #127: the subscript in a chain's head — `.[0:?]` — rendered as flat text on pass 1 and
     // was laid out only on pass 2, once the broken operands had made the statement a different
