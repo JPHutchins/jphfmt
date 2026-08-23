@@ -23,8 +23,12 @@ jobs:
           # The sharded set is src/ by decision: those are the crate's mutation targets. The old
           # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
           # and build scripts are test runners, not mutation targets, and are out of scope.
+          # One cell per src file: {file, slug, index} — the index is the artifact identity, the
+          # slug is display only.
           matrix=$(find src -name '*.rs' | sort \
-            | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({file: ., slug: (. | gsub("-"; "--") | gsub("/"; "-"))})')
+            | jq -R -s -c 'split("\n") | map(select(length > 0)) | to_entries
+              | map(.value as $f | {file: $f, slug: ($f | gsub("[^A-Za-z0-9_.-]"; "_")), index: (.key | tostring)})')
+          jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
@@ -34,9 +38,9 @@ jobs:
 
   # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
   # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
-  # outcomes artifact. A shard whose outcomes already exist from a prior completed run of this
-  # SHA skips — the resume: a re-dispatch after a shutdown re-runs only the shards that died.
-  # The check runs before the toolchain installs, so a skipped shard pays nothing.
+  # outcomes artifact. A shard whose outcomes already exist from a prior run of this SHA skips —
+  # the resume: a re-dispatch after a shutdown re-runs only the shards that died. The check runs
+  # before the toolchain installs, so a skipped shard pays nothing.
   shard:
     needs: plan
     runs-on: ubuntu-latest
@@ -55,11 +59,11 @@ jobs:
         run: |
           skip=false
           while read -r prior; do
-            [ -z "$prior" ] && break
             mkdir -p prior
-            if gh run download "$prior" -n "mutants-out-${{ matrix.slug }}" -D prior \
-                >/dev/null 2>&1 \
-              && jq -e 'type == "object"' prior/outcomes.json >/dev/null 2>&1; then
+            if gh run download "$prior" -n "mutants-out-${{ matrix.index }}" -D prior \
+                -p outcomes.json -p complete >/dev/null 2>&1 \
+              && jq -e 'type == "object"' prior/outcomes.json >/dev/null 2>&1 \
+              && [ -f prior/complete ]; then
               echo "shard already analyzed in run $prior — skipping"
               skip=true
               break
@@ -67,7 +71,7 @@ jobs:
             rm -rf prior
           done < <(gh run list --workflow mutants --limit 100 \
             --json databaseId,headSha,status,conclusion \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
           echo "skip=$skip" >>"$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         if: steps.prior.outputs.skip != 'true'
@@ -78,18 +82,24 @@ jobs:
       - id: sweep
         if: steps.prior.outputs.skip != 'true'
         continue-on-error: true
-        run: cargo mutants --jobs 8 --file "${{ matrix.file }}" --output mutants.out
-      - if: steps.prior.outputs.skip != 'true'
+        env:
+          FILE: ${{ matrix.file }}
+        run: |
+          cargo mutants --jobs 8 --file "$FILE" --output mutants.out || rc=$?
+          # Exit 2 (missed mutants) is a completed sweep; 4 and 70 abort it. The marker is what
+          # the skip gate and the upload check read, so an aborted sweep leaves no artifact.
+          { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; } && touch mutants.out/complete
+      - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
         uses: actions/upload-artifact@v7
         with:
           # A "Re-run all jobs" re-executes this shard in the same run, where artifact names are
           # immutable without this; same-SHA same-file outcomes are identical content either way.
           overwrite: true
           # The whole directory: outcomes.json plus each survivor's log and diff, which the
-          # report's footer points readers at. The artifact name is the file's own, slashed to
-          # dashes, so the report reads which shard is which at a glance.
-          name: mutants-out-${{ matrix.slug }}
-          path: mutants.out/
+          # report's footer points readers at. The glob roots the contents at the artifact root,
+          # so every downloader reads outcomes.json flat.
+          name: mutants-out-${{ matrix.index }}
+          path: mutants.out/*
 
   report:
     needs: [plan, shard]
@@ -106,27 +116,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for slug in $(jq -r '.[].slug' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
-            mkdir -p "prior-$slug"
+          for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            mkdir -p "prior-$idx"
             while read -r prior; do
-              [ -z "$prior" ] && break
-              gh run download "$prior" -n "mutants-out-$slug" -D "prior-$slug" \
-                >/dev/null 2>&1 && jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1 && break
+              gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
+                >/dev/null 2>&1 && jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1 && break
             done < <(gh run list --workflow mutants --limit 100 \
               --json databaseId,headSha,status,conclusion \
-              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
-            if ! jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1; then
-              rm -rf "prior-$slug"
+              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+            if ! jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1; then
+              rm -rf "prior-$idx"
             fi
           done
       - name: Download the current run's shard artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for slug in $(jq -r '.[].slug' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
-            mkdir -p "merged/mutants-out-$slug"
-            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$slug" -D "merged/mutants-out-$slug" \
-              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$slug"
+          for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            mkdir -p "merged/mutants-out-$idx"
+            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
+              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$idx"
           done
       - id: merge
         name: Merge the shards' outcomes
@@ -138,11 +147,11 @@ jobs:
           missing: list[str] = []
           for shard in shards:
               path = shard["file"]
-              slug = shard["slug"]
+              index = shard["index"]
               found = None
               for candidate in (
-                  f"merged/mutants-out-{slug}/outcomes.json",
-                  f"prior-{slug}/outcomes.json",
+                  f"merged/mutants-out-{index}/outcomes.json",
+                  f"prior-{index}/outcomes.json",
               ):
                   if not os.path.exists(candidate):
                       continue

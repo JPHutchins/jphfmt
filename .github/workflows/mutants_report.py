@@ -253,7 +253,7 @@ def body(outcomes: Json, tally: Counts, repo: str, sha: str, run: str) -> str:
 		"",
 	)
 	footer = (
-		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<shard>` "
+		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<index>` "
 		f"artifacts of [the run]({run}) and of the prior completed runs whose shards it resumed; "
 		"the issue body names any shard that left no outcomes.</sub>\n"
 	)
