@@ -2083,6 +2083,38 @@ fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() 
 }
 
 #[test]
+fn a_subscript_in_a_chain_head_is_laid_out_on_the_first_pass() {
+    // #127: the subscript in a chain's head — `.[0:?]` — rendered as flat text on pass 1 and
+    // was laid out only on pass 2, once the broken operands had made the statement a different
+    // shape. The head gate *passes* this head — the `?` marks only the subscript's own frame,
+    // and the boundary covers exactly that one construct — so `build_chain_doc`'s boundary path
+    // lays the head out through `build_expr_doc` on the first pass, and pass 2 re-reads the
+    // written operand parens through the walk's group arms: the same two-path taxonomy the
+    // measured-head pin's comment names. The pin's value over that admitted-path class is the
+    // issue's exact shape as contract.
+    //
+    // The width bound is meaningless at width 1 — `.[` is two columns of unbreakable content —
+    // so this test pins the layout and the fixpoint, not the width.
+    let src = ".[0:?]=A&\"\ta&&a0aa0A0A\"_A;";
+    let expected = ".[\n\t0 :\n\t?\n] = (\n\tA &\n\t\"\ta&&a0aa0A0A\"_A\n);\n";
+    let once = jphfmt::format_with_width(src, 1);
+    assert_eq!(
+        once, expected,
+        "the head's subscript breaks on the first pass"
+    );
+    assert_eq!(
+        jphfmt::format_with_width(&once, 1),
+        once,
+        "and it is a fixpoint"
+    );
+    // The wide counterpart: a head that fits is still written flat.
+    assert_eq!(
+        jphfmt::format_with_width(src, 100),
+        ".[0 : ?] = A & \"\ta&&a0aa0A0A\"_A;\n"
+    );
+}
+
+#[test]
 fn a_chain_head_is_measured_like_its_operands() {
     // #108. The head held whatever precedes the operands — an assignment's left side — and was
     // rendered flat, so no width reached the call or subscript inside it. That overruns §8.5's
