@@ -188,20 +188,24 @@ fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
     if opens_literal(toks, open) {
         return false;
     }
-    if pieces
-        .get(open.saturating_sub(1))
-        .is_some_and(|p| p.1.text == ")")
-        && body_after_close(pieces, open - 1)
+    if open
+        .checked_sub(1)
+        .is_some_and(|close| pieces[close].1.text == ")" && body_after_close(pieces, close))
     {
         return true;
     }
+    let mut statement_body = None;
     let mut depth = 0i32;
     for k in (0..open).rev() {
         match pieces[k].1.text {
             ")" | "]" => depth = if depth < 0 { depth - 1 } else { depth + 1 },
             "(" | "[" => {
                 depth = match depth {
-                    0 if holds_statement_boundary(pieces, open) => -1,
+                    0 if *statement_body
+                        .get_or_insert_with(|| holds_statement_boundary(pieces, open)) =>
+                    {
+                        -1
+                    }
                     0 => 0,
                     _ => depth - 1,
                 };
