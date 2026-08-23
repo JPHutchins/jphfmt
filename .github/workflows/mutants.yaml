@@ -36,7 +36,7 @@ jobs:
           prior=$(gh run list --workflow mutants --limit 100 \
             --json databaseId,headSha,status,conclusion \
             --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
-          echo "prior=$prior" >>"$GITHUB_OUTPUT"
+          { echo "prior<<EOF"; echo "$prior"; echo "EOF"; } >>"$GITHUB_OUTPUT"
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
             echo "::warning::.rs files outside src/ are not sharded and are not mutated:"
@@ -68,7 +68,7 @@ jobs:
           while read -r prior; do
             mkdir -p prior
             if gh run download "$prior" -n "mutants-out-${{ matrix.index }}" -D prior \
-                -p outcomes.json -p complete >/dev/null 2>&1 \
+                >/dev/null 2>&1 \
               && jq -e 'type == "object"' prior/outcomes.json >/dev/null 2>&1 \
               && [ -f prior/complete ]; then
               echo "shard already analyzed in run $prior — skipping"
@@ -126,11 +126,11 @@ jobs:
             mkdir -p "prior-$idx"
             while read -r prior; do
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
-                -p outcomes.json -p complete >/dev/null 2>&1 \
-                && jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1 \
+                >/dev/null 2>&1 \
+                && jq -e 'type == "object"' "prior-$idx/outcomes.json" >/dev/null 2>&1 \
                 && [ -f "prior-$idx/complete" ] && break
             done < <(echo "${{ needs.plan.outputs.prior }}")
-            if ! jq -e . "prior-$idx/outcomes.json" >/dev/null 2>&1; then
+            if ! jq -e 'type == "object"' "prior-$idx/outcomes.json" >/dev/null 2>&1; then
               rm -rf "prior-$idx"
             fi
           done
@@ -141,10 +141,13 @@ jobs:
           for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
             mkdir -p "merged/mutants-out-$idx"
             gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
-              -p outcomes.json >/dev/null 2>&1 \
+              >/dev/null 2>&1 \
               || gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
-                -p outcomes.json >/dev/null 2>&1 \
-              || rm -rf "merged/mutants-out-$idx"
+                >/dev/null 2>&1 \
+              || if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+                  --jq '.[].name' 2>/dev/null | grep -qx "mutants-out-$idx"; then
+                rm -rf "merged/mutants-out-$idx"
+              fi
           done
       - id: merge
         name: Merge the shards' outcomes

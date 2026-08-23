@@ -256,21 +256,32 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
         file, index = shard.get("file"), shard.get("index")
         if not isinstance(file, str) or not isinstance(index, str):
             raise SystemExit(f"shard cell malformed: {shard!r}")
-        candidates = (
+        data = None
+        for candidate in (
             Path(f"{merged_root}/mutants-out-{index}/outcomes.json"),
             Path(f"{prior_root}-{index}/outcomes.json"),
-        )
-        found = next((path for path in candidates if path.exists()), None)
-        if found is None:
+        ):
+            if not candidate.exists():
+                continue
+            try:
+                data = loaded(candidate)
+                break
+            except SystemExit:
+                continue
+        if data is None:
             missing.append(file)
             continue
-        data = loaded(found)
-        outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
-        for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
-            value = integer(data.get(field, 0))
-            if value is None:
-                raise SystemExit(f"{found}: {field}: expected a whole number, got {data.get(field)!r}")
-            totals[field] = totals.get(field, 0) + value
+        try:
+            outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
+            for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
+                value = integer(data.get(field, 0))
+                if value is None:
+                    raise SystemExit(
+                        f"{index}: {field}: expected a whole number, got {data.get(field)!r}"
+                    )
+                totals[field] = totals.get(field, 0) + value
+        except SystemExit:
+            missing.append(file)
     return {"outcomes": outcomes, **totals}, missing
 
 def body(
@@ -349,14 +360,16 @@ def main(argv: tuple[str, ...]) -> int:
 			destination.write_text(json.dumps(merged_doc), encoding="utf-8")
 			Path(missing_txt).write_text("\n".join(missing), encoding="utf-8")
 			if missing:
-				print(f"::warning::{len(missing)} shards left no outcomes: {'\n'.join(missing)}")
+				print(
+					f"::warning::{len(missing)} shards left no outcomes: {'\n'.join(missing)}",
+					file=sys.stderr,
+				)
 			print(f"missing={'true' if missing else 'false'}")
 			print(f"empty={'true' if not merged_doc['outcomes'] else 'false'}")
 			if not merged_doc["outcomes"]:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
 		case _:
 			print(__doc__)
-			print("usage: mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE")
 			print("       mutants_report.py body OUTCOMES REPO SHA RUN_URL")
 			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
 			print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
