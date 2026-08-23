@@ -5,84 +5,230 @@ on:
     - cron: '3 3 * * *'
   workflow_dispatch:
 
-# Serializes runs: the rolling issue is found by a query, so two runs at once could both miss it and
-# both create one. Queues rather than cancels — a 30-minute analysis is not worth restarting.
+# Serializes runs: the rolling issue is found by a query, so two runs at once could both miss it
+# and both create one. Queues rather than cancels.
 concurrency: mutation-testing-report
 
 jobs:
-  mutants:
+  plan:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        run: |
+          # The sharded set is src/ by decision: those are the crate's mutation targets. The old
+          # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
+          # and build scripts are test runners, not mutation targets, and are out of scope.
+          matrix=$(find src -name '*.rs' | sort \
+            | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({file: ., slug: (. | gsub("-"; "--") | gsub("/"; "-"))})')
+          echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
+          outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
+          if [ -n "$outside" ]; then
+            echo "::warning::.rs files outside src/ are not sharded and are not mutated:"
+            echo "$outside" | sed 's/^/  /' >&2
+          fi
+
+  # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
+  # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
+  # outcomes artifact. A shard whose outcomes already exist from a prior completed run of this
+  # SHA skips — the resume: a re-dispatch after a shutdown re-runs only the shards that died.
+  # The check runs before the toolchain installs, so a skipped shard pays nothing.
+  shard:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: prior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          skip=false
+          while read -r prior; do
+            [ -z "$prior" ] && break
+            mkdir -p prior
+            if gh run download "$prior" -n "mutants-out-${{ matrix.slug }}" -D prior \
+                >/dev/null 2>&1 \
+              && jq -e 'type == "object"' prior/outcomes.json >/dev/null 2>&1; then
+              echo "shard already analyzed in run $prior — skipping"
+              skip=true
+              break
+            fi
+            rm -rf prior
+          done < <(gh run list --workflow mutants --limit 100 \
+            --json databaseId,headSha,status,conclusion \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
+          echo "skip=$skip" >>"$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.prior.outputs.skip != 'true'
+      - uses: taiki-e/install-action@v2
+        if: steps.prior.outputs.skip != 'true'
+        with:
+          tool: cargo-mutants
+      - id: sweep
+        if: steps.prior.outputs.skip != 'true'
+        continue-on-error: true
+        run: cargo mutants --jobs 8 --file "${{ matrix.file }}" --output mutants.out
+      - if: steps.prior.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          # A "Re-run all jobs" re-executes this shard in the same run, where artifact names are
+          # immutable without this; same-SHA same-file outcomes are identical content either way.
+          overwrite: true
+          # The whole directory: outcomes.json plus each survivor's log and diff, which the
+          # report's footer points readers at. The artifact name is the file's own, slashed to
+          # dashes, so the report reads which shard is which at a glance.
+          name: mutants-out-${{ matrix.slug }}
+          path: mutants.out/
+
+  report:
+    needs: [plan, shard]
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: read
+      actions: read
       issues: write
     steps:
       - uses: actions/checkout@v7
-
-      # The report doubles as the already-analyzed sentinel, so it is written survivors or none.
-      - uses: actions/cache@v4
-        id: cache
-        with:
-          path: mutants-report.md
-          key: mutants-${{ github.sha }}
-
-      - if: steps.cache.outputs.cache-hit == 'true'
-        run: echo "Commit ${{ github.sha }} already analyzed — skipping."
-
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.cache.outputs.cache-hit != 'true'
-
-      - uses: taiki-e/install-action@v2
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          tool: cargo-mutants
-
       - uses: astral-sh/setup-uv@v6
-        if: steps.cache.outputs.cache-hit != 'true'
-
-      # Surviving mutants are a non-zero exit, which is a finding rather than a failure: what the
-      # steps below gate on is the count the report reads, not this step's outcome.
-      - id: mutants
-        if: steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: cargo mutants --jobs 8
-
-      # `cargo mutants` also exits non-zero when it cannot build at all, and then there is no
-      # outcomes.json — say so, rather than letting the report fail with a file-not-found.
-      - id: report
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Download the prior runs' shards, newest first
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f mutants.out/outcomes.json ]; then
-            echo "::error::cargo mutants wrote no outcomes.json — it failed before testing a mutant; see the step above"
-            exit 1
+          for slug in $(jq -r '.[].slug' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            mkdir -p "prior-$slug"
+            while read -r prior; do
+              [ -z "$prior" ] && break
+              gh run download "$prior" -n "mutants-out-$slug" -D "prior-$slug" \
+                >/dev/null 2>&1 && jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1 && break
+            done < <(gh run list --workflow mutants --limit 100 \
+              --json databaseId,headSha,status,conclusion \
+              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
+            if ! jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1; then
+              rm -rf "prior-$slug"
+            fi
+          done
+      - name: Download the current run's shard artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for slug in $(jq -r '.[].slug' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            mkdir -p "merged/mutants-out-$slug"
+            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$slug" -D "merged/mutants-out-$slug" \
+              >/dev/null 2>&1 || rm -rf "merged/mutants-out-$slug"
+          done
+      - id: merge
+        name: Merge the shards' outcomes
+        run: |
+          python3 - '${{ needs.plan.outputs.matrix || '[]' }}' <<'PYEOF'
+          import json, os, sys
+          shards = json.loads(sys.argv[1])
+          merged: dict = {"outcomes": []}
+          missing: list[str] = []
+          for shard in shards:
+              path = shard["file"]
+              slug = shard["slug"]
+              found = None
+              for candidate in (
+                  f"merged/mutants-out-{slug}/outcomes.json",
+                  f"prior-{slug}/outcomes.json",
+              ):
+                  if not os.path.exists(candidate):
+                      continue
+                  try:
+                      data = json.load(open(candidate))
+                  except (json.JSONDecodeError, OSError):
+                      continue
+                  if not isinstance(data, dict):
+                      continue
+                  found = (candidate, data)
+                  break
+              if found is None:
+                  missing.append(path)
+                  continue
+              _, data = found
+              for outcome in data.get("outcomes") or []:
+                  if isinstance(outcome, dict):
+                      merged["outcomes"].append(outcome)
+              for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
+                  value = data.get(field) or 0
+                  if type(value) is not int:
+                      value = 0
+                  merged[field] = merged.get(field, 0) + value
+          os.makedirs("merged", exist_ok=True)
+          json.dump(merged, open("merged/outcomes.json", "w"))
+          missing_text = "\n".join(missing)
+          open("merged/missing.txt", "w").write(missing_text)
+          empty = len(merged["outcomes"]) == 0
+          if empty:
+              open("merged/empty.txt", "w").write("no shard produced outcomes — the sweep did not run\n")
+          if missing:
+              print(f"::warning::{len(missing)} of {len(shards)} shards left no outcomes: {missing_text}")
+          print(f"missing={'true' if missing else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
+          print(f"empty={'true' if empty else 'false'}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
+          PYEOF
+      - id: report
+        run: |
+          if [ -f merged/empty.txt ]; then
+            {
+              echo "The mutation sweep ran no shard: every shard failed or left no outcomes."
+              echo
+              echo '```'
+              cat merged/missing.txt
+              echo '```'
+              echo "A re-dispatch resumes the shards that died."
+            } > mutants-report.md
+            echo "missed=0" >>"$GITHUB_OUTPUT"
+            echo "title=Mutation sweep: no shard produced outcomes" >>"$GITHUB_OUTPUT"
+            exit 0
           fi
-          uv run .github/workflows/mutants_report.py report mutants.out/outcomes.json \
+          uv run .github/workflows/mutants_report.py report merged/outcomes.json \
             "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             mutants-report.md >>"$GITHUB_OUTPUT"
-
-      # Every survivor's log and diff, for the ones the issue body has no room to spell out. Kept
-      # even when the report step failed, since that is when they are worth reading.
-      - if: (success() || failure()) && steps.cache.outputs.cache-hit != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mutants-out
-          path: mutants.out/
-
-      # One rolling issue, rewritten each run: a nightly on a moving `main` would otherwise open one
-      # per commit. An empty number means there is none open, and the action creates it.
+          # A partial merge must never read as clean: the issue body names the shards that left
+          # no outcomes, and the missed-count gate below cannot suppress an update on it.
+          if [ -s merged/missing.txt ]; then
+            {
+              echo
+              echo "**Shards with no outcomes** — a runner shutdown or a build failure took them;"
+              echo "a re-dispatch resumes exactly these:"
+              echo '```'
+              cat merged/missing.txt
+              echo '```'
+            } >> mutants-report.md
+          fi
       - id: rolling
-        if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
+        if: steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-
-      - if: steps.cache.outputs.cache-hit != 'true' && steps.report.outputs.missed != '0'
+      - if: steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true'
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.missing == 'true' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
+      - name: Retire the rolling issue on a complete clean sweep
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue list --label mutation-testing --state open --limit 20 \
+            --json number --jq '.[].number' | while read -r number; do
+            gh issue close "$number" --reason completed
+          done

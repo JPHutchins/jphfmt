@@ -253,12 +253,13 @@ def body(outcomes: Json, tally: Counts, repo: str, sha: str, run: str) -> str:
 		"",
 	)
 	footer = (
-		"<sub>Logs and a per-mutant diff for every one of these are in the `mutants-out` artifact "
-		f"of [the run]({run}).</sub>\n"
+		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<shard>` "
+		f"artifacts of [the run]({run}) and of the prior completed runs whose shards it resumed; "
+		"the issue body names any shard that left no outcomes.</sub>\n"
 	)
 	note = (
-		f"<sub>{{}} further survivors are omitted to fit GitHub's issue body limit; the artifact "
-		f"has all {len(found)}.</sub>\n"
+		f"<sub>{{}} further survivors are omitted to fit GitHub's issue body limit; the artifacts "
+		f"have all {len(found)}.</sub>\n"
 	)
 	# Budget the scaffold as rendered, separators included, and the note at its longest — dropping
 	# every survivor — so what `fitted` is told is spare really is.
