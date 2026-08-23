@@ -25,8 +25,10 @@ jobs:
 
   # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
   # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
-  # outcomes artifact. A shard whose outcomes already exist from a prior run of this SHA skips,
-  # which is the resume: a re-dispatch after a shutdown re-runs only the shards that died.
+  # outcomes artifact (one flat outcomes.json per artifact). A shard whose outcomes already exist
+  # from a prior completed run of this SHA skips — the resume: a re-dispatch after a shutdown
+  # re-runs only the shards that died. The check runs before the toolchain installs, so a skipped
+  # shard pays nothing.
   shard:
     needs: plan
     runs-on: ubuntu-latest
@@ -39,27 +41,29 @@ jobs:
         file: ${{ fromJson(needs.plan.outputs.files) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-mutants
       - id: prior
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prior=$(gh run list --workflow mutants --json databaseId,headSha,conclusion,status \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .databaseId != ${{ github.run_id }} and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+          prior=$(gh run list --workflow mutants --json databaseId,headSha,status \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .databaseId != "${{ github.run_id }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+          skip=false
           if [ -n "$prior" ]; then
             mkdir -p prior
-            gh run download "$prior" -n "mutants-out-${{ strategy.job-index }}" -D prior \
-              >/dev/null 2>&1 || true
+            if gh run download "$prior" -n "mutants-out-${{ strategy.job-index }}" -D prior \
+                >/dev/null 2>&1 \
+              && jq -e . prior/outcomes.json >/dev/null 2>&1; then
+              echo "shard already analyzed in run $prior — skipping"
+              skip=true
+            fi
           fi
-          if [ -f prior/mutants.out/outcomes.json ]; then
-            echo "shard already analyzed in run $prior — skipping"
-            echo "skip=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >>"$GITHUB_OUTPUT"
-          fi
+          echo "skip=$skip" >>"$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.prior.outputs.skip != 'true'
+      - uses: taiki-e/install-action@v2
+        if: steps.prior.outputs.skip != 'true'
+        with:
+          tool: cargo-mutants
       - id: sweep
         if: steps.prior.outputs.skip != 'true'
         continue-on-error: true
@@ -68,7 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mutants-out-${{ strategy.job-index }}
-          path: mutants.out/
+          path: mutants.out/outcomes.json
 
   report:
     needs: shard
@@ -81,44 +85,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
-      - name: Merge the shards' outcomes
-        run: |
-          mkdir -p merged
-          python3 - "${{ needs.plan.outputs.files }}" <<'PYEOF'
-          import json, os, sys
-          files = json.loads(sys.argv[1])
-          merged = {"outcomes": []}
-          missing = []
-          for index, path in enumerate(files):
-              found = None
-              for root in ("merged", "prior"):
-                  candidate = f"{root}/mutants.out-{index}/outcomes.json"
-                  if os.path.exists(candidate):
-                      found = candidate
-                      break
-              if found is None:
-                  missing.append(path)
-                  continue
-              data = json.load(open(found))
-              outcomes = data.get("outcomes") or []
-              for outcome in outcomes:
-                  outcome["path"] = path
-                  merged["outcomes"].append(outcome)
-          json.dump(merged, open("merged/outcomes.json", "w"))
-          if missing:
-              print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {', '.join(missing)}")
-          PYEOF
       - name: Merge the prior run's shards
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prior=$(gh run list --workflow mutants --json databaseId,headSha,conclusion \
+          prior=$(gh run list --workflow mutants --json databaseId,headSha,status \
             --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
           if [ -n "$prior" ]; then
-            mkdir -p prior
-            gh run download "$prior" -D prior >/dev/null 2>&1 || true
+            for index in $(seq 0 100); do
+              mkdir -p "prior-$index"
+              gh run download "$prior" -n "mutants-out-$index" -D "prior-$index" \
+                >/dev/null 2>&1 || rm -rf "prior-$index"
+            done
           fi
       - name: Download the current run's shard artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           path: merged
@@ -132,9 +113,12 @@ jobs:
           missing = []
           for index, path in enumerate(files):
               found = None
-              for root in ("merged", "prior"):
-                  candidate = f"{root}/mutants.out-{index}/outcomes.json"
+              for candidate in (f"merged/mutants-out-{index}/outcomes.json", f"prior-{index}/outcomes.json"):
                   if os.path.exists(candidate):
+                      try:
+                          json.load(open(candidate))
+                      except (json.JSONDecodeError, OSError):
+                          continue
                       found = candidate
                       break
               if found is None:
@@ -144,6 +128,8 @@ jobs:
               for outcome in data.get("outcomes") or []:
                   outcome["path"] = path
                   merged["outcomes"].append(outcome)
+              for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
+                  merged[field] = merged.get(field, 0) + (data.get(field) or 0)
           json.dump(merged, open("merged/outcomes.json", "w"))
           if missing:
               print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {', '.join(missing)}")
