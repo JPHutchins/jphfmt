@@ -2071,6 +2071,18 @@ fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() 
         ),
     ] {
         assert_laid_out(src, width, expected);
+        for width in 1..=32 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "{src:?} at {width}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_hash_fragment_in_a_bracket_group_measures_the_same_both_passes() {
     // #131: a `#` fragment inside a bracket group was measured one way on pass 1 and another on
     // pass 2 — the group broke on the first pass and rejoined on the second. The guard that
