@@ -626,8 +626,9 @@ fn a_paren_group_the_layout_wrote_does_not_mask_the_initializers_equals() {
     // The layout wraps a labeled brace-list element in its own paren group, and the next pass's
     // bracket-aware scan read that `(` at depth zero as a group whose interior extends past the
     // brace — the depth went negative, masking the statement-level `=` and flipping the verdict to
-    // a block, which respaced the element's multiply `A*a` as a declarator `A * a`. The scan now
-    // floors its depth: an opener met at depth zero leaves the scan at statement level.
+    // a block, which respaced the element's multiply `A*a` as a declarator `A * a`. An expression
+    // body's enclosing group is the layout's own and is transparent: the scan stays at statement
+    // level and the `=` left of the group decides.
     let once = jphfmt::format_with_width("={0:{A*a}?\"\"?}", 1);
     assert_eq!(
         once,
@@ -650,6 +651,23 @@ fn a_paren_group_the_layout_wrote_does_not_mask_the_initializers_equals() {
                 "not a fixpoint at {width}: {src:?}"
             );
         }
+    }
+}
+
+#[test]
+fn a_statement_expressions_declarators_stay_spaced_across_the_enclosing_group() {
+    // #143's review: the floor let a statement expression's own `=` decide its body's braces —
+    // `S *p` went tight where §2.5 spells `S * p`. A body whose `;` has a statement after it is
+    // a block, whose enclosing statement-expression group masks the `=` assigning the expression.
+    for src in [
+        "x = ({ q; S *p = q; p; });",
+        "int a[] = { ({ S *p = q; p; }), 1 };",
+        "x = f(({ q; S *p = q; }));",
+        "x = ({ if (c) { S *p; } p; });",
+    ] {
+        let once = format(src);
+        assert!(once.contains("S * p"), "the declarator is spaced: {once:?}");
+        assert_eq!(format(&once), once, "and it is a fixpoint");
     }
 }
 

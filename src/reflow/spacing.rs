@@ -177,26 +177,65 @@ fn declares_parameters(pieces: &[Piece], open: usize) -> bool {
 /// different answer than the pass that read the author's (#130). A brace is transparent: an
 /// initializer's `=` must stay visible through it (`int m[] = {{a*b}, …}`), and its own elements
 /// read the same statement level as it does.
+///
+/// An opener met at depth zero closes no group to the left, so its interior reaches past the
+/// brace: a statement body's enclosing group is a statement expression whose opener must mask —
+/// the `=` assigning the whole expression is not the body's verdict — and an expression body's is
+/// the layout's bounding group, transparent, the `=` left of it deciding (#143).
 fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
     if opens_literal(toks, open) {
         return false;
     }
+    let control_body = pieces
+        .get(open.saturating_sub(1))
+        .is_some_and(|p| p.1.text == ")")
+        && enclosing_open(pieces, open - 1)
+            .and_then(|o| o.checked_sub(1))
+            .is_some_and(|before| heads_body(&pieces[before].1));
+    if control_body {
+        return true;
+    }
+    let statement_body = holds_statement_boundary(pieces, open);
     let mut depth = 0i32;
     for k in (0..open).rev() {
         match pieces[k].1.text {
             ")" | "]" => depth += 1,
-            // An opener at depth zero is the enclosing group's: its interior extends past the
-            // brace, and everything left of it sits at the brace's own statement level. Depth must
-            // floor there, not go negative — a negative depth masks a real `;` or `=` left of the
-            // group, flipping the verdict between the pass that read the author and the pass that
-            // read the layout's own parens.
-            "(" | "[" => depth = (depth - 1).max(0),
+            "(" | "[" => {
+                depth = match depth {
+                    0 if statement_body => -1,
+                    0 => 0,
+                    _ => depth - 1,
+                };
+            }
             ";" if depth == 0 => return true,
             "=" if depth == 0 => return false,
             _ => {}
         }
     }
     true
+}
+
+/// A `;` at the brace's own depth with content after it — a statement boundary, which an
+/// initializer's elements cannot hold. A trailing `;` does not qualify: the layout writes one
+/// after a statement expression's last element, and reading it as statements would flip the
+/// verdict on the next pass. An `=` cannot tell them apart — an element is an
+/// assignment-expression, `int a[] = { x = 1 };`.
+fn holds_statement_boundary(pieces: &[Piece], open: usize) -> bool {
+    let mut depth = 0i32;
+    let mut boundary = false;
+    for piece in pieces.iter().skip(open + 1) {
+        if depth == 0 && boundary && piece.1.text != "}" {
+            return true;
+        }
+        match piece.1.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" if depth == 0 => return false,
+            ")" | "]" | "}" => depth -= 1,
+            ";" if depth == 0 => boundary = true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether the `{` at `open` follows a compound literal's `(T)`. The piece list is the token stream
