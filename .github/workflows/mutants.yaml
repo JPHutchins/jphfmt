@@ -20,8 +20,11 @@ jobs:
       - uses: actions/checkout@v7
       - id: list
         run: |
+          # The sharded set is src/ by decision: those are the crate's mutation targets. The old
+          # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
+          # and build scripts are test runners, not mutation targets, and are out of scope.
           matrix=$(find src -name '*.rs' | sort \
-            | jq -R -s -c 'split("\n") | map(select(length > 0) | {file: ., slug: (. | gsub("/"; "-"))})')
+            | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({file: ., slug: (. | gsub("-"; "--") | gsub("/"; "-"))})')
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
@@ -49,19 +52,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prior=$(gh run list --workflow mutants --limit 100 \
-            --json databaseId,headSha,status \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null || true)
           skip=false
-          if [ -n "$prior" ]; then
+          while read -r prior; do
+            [ -z "$prior" ] && break
             mkdir -p prior
             if gh run download "$prior" -n "mutants-out-${{ matrix.slug }}" -D prior \
                 >/dev/null 2>&1 \
               && jq -e . prior/outcomes.json >/dev/null 2>&1; then
               echo "shard already analyzed in run $prior — skipping"
               skip=true
+              break
             fi
-          fi
+            rm -rf prior
+          done < <(gh run list --workflow mutants --limit 100 \
+            --json databaseId,headSha,status,conclusion \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
           echo "skip=$skip" >>"$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         if: steps.prior.outputs.skip != 'true'
@@ -86,7 +91,7 @@ jobs:
           path: mutants.out/
 
   report:
-    needs: shard
+    needs: [plan, shard]
     runs-on: ubuntu-latest
     if: always()
     permissions:
@@ -108,7 +113,7 @@ jobs:
                 >/dev/null 2>&1 && jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1 && break
             done < <(gh run list --workflow mutants --limit 100 \
               --json databaseId,headSha,status \
-              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+              --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
             if ! jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1; then
               rm -rf "prior-$slug"
             fi
@@ -157,7 +162,7 @@ jobs:
                       merged["outcomes"].append(outcome)
               for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
                   value = data.get(field) or 0
-                  if not isinstance(value, int):
+                  if type(value) is not int:
                       value = 0
                   merged[field] = merged.get(field, 0) + value
           os.makedirs("merged", exist_ok=True)
@@ -219,7 +224,7 @@ jobs:
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true'
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.empty != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
