@@ -58,7 +58,7 @@ jobs:
             mkdir -p prior
             if gh run download "$prior" -n "mutants-out-${{ matrix.slug }}" -D prior \
                 >/dev/null 2>&1 \
-              && jq -e . prior/outcomes.json >/dev/null 2>&1; then
+              && jq -e 'type == "object"' prior/outcomes.json >/dev/null 2>&1; then
               echo "shard already analyzed in run $prior — skipping"
               skip=true
               break
@@ -77,7 +77,7 @@ jobs:
       - id: sweep
         if: steps.prior.outputs.skip != 'true'
         continue-on-error: true
-        run: cargo mutants --file "${{ matrix.file }}" --output mutants.out
+        run: cargo mutants --jobs 8 --file "${{ matrix.file }}" --output mutants.out
       - if: steps.prior.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
@@ -112,7 +112,7 @@ jobs:
               gh run download "$prior" -n "mutants-out-$slug" -D "prior-$slug" \
                 >/dev/null 2>&1 && jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1 && break
             done < <(gh run list --workflow mutants --limit 100 \
-              --json databaseId,headSha,status \
+              --json databaseId,headSha,status,conclusion \
               --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed" and .conclusion != "cancelled")) | .[].databaseId' 2>/dev/null || true)
             if ! jq -e . "prior-$slug/outcomes.json" >/dev/null 2>&1; then
               rm -rf "prior-$slug"
