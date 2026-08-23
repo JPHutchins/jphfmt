@@ -25,10 +25,9 @@ jobs:
 
   # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
   # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
-  # outcomes artifact (one flat outcomes.json per artifact). A shard whose outcomes already exist
-  # from a prior completed run of this SHA skips — the resume: a re-dispatch after a shutdown
-  # re-runs only the shards that died. The check runs before the toolchain installs, so a skipped
-  # shard pays nothing.
+  # outcomes artifact. A shard whose outcomes already exist from a prior completed run of this
+  # SHA skips — the resume: a re-dispatch after a shutdown re-runs only the shards that died.
+  # The check runs before the toolchain installs, so a skipped shard pays nothing.
   shard:
     needs: plan
     runs-on: ubuntu-latest
@@ -45,8 +44,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prior=$(gh run list --workflow mutants --json databaseId,headSha,status \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .databaseId != "${{ github.run_id }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+          prior=$(gh run list --workflow mutants --limit 100 \
+            --json databaseId,headSha,status \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null || true)
           skip=false
           if [ -n "$prior" ]; then
             mkdir -p prior
@@ -71,8 +71,11 @@ jobs:
       - if: steps.prior.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
+          # The whole directory: outcomes.json plus each survivor's log and diff, which the
+          # report's footer points readers at. upload-artifact stores the directory's files at
+          # the artifact root, so every downloader extracts outcomes.json flat.
           name: mutants-out-${{ strategy.job-index }}
-          path: mutants.out/outcomes.json
+          path: mutants.out/
 
   report:
     needs: shard
@@ -89,10 +92,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prior=$(gh run list --workflow mutants --json databaseId,headSha,status \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null)
+          prior=$(gh run list --workflow mutants --limit 100 \
+            --json databaseId,headSha,status \
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[0].databaseId // ""' 2>/dev/null || true)
           if [ -n "$prior" ]; then
-            for index in $(seq 0 100); do
+            bound=$(jq length <<< '${{ needs.plan.outputs.files }}')
+            for index in $(seq 0 $((bound - 1))); do
               mkdir -p "prior-$index"
               gh run download "$prior" -n "mutants-out-$index" -D "prior-$index" \
                 >/dev/null 2>&1 || rm -rf "prior-$index"
@@ -104,58 +109,87 @@ jobs:
         with:
           path: merged
           pattern: mutants-out-*
-      - name: Merge the shards' outcomes
+      - id: merge
+        name: Merge the shards' outcomes
         run: |
-          python3 - "${{ needs.plan.outputs.files }}" <<'PYEOF'
+          python3 - "${{ needs.plan.outputs.files || '[]' }}" <<'PYEOF'
           import json, os, sys
           files = json.loads(sys.argv[1])
-          merged = {"outcomes": []}
-          missing = []
+          merged: dict = {"outcomes": []}
+          missing: list[str] = []
           for index, path in enumerate(files):
               found = None
-              for candidate in (f"merged/mutants-out-{index}/outcomes.json", f"prior-{index}/outcomes.json"):
-                  if os.path.exists(candidate):
-                      try:
-                          json.load(open(candidate))
-                      except (json.JSONDecodeError, OSError):
-                          continue
-                      found = candidate
-                      break
+              for candidate in (
+                  f"merged/mutants-out-{index}/outcomes.json",
+                  f"prior-{index}/outcomes.json",
+              ):
+                  if not os.path.exists(candidate):
+                      continue
+                  try:
+                      data = json.load(open(candidate))
+                  except (json.JSONDecodeError, OSError):
+                      continue
+                  found = (candidate, data)
+                  break
               if found is None:
                   missing.append(path)
                   continue
-              data = json.load(open(found))
+              _, data = found
               for outcome in data.get("outcomes") or []:
-                  outcome["path"] = path
-                  merged["outcomes"].append(outcome)
+                  if isinstance(outcome, dict):
+                      merged["outcomes"].append(outcome)
               for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
-                  merged[field] = merged.get(field, 0) + (data.get(field) or 0)
+                  value = data.get(field) or 0
+                  if not isinstance(value, int):
+                      value = 0
+                  merged[field] = merged.get(field, 0) + value
+          os.makedirs("merged", exist_ok=True)
           json.dump(merged, open("merged/outcomes.json", "w"))
+          missing_text = "\n".join(missing)
+          open("merged/missing.txt", "w").write(missing_text)
           if missing:
-              print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {', '.join(missing)}")
+              print(f"::warning::{len(missing)} of {len(files)} shards left no outcomes: {missing_text}")
+          print(f"missing={'true' if missing else 'false'}") >> "$GITHUB_OUTPUT"
           PYEOF
       - id: report
         run: |
-          if [ ! -f merged/outcomes.json ]; then
-            echo "::error::no shard produced outcomes — the sweep did not run"
-            exit 1
-          fi
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
             "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             mutants-report.md >>"$GITHUB_OUTPUT"
+          # A partial merge must never read as clean: the issue body names the shards that left
+          # no outcomes, and the missed-count gate below cannot suppress an update on it.
+          if [ -s merged/missing.txt ]; then
+            {
+              echo
+              echo "**Shards with no outcomes** — a runner shutdown or a build failure took them;"
+              echo "a re-dispatch resumes exactly these:"
+              echo '```'
+              cat merged/missing.txt
+              echo '```'
+            } >> mutants-report.md
+          fi
       - id: rolling
-        if: steps.report.outputs.missed != '0'
+        if: steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      - if: steps.report.outputs.missed != '0'
+      - if: steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true'
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
           title: ${{ steps.report.outputs.title }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
+      - name: Retire the rolling issue on a complete clean sweep
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue list --label mutation-testing --state open --limit 20 \
+            --json number --jq '.[].number' | while read -r number; do
+            gh issue close "$number" --reason completed
+          done
