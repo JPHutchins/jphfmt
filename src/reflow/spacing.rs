@@ -185,7 +185,12 @@ fn opens_block(pieces: &[Piece], toks: &[Token], open: usize) -> bool {
     for k in (0..open).rev() {
         match pieces[k].1.text {
             ")" | "]" => depth += 1,
-            "(" | "[" => depth = depth.saturating_sub(1),
+            // An opener at depth zero is the enclosing group's: its interior extends past the
+            // brace, and everything left of it sits at the brace's own statement level. Depth must
+            // floor there, not go negative — a negative depth masks a real `;` or `=` left of the
+            // group, flipping the verdict between the pass that read the author and the pass that
+            // read the layout's own parens.
+            "(" | "[" => depth = (depth - 1).max(0),
             ";" if depth == 0 => return true,
             "=" if depth == 0 => return false,
             _ => {}

@@ -622,6 +622,38 @@ fn a_declarator_after_a_broken_statement_expression_reads_the_same_both_passes()
 }
 
 #[test]
+fn a_paren_group_the_layout_wrote_does_not_mask_the_initializers_equals() {
+    // The layout wraps a labeled brace-list element in its own paren group, and the next pass's
+    // bracket-aware scan read that `(` at depth zero as a group whose interior extends past the
+    // brace — the depth went negative, masking the statement-level `=` and flipping the verdict to
+    // a block, which respaced the element's multiply `A*a` as a declarator `A * a`. The scan now
+    // floors its depth: an opener met at depth zero leaves the scan at statement level.
+    let once = jphfmt::format_with_width("={0:{A*a}?\"\"?}", 1);
+    assert_eq!(
+        once,
+        " = {\n\t(\n\t\t0 :\n\t\t{\n\t\t\tA*a,\n\t\t}?\"\"?\n\t),\n}\n"
+    );
+    assert_eq!(
+        jphfmt::format_with_width(&once, 1),
+        once,
+        "and it is a fixpoint"
+    );
+    // The class members one level deeper: the labeled element's group is the layout's own, so
+    // each width asserts the guard's own claim — the multiply is an initializer element's, kept
+    // tight — by idempotency, the one property the pre-fix tree failed at these widths.
+    for src in ["={0:{A*a}?\"\"?}", "={0:{A*b}?1:2}", "={0:{x*y}?a:b}"] {
+        for width in 1..=32 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "not a fixpoint at {width}: {src:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_multiply_inside_braces_is_left_alone() {
     // An initializer element is an expression, whichever brace holds it — `=`, a compound literal
     // in `return` or in an argument, or a nested list.
