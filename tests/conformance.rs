@@ -1916,11 +1916,12 @@ fn a_depth_zero_chain_is_not_cut_before_an_assignment() {
     // alternated between the two spellings forever.
     //
     // Depth zero is the whole of it, and the name says so because the invariant does not hold one
-    // bracket in: `s = (a | b) = c | d` still moves its break between passes, since nothing about a
-    // depth-zero rule reaches a `|` inside parentheses and `build_bracketed_group` lays that group
-    // out on pass 2 with no idea it sits in a left side. That is #125 — it predates this, `main` at
-    // `7c62ed7` is equally unstable on it, and `(a | b)` is no lvalue so no C program reaches it.
-    // Not asserted here in either direction: pinning today's two-step settling would pin a bug.
+    // bracket in: `s = (a | b) = c | d` moved its break between passes on every main before #122,
+    // since nothing about a depth-zero rule reaches a `|` inside parentheses and `build_bracketed_group`
+    // lays that group out on pass 2 with no idea it sits in a left side. That is #125 — #122's head
+    // gate refuses the double assignment's head as the second-construct class, so the shape is now
+    // laid out on the first pass and pinned by the test below, and `(a | b)` is no lvalue so no C
+    // program reaches it. Not asserted here either way: pinning a two-step settling would pin a bug.
     for (src, width) in [
         ("A''={0/a=A&A}\"\"\" _#\ta0", 1),
         // The same shape without the unterminated literals that reduced it.
@@ -1982,6 +1983,102 @@ fn assert_laid_out(src: &str, width: usize, expected: &str) {
     );
     for line in once.lines() {
         assert!(display_width(line) <= width, "over the limit: {line:?}");
+    }
+}
+
+#[test]
+fn a_parenthesized_chain_in_a_double_assignment_head_is_cut_on_the_first_pass() {
+    // #125: a chain inside parentheses in an assignment's *left* side — the head of the second
+    // `=` — was cut only on the second pass: pass 1 kept `(a | b)` flat, pass 2 broke it, and
+    // only pass 3 was stable. #108's head gate refuses the double assignment's head as the
+    // second-construct class — pass 1's parens would read back as construct two on pass 2 — so
+    // the walk lays the parenthesized chain out on the first pass and every pass agrees. The
+    // issue's own widths and the deeper variants, pinned.
+    for (src, width, expected) in [
+        (
+            "s = (a | b) = c | d;\n",
+            8,
+            "s = (\n\ta |\n\tb\n) = (\n\tc |\n\td\n);\n",
+        ),
+        (
+            // The issue's width 4, same layout as width 8. Exact-output and fixpoint only: its
+            // first line `s = (` is five columns of unbreakable prefix.
+            "s = (a | b) = c | d;\n",
+            4,
+            "s = (\n\ta |\n\tb\n) = (\n\tc |\n\td\n);\n",
+        ),
+        (
+            "s = (a | b) = c | d;\n",
+            12,
+            "s = (\n\ta |\n\tb\n) = c | d;\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(once, expected, "{src:?} at {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "must be a fixpoint: {src:?} at {width}"
+        );
+    }
+    // The one-bracket-deeper member: the walk lays the head's subscript out but the RHS chain
+    // stays flat — its `)] = c | d;` tail is 11 columns at width 8, a breakable line the
+    // paren-head member cuts at the same width. Recorded rather than pinned wide: the refusal's
+    // tail is the same §6 passthrough the head-gate pins record, and a fix that cuts it will
+    // turn this exact pin red, which is the point of pinning it exactly.
+    let subscript_head = "s = x[(a | b)] = c | d;\n";
+    let subscript_layout = "s = x[(\n\ta |\n\tb\n)] = c | d;\n";
+    let once = jphfmt::format_with_width(subscript_head, 8);
+    assert_eq!(once, subscript_layout, "the subscript head at width 8");
+    assert_eq!(
+        jphfmt::format_with_width(&once, 8),
+        once,
+        "and it is a fixpoint"
+    );
+    // The class the issue named, one bracket deeper and with longer operands: each variant is
+    // pinned at one width its own layout satisfies, and all six are asserted stable at every
+    // width 1-32 on the merged gate.
+    for (src, width, expected) in [
+        (
+            "s = ((a | b)) = c | d;\n",
+            12,
+            "s = ((\n\ta |\n\tb\n)) = c | d;\n",
+        ),
+        (
+            "s = (aaaa | bbbb) = cc | dd;\n",
+            12,
+            "s = (\n\taaaa |\n\tbbbb\n) = cc | dd;\n",
+        ),
+        (
+            "s = (a ? b : c) = d | e;\n",
+            12,
+            "s = (\n\ta ? b :\n\tc\n) = d | e;\n",
+        ),
+        (
+            "s = (a | b) = c | d = e | f;\n",
+            16,
+            "s = (\n\ta |\n\tb\n) = c | d = (\n\te |\n\tf\n);\n",
+        ),
+        (
+            "s = (f(x)) = c | d;\n",
+            8,
+            "s = (f(\n\tx\n)) = (\n\tc |\n\td\n);\n",
+        ),
+        (
+            "s = (a | b) + e = c | d;\n",
+            12,
+            "s = (\n\ta |\n\tb\n) + e = (\n\tc |\n\td\n);\n",
+        ),
+    ] {
+        assert_laid_out(src, width, expected);
+        for width in 1..=32 {
+            let once = jphfmt::format_with_width(src, width);
+            assert_eq!(
+                jphfmt::format_with_width(&once, width),
+                once,
+                "{src:?} at {width}"
+            );
+        }
     }
 }
 
