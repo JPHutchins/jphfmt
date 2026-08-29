@@ -129,6 +129,7 @@ jobs:
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
                 >/dev/null 2>&1 \
                 && [ -f "prior-$idx/complete" ] && break
+              rm -rf "prior-$idx"
             done < <(echo "${{ needs.plan.outputs.prior }}")
             if [ ! -f "prior-$idx/complete" ]; then
               rm -rf "prior-$idx"
@@ -144,11 +145,12 @@ jobs:
               >/dev/null 2>&1 \
               || gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
                 >/dev/null 2>&1 \
-              || if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
-                  --jq '.artifacts[].name' 2>/dev/null | grep -qx "mutants-out-$idx"; then
-                rm -rf "merged/mutants-out-$idx"
+              || if names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+                  --jq '.artifacts[].name' 2>/dev/null); then
+                echo "$names" | grep -qx "mutants-out-$idx" \
+                  || rm -rf "merged/mutants-out-$idx"
               else
-                echo "::error::download failed for mutants-out-$idx though the artifact exists"
+                echo "::error::artifacts API failed for mutants-out-$idx"
               fi
           done
       - id: merge
@@ -203,7 +205,7 @@ jobs:
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true'
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

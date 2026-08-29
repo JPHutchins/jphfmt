@@ -372,6 +372,7 @@ def main(argv: tuple[str, ...]) -> int:
 				)
 			print(f"missing={'true' if missing else 'false'}")
 			print(f"empty={'true' if not merged_doc['outcomes'] else 'false'}")
+			print(f"ran={'true' if shards else 'false'}")
 			if not merged_doc["outcomes"]:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
 		case _:
