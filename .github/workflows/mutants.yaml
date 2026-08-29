@@ -69,7 +69,6 @@ jobs:
             mkdir -p prior
             if gh run download "$prior" -n "mutants-out-${{ matrix.index }}" -D prior \
                 >/dev/null 2>&1 \
-              && jq -e 'type == "object"' prior/outcomes.json >/dev/null 2>&1 \
               && [ -f prior/complete ]; then
               echo "shard already analyzed in run $prior — skipping"
               skip=true
@@ -92,9 +91,8 @@ jobs:
         run: |
           rc=0
           cargo mutants --jobs 8 --file "$FILE" --output mutants.out || rc=$?
-          # Exit 2 (missed mutants) is a completed sweep; 4 and 70 abort it. The marker is what
-          # the skip gate and the upload check read, so an aborted sweep leaves no artifact.
-          { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; } && touch mutants.out/complete
+          { [ "$rc" -eq 0 ] || jq -e 'type == "object" and .total_mutants > 0' mutants.out/outcomes.json >/dev/null 2>&1; } \
+            && touch mutants.out/complete
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
         uses: actions/upload-artifact@v7
         with:
@@ -127,10 +125,9 @@ jobs:
             while read -r prior; do
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
                 >/dev/null 2>&1 \
-                && jq -e 'type == "object"' "prior-$idx/outcomes.json" >/dev/null 2>&1 \
                 && [ -f "prior-$idx/complete" ] && break
             done < <(echo "${{ needs.plan.outputs.prior }}")
-            if ! jq -e 'type == "object"' "prior-$idx/outcomes.json" >/dev/null 2>&1; then
+            if [ ! -f "prior-$idx/complete" ]; then
               rm -rf "prior-$idx"
             fi
           done

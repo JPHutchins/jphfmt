@@ -258,8 +258,8 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             raise SystemExit(f"shard cell malformed: {shard!r}")
         data = None
         for candidate in (
-            Path(f"{merged_root}/mutants-out-{index}/outcomes.json"),
-            Path(f"{prior_root}-{index}/outcomes.json"),
+            Path(f"{merged_root}/mutants-out-{index}/mutants.out/outcomes.json"),
+            Path(f"{prior_root}-{index}/mutants.out/outcomes.json"),
         ):
             if not candidate.exists():
                 continue
@@ -269,6 +269,10 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             except SystemExit:
                 continue
         if data is None:
+            if (
+                Path(f"{merged_root}/mutants-out-{index}") / "complete"
+            ).exists() or (Path(f"{prior_root}-{index}") / "complete").exists():
+                continue
             missing.append(file)
             continue
         try:
