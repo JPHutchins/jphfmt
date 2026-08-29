@@ -90,6 +90,8 @@ jobs:
         env:
           FILE: ${{ matrix.file }}
         run: |
+          set -o pipefail
+          mkdir -p mutants.out
           rc=0
           cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
           { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -q 'mutants tested in' mutants.out/sweep.log; } \
@@ -161,6 +163,11 @@ jobs:
       - id: report
         run: |
           if [ -f merged/empty.txt ]; then
+            if [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+              title="Mutation sweep: no shard produced outcomes"
+            else
+              title="Mutation sweep: every shard completed with zero mutants"
+            fi
             {
               echo "The mutation sweep ran no shard: every shard failed or left no outcomes."
               echo
@@ -170,7 +177,7 @@ jobs:
               echo "A re-dispatch resumes the shards that died."
             } > mutants-report.md
             echo "missed=0" >>"$GITHUB_OUTPUT"
-            echo "title=Mutation sweep: every shard completed with zero mutants" >>"$GITHUB_OUTPUT"
+            echo "title=$title" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
