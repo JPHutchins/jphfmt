@@ -241,7 +241,7 @@ def shard_map(shards: list[Any]) -> str:
     '- `mutants-out-0` = `src/doc.rs`'
     """
     return "\n".join(
-        f"- `mutants-out-{one.get("index")}` = `{one.get("file")}`"
+        f"- `mutants-out-{one.get('index')}` = `{one.get('file')}`"
         for one in shards
         if isinstance(one, dict)
     )
@@ -256,11 +256,12 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
         file, index = shard.get("file"), shard.get("index")
         if not isinstance(file, str) or not isinstance(index, str):
             raise SystemExit(f"shard cell malformed: {shard!r}")
-        data = None
-        for candidate in (
+        candidates = (
             Path(f"{merged_root}/mutants-out-{index}/mutants.out/outcomes.json"),
             Path(f"{prior_root}-{index}/mutants.out/outcomes.json"),
-        ):
+        )
+        data = None
+        for candidate in candidates:
             if not candidate.exists():
                 continue
             try:
