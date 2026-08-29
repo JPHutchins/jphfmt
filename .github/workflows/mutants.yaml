@@ -67,6 +67,7 @@ jobs:
           skip=false
           while read -r prior; do
             mkdir -p prior
+            [ -n "$prior" ] || continue
             if gh run download "$prior" -n "mutants-out-${{ matrix.index }}" -D prior \
                 >/dev/null 2>&1 \
               && [ -f prior/complete ]; then
@@ -100,8 +101,9 @@ jobs:
           # immutable without this; same-SHA same-file outcomes are identical content either way.
           overwrite: true
           # The whole directory: outcomes.json plus each survivor's log and diff, which the
-          # report's footer points readers at. The glob roots the contents at the artifact root,
-          # so every downloader reads outcomes.json flat.
+          # report's footer points readers at. The artifact holds outcomes.json and the logs one
+          # level deep under mutants.out/, while the complete marker extracts flat — the readers
+          # use each path the dispatches verified.
           name: mutants-out-${{ matrix.index }}
           path: mutants.out/*
 
@@ -123,6 +125,7 @@ jobs:
           for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
             mkdir -p "prior-$idx"
             while read -r prior; do
+              [ -n "$prior" ] || continue
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
                 >/dev/null 2>&1 \
                 && [ -f "prior-$idx/complete" ] && break
@@ -142,8 +145,10 @@ jobs:
               || gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
                 >/dev/null 2>&1 \
               || if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
-                  --jq '.[].name' 2>/dev/null | grep -qx "mutants-out-$idx"; then
+                  --jq '.artifacts[].name' 2>/dev/null | grep -qx "mutants-out-$idx"; then
                 rm -rf "merged/mutants-out-$idx"
+              else
+                echo "::error::download failed for mutants-out-$idx though the artifact exists"
               fi
           done
       - id: merge
@@ -163,7 +168,7 @@ jobs:
               echo "A re-dispatch resumes the shards that died."
             } > mutants-report.md
             echo "missed=0" >>"$GITHUB_OUTPUT"
-            echo "title=Mutation sweep: no shard produced outcomes" >>"$GITHUB_OUTPUT"
+            echo "title=Mutation sweep: every shard completed with zero mutants" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
@@ -198,7 +203,7 @@ jobs:
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.empty != 'true'
+        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

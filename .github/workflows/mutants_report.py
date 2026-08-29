@@ -269,9 +269,10 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             except SystemExit:
                 continue
         if data is None:
-            if (
-                Path(f"{merged_root}/mutants-out-{index}") / "complete"
-            ).exists() or (Path(f"{prior_root}-{index}") / "complete").exists():
+            marker = (Path(f"{merged_root}/mutants-out-{index}") / "complete").exists() or (
+                Path(f"{prior_root}-{index}") / "complete"
+            ).exists()
+            if marker and not any(candidate.exists() for candidate in candidates):
                 continue
             missing.append(file)
             continue
@@ -299,6 +300,12 @@ def body(
 	found = survivors(outcomes)
 	commit = f"[`{sha[:7]}`](https://github.com/{repo}/tree/{sha})"
 	head = (f"## Mutation testing — {commit}", "", summary_table(tally), "")
+	map_lines = f"\n{shard_map(shards)}\n" if shards else ""
+	footer = (
+		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<index>` "
+		f"artifacts of [the run]({run}) and of the prior completed runs whose shards it resumed; "
+		"the issue body names any shard that left no outcomes.</sub>\n" + map_lines
+	)
 	if not found:
 		claim = (
 			"Every mutant was caught. Nothing to triage."
@@ -307,18 +314,12 @@ def body(
 			"for any of them — read the artifact rather than this, and check whether "
 			"cargo-mutants' output format moved."
 		)
-		return "\n".join((*head, claim)) + "\n"
+		return "\n".join((*head, claim, "", footer)) + "\n"
 	preamble = (
 		*head,
 		f"{len(found)} mutants survived the suite — the tests pass with the change applied, so "
 		f"nothing pins that code down. Every entry links to its line at {commit}.",
 		"",
-	)
-	map_lines = f"\n{shard_map(shards)}\n" if shards else ""
-	footer = (
-		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<index>` "
-		f"artifacts of [the run]({run}) and of the prior completed runs whose shards it resumed; "
-		"the issue body names any shard that left no outcomes.</sub>\n" + map_lines
 	)
 	note = (
 		f"<sub>{{}} further survivors are omitted to fit GitHub's issue body limit; the artifacts "
