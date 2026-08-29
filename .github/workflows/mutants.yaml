@@ -149,8 +149,11 @@ jobs:
                 >/dev/null 2>&1 \
               || if names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
                   --jq '.artifacts[].name' 2>/dev/null); then
-                echo "$names" | grep -qx "mutants-out-$idx" \
-                  || rm -rf "merged/mutants-out-$idx"
+                if echo "$names" | grep -qx "mutants-out-$idx"; then
+                  echo "::error::download failed for mutants-out-$idx though the artifact exists"
+                else
+                  rm -rf "merged/mutants-out-$idx"
+                fi
               else
                 echo "::error::artifacts API failed for mutants-out-$idx"
               fi
@@ -168,8 +171,13 @@ jobs:
             else
               title="Mutation sweep: every shard completed with zero mutants"
             fi
+            if [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+              body="The mutation sweep ran no shard: every shard failed or left no outcomes."
+            else
+              body="Every shard completed and none found a mutant."
+            fi
             {
-              echo "The mutation sweep ran no shard: every shard failed or left no outcomes."
+              echo "$body"
               echo
               echo '```'
               cat merged/missing.txt
@@ -208,7 +216,7 @@ jobs:
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.missing == 'true' && ' (partial shards)' || '' }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.missing == 'true' && steps.merge.outputs.empty != 'true' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep

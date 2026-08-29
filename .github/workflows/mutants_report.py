@@ -247,6 +247,31 @@ def shard_map(shards: list[Any]) -> str:
     )
 
 
+def parsed_summary(text: str) -> dict[str, int] | None:
+    """The counts cargo-mutants' summary line carries, the only record a timeout-bearing
+    sweep leaves when it never writes outcomes.json.
+
+    >>> parsed_summary("612 mutants tested in 4h: 55 missed, 526 caught, 18 unviable, 13 timeouts")
+    {'total_mutants': 612, 'missed': 55, 'caught': 526, 'unviable': 18, 'timeout': 13}
+    >>> parsed_summary("Found 0 mutants to test") is None
+    True
+    """
+    matched = re.search(
+        r"(\d+) mutants tested in [^:]*: (\d+) missed, (\d+) caught, (\d+) unviable, (\d+) timeouts",
+        text,
+    )
+    if not matched:
+        return None
+    total, missed, caught, unviable, timeout = (int(one) for one in matched.groups())
+    return {
+        "total_mutants": total,
+        "missed": missed,
+        "caught": caught,
+        "unviable": unviable,
+        "timeout": timeout,
+    }
+
+
 def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[Json, list[str]]:
     """One merged outcomes document and the shard files that left no readable one."""
     outcomes: list[Any] = []
@@ -270,21 +295,40 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             except SystemExit:
                 continue
         if data is None:
-            marker = (Path(f"{merged_root}/mutants-out-{index}") / "complete").exists() or (
-                Path(f"{prior_root}-{index}") / "complete"
-            ).exists()
-            if marker and not any(candidate.exists() for candidate in candidates):
-                continue
-            missing.append(file)
+            for log in (
+                Path(f"{merged_root}/mutants-out-{index}/mutants.out/sweep.log"),
+                Path(f"{prior_root}-{index}/mutants.out/sweep.log"),
+            ):
+                if not log.exists():
+                    continue
+                try:
+                    summary = parsed_summary(log.read_text(encoding="utf-8"))
+                except OSError:
+                    summary = None
+                if summary is not None:
+                    for field, value in summary.items():
+                        totals[field] = totals.get(field, 0) + value
+                    break
+            else:
+                marker = (Path(f"{merged_root}/mutants-out-{index}") / "complete").exists() or (
+                    Path(f"{prior_root}-{index}") / "complete"
+                ).exists()
+                if marker and not any(candidate.exists() for candidate in candidates):
+                    continue
+                missing.append(file)
             continue
         try:
-            outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
-            for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
-                value = integer(data.get(field, 0))
+            fields = {
+                field: integer(data.get(field, 0))
+                for field in ("total_mutants", "caught", "missed", "unviable", "timeout")
+            }
+            for field, value in fields.items():
                 if value is None:
                     raise SystemExit(
                         f"{index}: {field}: expected a whole number, got {data.get(field)!r}"
                     )
+            outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
+            for field, value in fields.items():
                 totals[field] = totals.get(field, 0) + value
         except SystemExit:
             missing.append(file)
@@ -370,9 +414,10 @@ def main(argv: tuple[str, ...]) -> int:
 					file=sys.stderr,
 				)
 			print(f"missing={'true' if missing else 'false'}")
-			print(f"empty={'true' if not merged_doc['outcomes'] else 'false'}")
+			empty = not merged_doc["outcomes"] and merged_doc.get("total_mutants", 0) == 0
+			print(f"empty={'true' if empty else 'false'}")
 			print(f"ran={'true' if shards else 'false'}")
-			if not merged_doc["outcomes"]:
+			if empty:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
 		case _:
 			print(__doc__)
