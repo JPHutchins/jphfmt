@@ -318,15 +318,14 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
                 missing.append(file)
             continue
         try:
-            fields = {
-                field: integer(data.get(field, 0))
-                for field in ("total_mutants", "caught", "missed", "unviable", "timeout")
-            }
-            for field, value in fields.items():
+            fields: dict[str, int] = {}
+            for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
+                value = integer(data.get(field, 0))
                 if value is None:
                     raise SystemExit(
                         f"{index}: {field}: expected a whole number, got {data.get(field)!r}"
                     )
+                fields[field] = value
             outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
             for field, value in fields.items():
                 totals[field] = totals.get(field, 0) + value
