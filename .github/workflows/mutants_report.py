@@ -358,9 +358,8 @@ def main(argv: tuple[str, ...]) -> int:
 			print(f"missed={tally.missed}")
 			print(f"title={title(tally, sha)}")
 		case ("merge", shards_json, merged_root, prior_root, out, missing_txt, empty_txt):
-			merged_doc, missing = merge_shards(
-				json.loads(shards_json), merged_root, prior_root
-			)
+			shards = json.loads(shards_json)
+			merged_doc, missing = merge_shards(shards, merged_root, prior_root)
 			destination = Path(out)
 			destination.parent.mkdir(parents=True, exist_ok=True)
 			destination.write_text(json.dumps(merged_doc), encoding="utf-8")
