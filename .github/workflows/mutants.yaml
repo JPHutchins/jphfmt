@@ -125,12 +125,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            if [ -f "merged/mutants-out-$idx/mutants.out/outcomes.json" ] \
+                || [ -f "merged/mutants-out-$idx/outcomes.json" ]; then
+              continue
+            fi
             mkdir -p "prior-$idx"
             while read -r prior; do
               [ -n "$prior" ] || continue
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
                 >/dev/null 2>&1 \
-                && [ -f "prior-$idx/complete" ] && break
+                || gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
+                  >/dev/null 2>&1
+              [ -f "prior-$idx/complete" ] && break
               rm -rf "prior-$idx"
             done < <(echo "${{ needs.plan.outputs.prior }}")
             if [ ! -f "prior-$idx/complete" ]; then
@@ -171,7 +177,9 @@ jobs:
             else
               title="Mutation sweep: every shard completed with zero mutants"
             fi
-            if [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+            if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
+              body="The sweep did not run: the plan left no shard jobs."
+            elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
               body="The mutation sweep ran no shard: every shard failed or left no outcomes."
             else
               body="Every shard completed and none found a mutant."

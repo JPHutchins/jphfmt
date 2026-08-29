@@ -273,7 +273,31 @@ def parsed_summary(text: str) -> dict[str, int] | None:
 
 
 def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[Json, list[str]]:
-    """One merged outcomes document and the shard files that left no readable one."""
+    """One merged outcomes document and the shard files that left no readable one.
+
+    The four branch shapes, exercised end to end in a temp directory:
+
+    >>> import tempfile
+    >>> tmp = tempfile.mkdtemp()
+    >>> root = Path(tmp)
+    >>> _ = (root / "merged/mutants-out-0/mutants.out").mkdir(parents=True)
+    >>> _ = (root / "merged/mutants-out-0/mutants.out/outcomes.json").write_text('{"total_mutants": 5, "caught": 3, "outcomes": [{"summary": "CaughtMutant"}]}', encoding="utf-8")
+    >>> _ = (root / "merged/mutants-out-0/complete").touch()
+    >>> _ = (root / "merged/mutants-out-1/mutants.out").mkdir(parents=True)
+    >>> _ = (root / "merged/mutants-out-1/mutants.out/outcomes.json").write_text("{corrupt", encoding="utf-8")
+    >>> _ = (root / "merged/mutants-out-2/mutants.out").mkdir(parents=True)
+    >>> _ = (root / "merged/mutants-out-2/mutants.out/sweep.log").write_text("612 mutants tested in 4h: 55 missed, 526 caught, 18 unviable, 13 timeouts", encoding="utf-8")
+    >>> _ = (root / "merged/mutants-out-2/complete").touch()
+    >>> _ = (root / "merged/mutants-out-3/mutants.out").mkdir(parents=True)
+    >>> _ = (root / "merged/mutants-out-3/mutants.out/sweep.log").write_text("Found 0 mutants to test", encoding="utf-8")
+    >>> _ = (root / "merged/mutants-out-3/complete").touch()
+    >>> cells = [{"file": "a", "index": str(i)} for i in range(4)]
+    >>> merge_shards(cells, str(root / "merged"), str(root / "prior"))
+    ({'outcomes': [{'summary': 'CaughtMutant'}], 'total_mutants': 617, 'caught': 529, 'missed': 55, 'unviable': 18, 'timeout': 13}, ['a'])
+
+    The corrupt outcomes.json is named missing, the summary-only shard contributes its
+    counts, and the zero-mutant shard contributes nothing.
+    """
     outcomes: list[Any] = []
     totals: dict[str, int] = {}
     missing: list[str] = []
@@ -283,7 +307,9 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             raise SystemExit(f"shard cell malformed: {shard!r}")
         candidates = (
             Path(f"{merged_root}/mutants-out-{index}/mutants.out/outcomes.json"),
+            Path(f"{merged_root}/mutants-out-{index}/outcomes.json"),
             Path(f"{prior_root}-{index}/mutants.out/outcomes.json"),
+            Path(f"{prior_root}-{index}/outcomes.json"),
         )
         data = None
         for candidate in candidates:
@@ -295,43 +321,40 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             except SystemExit:
                 continue
         if data is None:
-            for log in (
+            summary = None
+            logs = (
                 Path(f"{merged_root}/mutants-out-{index}/mutants.out/sweep.log"),
+                Path(f"{merged_root}/mutants-out-{index}/sweep.log"),
                 Path(f"{prior_root}-{index}/mutants.out/sweep.log"),
-            ):
+                Path(f"{prior_root}-{index}/sweep.log"),
+            )
+            for log in logs:
                 if not log.exists():
                     continue
                 try:
-                    summary = parsed_summary(log.read_text(encoding="utf-8"))
-                except OSError:
-                    summary = None
-                if summary is not None:
-                    for field, value in summary.items():
-                        totals[field] = totals.get(field, 0) + value
-                    break
-            else:
-                marker = (Path(f"{merged_root}/mutants-out-{index}") / "complete").exists() or (
-                    Path(f"{prior_root}-{index}") / "complete"
-                ).exists()
-                if marker and not any(candidate.exists() for candidate in candidates):
+                    text = log.read_text(encoding="utf-8")
+                except (OSError, ValueError):
                     continue
+                summary = parsed_summary(text)
+                if summary is None and "Found 0 mutants to test" in text:
+                    summary = {}
+                break
+            if summary is None:
                 missing.append(file)
+                continue
+            for field, value in summary.items():
+                totals[field] = totals.get(field, 0) + value
             continue
         try:
-            fields: dict[str, int] = {}
-            for field in ("total_mutants", "caught", "missed", "unviable", "timeout"):
-                value = integer(data.get(field, 0))
-                if value is None:
-                    raise SystemExit(
-                        f"{index}: {field}: expected a whole number, got {data.get(field)!r}"
-                    )
-                fields[field] = value
+            tallied = counts(data)
             outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
-            for field, value in fields.items():
-                totals[field] = totals.get(field, 0) + value
-        except SystemExit:
-            missing.append(file)
+            totals["total_mutants"] = totals.get("total_mutants", 0) + tallied.tested
+            for field in ("caught", "missed", "unviable", "timeout"):
+                totals[field] = totals.get(field, 0) + getattr(tallied, field)
+        except SystemExit as err:
+            missing.append(f"{file} ({err})")
     return {"outcomes": outcomes, **totals}, missing
+
 
 def body(
     outcomes: Json,
