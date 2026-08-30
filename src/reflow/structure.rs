@@ -14,10 +14,10 @@ use super::scope::scoped;
 use super::tokens::{
     assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
     directive_end, element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia,
-    holds_unsafe_hash, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
-    is_comment, is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia,
-    next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia, prev_significant, spans_lines,
-    split_brace_line_comment, statement_end,
+    holds_hash_fragment, holds_unsafe_hash, is_backslash, is_balanced, is_call_head,
+    is_call_head_pair, is_chain_break, is_comment, is_control_keyword, is_trivia, match_brace,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
+    prev_significant, spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -75,14 +75,7 @@ fn emit_tokens(
             continue;
         }
 
-        if t.kind == TokenKind::Ident
-            && is_control_keyword(t.text)
-            && let Some(open) = next_paren(toks, i)
-            && let Some(close) = match_bracket(toks, open)
-            && !contains_comment(&toks[open + 1..close])
-            && !holds_unsafe_hash(&toks[open + 1..close], in_define_body)
-            && is_balanced(&toks[open + 1..close])
-        {
+        if let Some((open, close)) = control_pair(toks, i, in_define_body) {
             // §2.5: control keywords take exactly one space before `(` (`if (`, not `if(`).
             emit_str(out, col, t.text);
             emit_str(out, col, " ");
@@ -92,7 +85,13 @@ fn emit_tokens(
             } else {
                 build_cond_doc(inner)
             };
-            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+            emit_doc(
+                &doc,
+                trailing_reserved(toks, close + 1, in_define_body),
+                out,
+                col,
+                width,
+            );
             i = close + 1;
             continue;
         }
@@ -104,57 +103,64 @@ fn emit_tokens(
             for tok in &toks[i..brace] {
                 emit_str(out, col, tok.text);
             }
-            i = emit_brace(toks, brace, true, out, col, width);
+            i = emit_brace(toks, brace, true, in_define_body, out, col, width);
             continue;
         }
 
-        if let Some(open) = next_nontrivia(toks, i + 1).filter(|&k| toks[k].text == "(")
-            && is_call_head_pair(toks, open)
-            && let Some(close) = match_bracket(toks, open)
-        {
-            let inner = &toks[open + 1..close];
-            if !contains_comment(inner)
-                && !holds_unsafe_hash(inner, in_define_body)
-                && is_balanced(inner)
-                && !has_middle_newline(inner)
-            {
+        if let Some(open) = next_nontrivia(toks, i + 1).filter(|&k| toks[k].text == "(") {
+            if let Some((_, close)) = tight_call_pair(toks, open, in_define_body) {
                 // The pair-tolerant reading: trivia between the callee and `(` is dropped, and the
                 // tight `f(` this writes is the form `space_call_heads` canonicalizes — the same
                 // join `build_expr_doc`'s call arm makes for nested calls.
+                let inner = &toks[open + 1..close];
                 emit_str(out, col, t.text);
                 let doc = build_call_body(inner, Fit::Measured);
-                emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+                emit_doc(
+                    &doc,
+                    trailing_reserved(toks, close + 1, in_define_body),
+                    out,
+                    col,
+                    width,
+                );
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
                 i = close + 1;
                 continue;
             }
-            if !contains_comment(inner) && is_balanced(inner) && has_middle_newline(inner) {
+            if let Some((_, close)) = forced_call_pair(toks, open) {
+                // The re-laid call is forced broken anyway — a magic trailing comma — where the
+                // passthrough's text form loses the force: the enclosing group the call sits in
+                // then measures a doc without the ForceBreak and joins what the previous pass
+                // broke, two passes for one line (#108's draw). A forced break has no fits
+                // decision to flip, so the re-laid form is the one every pass reaches.
+                let inner = &toks[open + 1..close];
+                emit_str(out, col, t.text);
+                let doc = build_call_body(inner, Fit::Measured);
+                emit_doc(
+                    &doc,
+                    trailing_reserved(toks, close + 1, in_define_body),
+                    out,
+                    col,
+                    width,
+                );
+                pending_func_def =
+                    next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
+                i = close + 1;
+                continue;
+            }
+            if let Some(close) = match_bracket(toks, open)
+                && is_call_head_pair(toks, open)
+                && !contains_comment(&toks[open + 1..close])
+                && is_balanced(&toks[open + 1..close])
+                && has_middle_newline(&toks[open + 1..close])
+            {
                 // The whole call is passed through verbatim: skip past `close` so nested calls
                 // inside the args are not re-entered and reflowed. Reflowing them would strip
                 // their intra-arg newlines, flipping this call's fits/explode decision on the
                 // next pass and breaking idempotency. No edge pad: `space_equals` runs first and
                 // pre-spaces every same-line `=` edge, so this verbatim cannot write the tight one.
-                //
-                // Unless the re-laid call would be forced broken anyway — a magic trailing comma
-                // — where the passthrough's text form loses the force: the enclosing group the
-                // call sits in then measures a doc without the ForceBreak and joins what the
-                // previous pass broke, two passes for one line (#108's draw). A forced break has
-                // no fits decision to flip, so the re-laid form is the one every pass reaches. A
-                // `#` or `##` fragment in the arguments keeps the verbatim — its lines are not
-                // the layout's to own, the same guard the laid arm carries.
-                let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
-                if !holds_hash {
-                    let doc = build_call_body(inner, Fit::Measured);
-                    if holds_forced_break(&doc) {
-                        emit_str(out, col, t.text);
-                        emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
-                        pending_func_def =
-                            next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                        i = close + 1;
-                        continue;
-                    }
-                }
+                // A `#` or `##` fragment in the arguments keeps the verbatim — its lines are not
+                // the layout's to own, the same guard the laid arms carry.
                 for tok in &toks[i..=close] {
                     emit_str(out, col, tok.text);
                 }
@@ -194,7 +200,7 @@ fn emit_tokens(
             && !opens_definition_body(toks, i)
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, out, col, width);
+            i = emit_brace(toks, i, false, in_define_body, out, col, width);
             continue;
         }
 
@@ -211,7 +217,7 @@ fn emit_tokens(
             && !contains_comment(&toks[paren..i])
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, out, col, width);
+            i = emit_brace(toks, i, false, in_define_body, out, col, width);
             continue;
         }
 
@@ -233,7 +239,13 @@ fn emit_tokens(
             && !holds_unsafe_hash(&toks[i + 1..close], in_define_body)
             && let Some(doc) = build_bracketed_group(&toks[i + 1..close], bracketing)
         {
-            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+            emit_doc(
+                &doc,
+                trailing_reserved(toks, close + 1, in_define_body),
+                out,
+                col,
+                width,
+            );
             i = close + 1;
             continue;
         }
@@ -671,6 +683,7 @@ fn emit_brace(
     toks: &[Token],
     open: usize,
     padded: bool,
+    in_define_body: bool,
     out: &mut String,
     col: &mut usize,
     width: usize,
@@ -694,7 +707,13 @@ fn emit_brace(
         return close + 1;
     }
     let doc = build_brace_doc(inner, padded);
-    emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+    emit_doc(
+        &doc,
+        trailing_reserved(toks, close + 1, in_define_body),
+        out,
+        col,
+        width,
+    );
     close + 1
 }
 
@@ -816,9 +835,9 @@ fn last_nonspace_char(out: &str) -> Option<char> {
 /// past it can itself break onto later lines — making the measure stable across passes (a chained
 /// `f(x)->g(...)` reserves only `->g(`, not `g`'s arguments), which keeps formatting idempotent.
 /// Comments are ignored so a trailing comment never forces a break.
-/// Whether the reserve's span ends at `j` — the same three stops [`trailing_reserved`]'s loop makes:
-/// a line break, a bracket or a `;`. Comments are not stops, and neither is a same-line comment's
-/// own text.
+/// Whether the reserve's span ends at `j` — the same stops [`trailing_reserved`]'s loop makes: a
+/// bracket, a `;`, or a line break the attach arms do not close. Comments are not stops, and
+/// neither is a same-line comment's own text.
 fn ends_reserve(toks: &[Token], j: usize) -> bool {
     let t = &toks[j];
     match t.kind {
@@ -829,7 +848,51 @@ fn ends_reserve(toks: &[Token], j: usize) -> bool {
     }
 }
 
-fn trailing_reserved(toks: &[Token], from: usize) -> usize {
+/// The `(open, close)` pair the control arm attaches, when it attaches: a control keyword whose `(`
+/// follows across trivia with a balanced, comment-free, hash-free header. The walk's arm and the
+/// reserve's newline prediction share this one predicate, so the two cannot disagree.
+fn control_pair(toks: &[Token], i: usize, in_define_body: bool) -> Option<(usize, usize)> {
+    let open = next_paren(toks, i)?;
+    let close = match_bracket(toks, open)?;
+    let inner = &toks[open + 1..close];
+    (toks[i].kind == TokenKind::Ident
+        && is_control_keyword(toks[i].text)
+        && !contains_comment(inner)
+        && !holds_unsafe_hash(inner, in_define_body)
+        && is_balanced(inner))
+    .then_some((open, close))
+}
+
+/// The `(open, close)` pair the call arm attaches tightly, when it attaches: the callee-ident pair
+/// with a balanced, comment-free, hash-free, single-line argument span. Shared with the reserve's
+/// newline prediction, so the two cannot disagree.
+fn tight_call_pair(toks: &[Token], open: usize, in_define_body: bool) -> Option<(usize, usize)> {
+    let close = match_bracket(toks, open)?;
+    let inner = &toks[open + 1..close];
+    (is_call_head_pair(toks, open)
+        && !contains_comment(inner)
+        && !holds_unsafe_hash(inner, in_define_body)
+        && is_balanced(inner)
+        && !has_middle_newline(inner))
+    .then_some((open, close))
+}
+
+/// The `(open, close)` pair the call arm re-lays forced-broken, when it does: a balanced,
+/// comment-free argument span whose breaks the magic trailing comma forces, and no hash fragment.
+/// Shared with the reserve's newline prediction, so the two cannot disagree.
+fn forced_call_pair(toks: &[Token], open: usize) -> Option<(usize, usize)> {
+    let close = match_bracket(toks, open)?;
+    let inner = &toks[open + 1..close];
+    (is_call_head_pair(toks, open)
+        && !contains_comment(inner)
+        && is_balanced(inner)
+        && has_middle_newline(inner)
+        && !holds_hash_fragment(inner)
+        && holds_forced_break(&build_call_body(inner, Fit::Measured)))
+    .then_some((open, close))
+}
+
+fn trailing_reserved(toks: &[Token], from: usize, in_define_body: bool) -> usize {
     // `pending` holds the width of a whitespace run: it counts only once something follows it, since
     // whitespace ending the line never reaches the output — reserving for it would measure a line
     // this pass is about to shorten, and reach a different verdict than the next pass does.
@@ -848,7 +911,11 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             _ => head,
         })
         .map_or(0, |j| j + 1);
+    let mut skip_until = None;
     for (j, t) in toks.iter().enumerate().skip(from) {
+        if skip_until.is_some_and(|k| j < k) {
+            continue;
+        }
         // A chain breaks after its operator as a bracket group breaks after its bracket: what
         // follows can land on a later line, so its flat width is not this construct's to reserve —
         // and once it has broken, the next pass measures a shorter run and decides differently.
@@ -856,7 +923,31 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             return width + pending + display_width(t.text);
         }
         let counted = match t.kind {
-            TokenKind::Newline => break,
+            TokenKind::Newline => {
+                // The walk's control and call arms attach across the gap, dropping it: the
+                // reserve measures the attached form the next pass will see, or the two passes'
+                // reserves differ by the attach's width and a fits/explode verdict flips on the
+                // pass that attaches (#146). `pending` becomes the space the attach writes —
+                // one column for a control header's `if (`, none for a call's tight `a(` — and
+                // the gap's whitespace is skipped, since the attach drops it.
+                let prev = prev_nontrivia(toks, j);
+                if let Some(open) = next_nontrivia(toks, j + 1) {
+                    if prev.is_some_and(|k| control_pair(toks, k, in_define_body).is_some()) {
+                        pending = 1;
+                        skip_until = Some(open);
+                        continue;
+                    }
+                    if toks[open].text == "("
+                        && (tight_call_pair(toks, open, in_define_body).is_some()
+                            || forced_call_pair(toks, open).is_some())
+                    {
+                        pending = 0;
+                        skip_until = Some(open);
+                        continue;
+                    }
+                }
+                break;
+            }
             TokenKind::LineComment | TokenKind::BlockComment => continue,
             // Nothing past a bracket or a `;` shares this construct's fate: anything past the
             // bracket can break onto a later line, and the `;` ends the statement.
@@ -965,36 +1056,91 @@ mod tests {
     #[test]
     fn trailing_reserved_counts_a_tab_as_tab_width() {
         let toks = [tok(TokenKind::Unknown, "a\tb"), tok(TokenKind::Punct, ";")];
-        assert_eq!(trailing_reserved(&toks, 0), 1 + TAB_WIDTH + 1 + 1);
+        assert_eq!(trailing_reserved(&toks, 0, false), 1 + TAB_WIDTH + 1 + 1);
     }
 
     #[test]
     fn trailing_reserved_stops_at_newline() {
         let toks = [tok(TokenKind::Newline, "\n"), tok(TokenKind::Punct, ";")];
-        assert_eq!(trailing_reserved(&toks, 0), 0);
+        assert_eq!(trailing_reserved(&toks, 0, false), 0);
+    }
+
+    #[test]
+    fn trailing_reserved_measures_the_call_head_across_a_newline() {
+        // #146: the walk's call arm attaches `a(` across the newline, so the reserve measures the
+        // attached form — `a` and the `(` — the same width the next pass's token stream reserves.
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Newline, "\n"),
+            tok(TokenKind::Punct, "("),
+            tok(TokenKind::Punct, ")"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0, false), 2);
+    }
+
+    #[test]
+    fn trailing_reserved_drops_the_gap_the_attach_drops() {
+        // The attach skips every token between the callee and `(`, so the gap's indentation is not
+        // reserved — `a\n (` measures the attached `a(` exactly.
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Newline, "\n"),
+            tok(TokenKind::Whitespace, " "),
+            tok(TokenKind::Punct, "("),
+            tok(TokenKind::Punct, ")"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0, false), 2);
+    }
+
+    #[test]
+    fn trailing_reserved_measures_a_control_head_across_a_newline() {
+        // The control arm attaches `if (` across the newline — the reserve counts the keyword,
+        // the one space the arm writes, and the `(`.
+        let toks = [
+            tok(TokenKind::Ident, "if"),
+            tok(TokenKind::Newline, "\n"),
+            tok(TokenKind::Punct, "("),
+            tok(TokenKind::Ident, "x"),
+            tok(TokenKind::Punct, ")"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0, false), 2 + 1 + 1);
+    }
+
+    #[test]
+    fn trailing_reserved_stops_at_a_newline_the_walk_keeps() {
+        // A comment in the arguments refuses the attach (the walk passes the call through
+        // verbatim), so the newline is the stop it always was.
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Newline, "\n"),
+            tok(TokenKind::Punct, "("),
+            tok(TokenKind::BlockComment, "/*c*/"),
+            tok(TokenKind::Punct, ")"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0, false), 1);
     }
 
     #[test]
     fn trailing_reserved_stops_at_the_statement_end() {
         // The `;` counts (1) and ends the reserve: what follows it is another statement's.
         let toks = [tok(TokenKind::Punct, ";"), tok(TokenKind::Punct, "(")];
-        assert_eq!(trailing_reserved(&toks, 0), 1);
+        assert_eq!(trailing_reserved(&toks, 0, false), 1);
     }
 
     #[test]
     fn trailing_reserved_counts_punct_then_stops_at_bracket() {
         // ` {` of a function body: the space and brace count, and the brace stops the reserve.
         let toks = [tok(TokenKind::Whitespace, " "), tok(TokenKind::Punct, "{")];
-        assert_eq!(trailing_reserved(&toks, 0), 2);
+        assert_eq!(trailing_reserved(&toks, 0, false), 2);
     }
 
     #[test]
     fn trailing_reserved_does_not_count_the_last_tokens_trailing_space() {
         let last = [tok(TokenKind::Unknown, "'x ")];
-        assert_eq!(trailing_reserved(&last, 0), display_width("'x"));
+        assert_eq!(trailing_reserved(&last, 0, false), display_width("'x"));
         // The same whitespace in a token that is not the last reaches the output, and counts.
         let inner = [tok(TokenKind::Unknown, "'x "), tok(TokenKind::Ident, "y")];
-        assert_eq!(trailing_reserved(&inner, 0), display_width("'x y"));
+        assert_eq!(trailing_reserved(&inner, 0, false), display_width("'x y"));
     }
 
     #[test]
@@ -1003,7 +1149,7 @@ mod tests {
             tok(TokenKind::LineComment, "// hi"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), 1);
+        assert_eq!(trailing_reserved(&toks, 0, false), 1);
     }
 
     #[test]
@@ -1024,7 +1170,10 @@ mod tests {
             tok(TokenKind::Ident, "c"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), display_width("a | b = c;"));
+        assert_eq!(
+            trailing_reserved(&toks, 0, false),
+            display_width("a | b = c;")
+        );
         // A `return` heads a fragment the same way, while no assignment has.
         let toks = [
             tok(TokenKind::Ident, "return"),
@@ -1036,7 +1185,10 @@ mod tests {
             tok(TokenKind::Ident, "b"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), display_width("return a |"));
+        assert_eq!(
+            trailing_reserved(&toks, 0, false),
+            display_width("return a |")
+        );
         // After the last `=` the chain is the reserve's again.
         let toks = [
             tok(TokenKind::Ident, "a"),
@@ -1050,6 +1202,6 @@ mod tests {
             tok(TokenKind::Ident, "c"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), display_width("a = b |"));
+        assert_eq!(trailing_reserved(&toks, 0, false), display_width("a = b |"));
     }
 }
