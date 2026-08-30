@@ -94,16 +94,16 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p mutants.out
-          rc=0
-          cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
-          # The marker stands for exactly what the merge can recover, and nothing else: a clean
-          # run (its exit covers the zero-mutant case, which writes no outcomes.json), an intact
-          # outcomes.json whatever the exit code, or a summary line the parser accepts. Anything
-          # else leaves no marker, so a resume re-runs the shard instead of skipping one the merge
-          # cannot count. The grep must accept exactly what mutants_report.py's parsed_summary
-          # does — its regex is the authority; a parser change changes this grep in the same
-          # change.
-          if [ "$rc" -eq 0 ] || [ -f mutants.out/outcomes.json ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; then
+          cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || true
+          # The marker stands for exactly what the merge can recover, and nothing else — the exit
+          # code plays no part: an intact outcomes.json, the zero-mutant text the merge's summary
+          # fallback reads, or a summary line the parser accepts. Anything else leaves no marker,
+          # so a resume re-runs the shard instead of skipping one the merge cannot count. The
+          # grep must accept exactly what mutants_report.py's parsed_summary does — its regex is
+          # the authority; a parser change changes this grep in the same change.
+          if [ -f mutants.out/outcomes.json ] \
+              || grep -qF 'Found 0 mutants to test' mutants.out/sweep.log \
+              || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; then
             touch mutants.out/complete
           fi
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
