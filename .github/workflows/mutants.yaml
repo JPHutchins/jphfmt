@@ -27,15 +27,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The sharded set is src/ by decision: those are the crate's mutation targets. The old
-          # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
-          # and build scripts are test runners, not mutation targets, and are out of scope.
-          # One cell per src file, except builders.rs — the largest file, whose whole-file sweep
-          # kept losing its runner to host shutdowns (#65) — which splits into four ordinal
-          # chunks of cargo-mutants' own --list, each cell a `-F` regex naming exactly its chunk.
-          # The chunk regexes are exact-name alternations, so the cells partition the file by
-          # construction, and a failed --list falls back to one whole-file cell rather than
-          # dropping the file.
+          # One cell per src file — the crate's mutation targets — except builders.rs, which splits
+          # into four of cargo-mutants' own --shard slices so a reaped runner costs a quarter (#65).
+          # See mutants_plan.py for the plan itself.
           matrix=$(find src -name '*.rs' | sort | python3 .github/workflows/mutants_plan.py)
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
@@ -51,8 +45,8 @@ jobs:
             echo "$outside" | sed 's/^/  /' >&2
           fi
 
-  # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
-  # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
+  # One shard per cell of the plan: a runner shutdown costs the shard it killed, not the whole
+  # sweep — the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
   # outcomes artifact. A shard whose outcomes already exist from a prior run of this SHA skips —
   # the resume: a re-dispatch after a shutdown re-runs only the shards that died. The check runs
   # before the toolchain installs, so a skipped shard pays nothing.
@@ -97,13 +91,13 @@ jobs:
         continue-on-error: true
         env:
           FILE: ${{ matrix.file }}
-          RE: ${{ matrix.re }}
+          SHARD: ${{ matrix.shard }}
         run: |
           set -o pipefail
           mkdir -p mutants.out
           rc=0
           args=()
-          [ -n "$RE" ] && args=(-F "$RE")
+          [ -n "$SHARD" ] && args=(--shard "$SHARD")
           cargo mutants --jobs 8 --file "$FILE" "${args[@]}" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
           # This grep must accept exactly what mutants_report.py's parsed_summary does — its regex
           # is the authority; a parser change changes this grep in the same change.

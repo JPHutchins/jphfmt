@@ -239,9 +239,12 @@ def shard_map(shards: list[Any]) -> str:
 
     >>> shard_map([{"file": "src/doc.rs", "index": "0"}])
     '- `mutants-out-0` = `src/doc.rs`'
+    >>> shard_map([{"file": "src/doc.rs", "index": "0", "shard": "1/4"}])
+    '- `mutants-out-0` = `src/doc.rs` [shard 1/4]'
     """
     return "\n".join(
         f"- `mutants-out-{one.get('index')}` = `{one.get('file')}`"
+        f"{f' [shard {one.get('shard')}]' if one.get('shard') else ''}"
         for one in shards
         if isinstance(one, dict)
     )
@@ -339,6 +342,8 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
         file, index = shard.get("file"), shard.get("index")
         if not isinstance(file, str) or not isinstance(index, str):
             raise SystemExit(f"shard cell malformed: {shard!r}")
+        named = shard.get("shard")
+        name = f"{file} [shard {named}]" if isinstance(named, str) and named else file
         candidates = (
             Path(f"{merged_root}/mutants-out-{index}/mutants.out/outcomes.json"),
             Path(f"{merged_root}/mutants-out-{index}/outcomes.json"),
@@ -357,7 +362,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
         if data is None:
             summary = _summary_from_logs(index, merged_root, prior_root)
             if summary is None:
-                missing.append(file)
+                missing.append(name)
                 continue
             for field, value in summary.items():
                 totals[field] = totals.get(field, 0) + value
@@ -381,7 +386,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
                 for field, value in summary.items():
                     totals[field] = totals.get(field, 0) + value
             else:
-                missing.append(f"{file} ({err})")
+                missing.append(f"{name} ({err})")
     return {"outcomes": outcomes, **totals}, missing
 
 

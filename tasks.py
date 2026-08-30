@@ -85,7 +85,7 @@ release = Sequential(
 
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
-PY_SCRIPTS = ("release.py", "corpus.py", ".github/workflows/mutants_report.py")
+PY_SCRIPTS = ("release.py", "corpus.py", ".github/workflows/mutants_report.py", ".github/workflows/mutants_plan.py")
 
 
 def py_scripts(changed: tuple[str, ...]) -> tuple[str, ...]:
