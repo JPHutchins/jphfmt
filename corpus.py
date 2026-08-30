@@ -90,7 +90,7 @@ FAILED = "gcc failed"
 
 
 class Errors(NamedTuple):
-	count: int
+	counted: int
 
 
 class Halted(NamedTuple):
@@ -102,7 +102,7 @@ class Halted(NamedTuple):
 	place with the same count, and nothing after the halt was read on either side."""
 
 	detail: str
-	count: int
+	counted: int
 
 
 class Crashed(NamedTuple):
