@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["msgspec"]
+# dependencies = ["msgspec==0.21.1", "mypy==2.3.1"]
 # ///
 """The mutation report the nightly workflow files.
 
@@ -523,10 +523,22 @@ def main(argv: tuple[str, ...]) -> int:
                     else "every shard completed with zero mutants\n"
                 )
                 Path(empty_txt).write_text(message, encoding="utf-8")
+        case ("--self-test",):
+            import doctest
+
+            return doctest.testmod().failed
+        case ("--self-check", *paths):
+            from mypy import api
+
+            stdout, stderr, status = api.run(["--strict", *paths])
+            sys.stdout.write(stdout)
+            sys.stderr.write(stderr)
+            return status
         case _:
             print(__doc__)
             print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
             print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
+            print("       mutants_report.py --self-test | --self-check FILES...")
             return 2
     return 0
 

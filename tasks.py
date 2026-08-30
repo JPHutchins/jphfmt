@@ -93,10 +93,14 @@ def py_scripts(changed: tuple[str, ...]) -> tuple[str, ...]:
 	return tuple(c for c in changed if c in PY_SCRIPTS) or PY_SCRIPTS
 
 
-py_types = Task("uvx --with msgspec mypy --strict {paths}", paths=py_scripts)
-# 3.14 is what each script's own header asks for; a bare `python -m doctest` would run whatever uv
-# resolves for a project with no pyproject.toml.
-py_doctest = Task("uv run --python 3.14 --with msgspec python -m doctest {paths}", paths=py_scripts)
+py_types = Task(
+	"uv run --python 3.14 --script .github/workflows/mutants_report.py --self-check {paths}",
+	paths=py_scripts,
+)
+py_doctest = Parallel(
+	*(Task(f'uv run --python 3.14 --script "{path}" --self-test', when=path) for path in PY_SCRIPTS),
+	name="py_doctest",
+)
 # Not `camas --check` (JPHutchins/camas#277); the header above exists only to make this work.
 task_types = Task("uv run tasks.py --check", when="tasks.py")
 

@@ -663,6 +663,10 @@ def report(verdict: Verdict) -> str:
 
 
 def main(argv: tuple[str, ...]) -> int:
+	if argv == ("--self-test",):
+		import doctest
+
+		return doctest.testmod().failed
 	cli = argparse.ArgumentParser(description=__doc__)
 	cli.add_argument("--root", type=Path, default=Path("/nix/store"))
 	cli.add_argument("--limit", type=int, default=1200)
