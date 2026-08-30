@@ -3205,6 +3205,33 @@ fn a_brace_element_chain_wears_its_parens_when_a_segment_refusal_reads_across_th
 }
 
 #[test]
+fn a_brace_reserve_measures_a_call_head_the_walk_will_attach() {
+    // #146: a newline between a callee and its `(` stopped `trailing_reserved` early on the first
+    // pass, so the brace measured a short tail and stayed inline though the line overran; the walk
+    // attached `a(` and the next pass measured the attached form, whose extra column flipped the
+    // brace's fits verdict — pass 1 inline, pass 2 exploded, pass 3 stable. The reserve now
+    // measures the attached form the walk will write, so the first pass decides what every pass
+    // keeps. The issue's seed and its minimized member, each pinned at width 22. The full seed's
+    // stable last line overruns 22 — the formatter's own best-effort output — so its hand-inlined
+    // assertions below check the exact form and the fixpoint, not the width bound.
+    assert_laid_out(
+        ": ?=, ,)A{*=}?,::?:\ta\n()",
+        22,
+        ": ? =, ,)A{\n\t*=,\n}?,::?: a()\n",
+    );
+    let once = jphfmt::format_with_width(": ?=, ,)A{*=}?,::?:\ta\n(aa() /)A;)}=\\\"\\\")aa", 22);
+    assert_eq!(
+        once,
+        ": ? =, ,)A{\n\t*=,\n}?,::?: a(aa() /)A;)} = \\\"\\\")aa\n"
+    );
+    assert_eq!(
+        jphfmt::format_with_width(&once, 22),
+        once,
+        "and it is a fixpoint"
+    );
+}
+
+#[test]
 fn a_segment_reread_starts_at_the_cut_and_stays_inside_the_window() {
     // The re-read's window must end at the segment's true end — the off-by-one dropped the follower
     // a refusal keys on and cleared refusals vacuously — and it must start at the segment's own cut
