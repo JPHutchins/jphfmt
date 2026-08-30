@@ -249,26 +249,36 @@ def shard_map(shards: list[Any]) -> str:
 
 def parsed_summary(text: str) -> dict[str, int] | None:
     """The counts cargo-mutants' summary line carries, the only record a timeout-bearing
-    sweep leaves when it never writes outcomes.json.
+    sweep leaves when it never writes outcomes.json. cargo-mutants omits a zero-valued
+    field rather than printing it (a clean 6-mutant file prints no `missed` at all), so
+    every field is optional and an absent one counts zero.
 
     >>> parsed_summary("612 mutants tested in 4h: 55 missed, 526 caught, 18 unviable, 13 timeouts")
     {'total_mutants': 612, 'missed': 55, 'caught': 526, 'unviable': 18, 'timeout': 13}
+    >>> parsed_summary("6 mutants tested in 4m: 5 caught, 1 unviable")
+    {'total_mutants': 6, 'missed': 0, 'caught': 5, 'unviable': 1, 'timeout': 0}
     >>> parsed_summary("Found 0 mutants to test") is None
     True
     """
     matched = re.search(
-        r"(\d+) mutants tested in [^:]*: (\d+) missed, (\d+) caught, (\d+) unviable, (\d+) timeouts",
+        r"(\d+) mutants tested in [^:]*: "
+        r"(?P<fields>(?:\d+ (?:missed|caught|unviable|timeouts)(?:, )?)+)",
         text,
     )
     if not matched:
         return None
-    total, missed, caught, unviable, timeout = (int(one) for one in matched.groups())
+    counts = {
+        name: int(value)
+        for value, name in re.findall(
+            r"(\d+) (missed|caught|unviable|timeouts)", matched.group("fields")
+        )
+    }
     return {
-        "total_mutants": total,
-        "missed": missed,
-        "caught": caught,
-        "unviable": unviable,
-        "timeout": timeout,
+        "total_mutants": int(matched.group(1)),
+        "missed": counts.get("missed", 0),
+        "caught": counts.get("caught", 0),
+        "unviable": counts.get("unviable", 0),
+        "timeout": counts.get("timeouts", 0),
     }
 
 
@@ -390,7 +400,7 @@ def body(
 	footer = (
 		"<sub>Logs and a per-mutant diff for each survivor are in the `mutants-out-<index>` "
 		f"artifacts of [the run]({run}) and of the prior completed runs whose shards it resumed; "
-		"the issue body names any shard that left no outcomes.</sub>\n" + map_lines
+		"the issue body names the shards that left no outcomes.</sub>\n" + map_lines
 	)
 	if not found:
 		claim = (
@@ -432,9 +442,6 @@ def tested(path: Path) -> tuple[Json, Counts]:
 
 def main(argv: tuple[str, ...]) -> int:
 	match argv:
-		case ("body", outcomes, repo, sha, run):
-			data, tally = tested(Path(outcomes))
-			print(body(data, tally, repo, sha, run), end="")
 		case ("report", outcomes, repo, sha, run, out, shards_json):
 			data, tally = tested(Path(outcomes))
 			Path(out).write_text(
@@ -464,7 +471,6 @@ def main(argv: tuple[str, ...]) -> int:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
 		case _:
 			print(__doc__)
-			print("       mutants_report.py body OUTCOMES REPO SHA RUN_URL")
 			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
 			print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
 			return 2

@@ -40,6 +40,7 @@ jobs:
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
             echo "::warning::.rs files outside src/ are not sharded and are not mutated:"
+            # shellcheck disable=SC2001
             echo "$outside" | sed 's/^/  /' >&2
           fi
 
@@ -94,7 +95,7 @@ jobs:
           mkdir -p mutants.out
           rc=0
           cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
-          { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -q 'mutants tested in' mutants.out/sweep.log; } \
+          { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; } \
             && touch mutants.out/complete
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
         uses: actions/upload-artifact@v7
@@ -160,7 +161,8 @@ jobs:
               gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
                 >/dev/null 2>&1 \
                 || gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
-                  >/dev/null 2>&1
+                  >/dev/null 2>&1 \
+                || true
               { [ -f "prior-$idx/complete" ] || [ -f "prior-$idx/mutants.out/complete" ]; } && break
               rm -rf "prior-$idx"
             done < <(echo "${{ needs.plan.outputs.prior }}")
@@ -190,7 +192,7 @@ jobs:
             if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
               body="The sweep did not run: the plan left no shard jobs."
             elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
-              body="The shards listed below left no outcomes; the others completed."
+              body="No shard produced outcomes — the shards below are the whole sweep."
             else
               body="Every shard completed and none found a mutant."
             fi
@@ -239,7 +241,7 @@ jobs:
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
+        if: success() && steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
