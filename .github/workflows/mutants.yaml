@@ -33,9 +33,10 @@ jobs:
               | map(.value as $f | {file: $f, index: (.key | tostring)})')
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
-          prior=$(gh run list --workflow mutants --limit 100 --paginate \
+          prior=$(gh run list --workflow mutants --limit 100 \
             --json databaseId,headSha,status,conclusion \
-            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
+            --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId') \
+            || { echo "::warning::the prior-run query failed; no resume this run" >&2; true; }
           { echo "prior<<EOF"; echo "$prior"; echo "EOF"; } >>"$GITHUB_OUTPUT"
           outside=$(find . -path ./target -prune -o -name '*.rs' -print | grep -v '^./src/' || true)
           if [ -n "$outside" ]; then
@@ -95,6 +96,8 @@ jobs:
           mkdir -p mutants.out
           rc=0
           cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
+          # This grep must accept exactly what mutants_report.py's parsed_summary does — its regex
+          # is the authority; a parser change changes this grep in the same change.
           { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; } \
             && touch mutants.out/complete
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
@@ -126,22 +129,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
+          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[].name' 2>/dev/null || echo "__ARTIFACTS_API_FAILED__")
           for idx in $(jq -r '.[].index' <<<"$MATRIX" 2>/dev/null || true); do
             mkdir -p "merged/mutants-out-$idx"
-            gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
-              >/dev/null 2>&1 \
-              || gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
+            if ! gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
                 >/dev/null 2>&1 \
-              || if names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
-                  --jq '.artifacts[].name' 2>/dev/null); then
-                if echo "$names" | grep -qx "mutants-out-$idx"; then
-                  echo "::error::download failed for mutants-out-$idx though the artifact exists"
-                else
-                  rm -rf "merged/mutants-out-$idx"
-                fi
-              else
+              && ! gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
+                >/dev/null 2>&1; then
+              if [ "$names" = "__ARTIFACTS_API_FAILED__" ]; then
                 echo "::error::artifacts API failed for mutants-out-$idx"
+              elif echo "$names" | grep -qx "mutants-out-$idx"; then
+                echo "::error::download failed for mutants-out-$idx though the artifact exists"
+              else
+                rm -rf "merged/mutants-out-$idx"
               fi
+            fi
           done
       - name: Download the prior runs' shards, newest first
         env:
@@ -184,15 +187,21 @@ jobs:
           if [ -f merged/empty.txt ]; then
             if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
               title="Mutation sweep did not run"
-            elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+            elif [ "${{ steps.merge.outputs.missing }}" = "true" ] \
+                && [ "${{ steps.merge.outputs.all_missing }}" = "true" ]; then
               title="Mutation sweep: no shard produced outcomes"
+            elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+              title="Mutation sweep: some shards died, none found a mutant"
             else
               title="Mutation sweep: every shard completed with zero mutants"
             fi
             if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
               body="The sweep did not run: the plan left no shard jobs."
-            elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+            elif [ "${{ steps.merge.outputs.missing }}" = "true" ] \
+                && [ "${{ steps.merge.outputs.all_missing }}" = "true" ]; then
               body="No shard produced outcomes — the shards below are the whole sweep."
+            elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+              body="The shards below left no outcomes; the rest completed and none found a mutant."
             else
               body="Every shard completed and none found a mutant."
             fi

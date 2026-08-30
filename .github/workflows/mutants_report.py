@@ -391,7 +391,7 @@ def body(
     repo: str,
     sha: str,
     run: str,
-    shards: list[Any] | None = None,
+    shards: list[Any],
 ) -> str:
 	found = survivors(outcomes)
 	commit = f"[`{sha[:7]}`](https://github.com/{repo}/tree/{sha})"
@@ -467,6 +467,8 @@ def main(argv: tuple[str, ...]) -> int:
 			empty = not merged_doc["outcomes"] and merged_doc.get("total_mutants", 0) == 0
 			print(f"empty={'true' if empty else 'false'}")
 			print(f"ran={'true' if shards else 'false'}")
+			all_missing = bool(shards) and len(missing) == len(shards)
+			print(f"all_missing={'true' if all_missing else 'false'}")
 			if empty:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
 		case _:
