@@ -3203,3 +3203,22 @@ fn a_brace_element_chain_wears_its_parens_when_a_segment_refusal_reads_across_th
         "and it is a fixpoint"
     );
 }
+
+#[test]
+fn a_segment_reread_starts_at_the_cut_and_stays_inside_the_window() {
+    // The re-read's window must end at the segment's true end — the off-by-one dropped the follower
+    // a refusal keys on and cleared refusals vacuously — and it must start at the segment's own cut
+    // operator, which sits at depth zero: a window starting at the previous segment's closer went
+    // bracket-negative and disabled every depth-gated refusal. A type-context star inside the
+    // segment keeps the refusal standing (`int * .` respaces to `int *.`), and a call-ended previous
+    // segment changes nothing.
+    for src in ["x = a | int *\n.;\n", "x = f(a) | int *\n[0];\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(
+            significant(&once),
+            significant(src),
+            "no tokens lost: {src:?}"
+        );
+    }
+}
