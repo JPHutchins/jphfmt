@@ -1,0 +1,48 @@
+name: warm-caches
+
+on:
+  schedule:
+    # Weekly, Monday, off the :00 mark: GitHub evicts a cache entry seven days after its last
+    # access, so with a weekly cadence the next run *is* the deadline — a missed week evicts.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+# Serializes runs: one restore refreshes the access clock either way, so two at once buy
+# nothing. Queues rather than cancels.
+concurrency: warm-caches
+
+permissions:
+  contents: read
+
+jobs:
+  # The same cache steps ci.yaml runs, with the population each cache needs: a cache saved
+  # without content is an empty entry the actions' skip-save-on-exact-hit then freezes forever.
+  # The default branch is the only place a save is visible to every other ref, and the extension
+  # job never runs on main pushes, so this job is the only run that can write the default-branch
+  # npm cache the PRs restore from — it must be the one that fills it. The nix store is populated
+  # the same way validate populates it, so a key-miss save here is as good as CI's own, not a
+  # re-keyed prefix. A weekly validation of main is the cost, and the side effect worth having.
+  warm:
+    runs-on: ubuntu-latest
+    # A manual dispatch on any other ref would checkout that ref and save orphan cache entries
+    # under a throwaway key; schedule runs always use the default branch.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: nixbuild/nix-quick-install-action@v35
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: nix develop --command camas
