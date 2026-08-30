@@ -786,9 +786,26 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // A segment's collapse joins the break its span holds, so a segment that would join a
         // respaced pair is refused the way the head is — the canonical reading, since a segment's
         // group and call arms join those shapes themselves, and a nested construct inside the
-        // segment refuses its own breaks (#121's search).
-        if segments.iter().any(|s| element_join_respaced(s)) {
-            return None;
+        // segment refuses its own breaks (#121's search). The segment-local reading loses the
+        // operand before it — a star at the segment's start reads span-initial, where the chain's
+        // own previous operand proves a multiply — so the refusal re-reads the segment with that
+        // token in view and stands only when the context confirms it (#148). The window starts at
+        // the segment's own cut operator, which [`loosest_cuts`] places at depth zero: the
+        // re-read's depth counters begin neutral, not mid-bracket, and the walk-back crosses the
+        // operator to the previous operand — the exact context the segment-local reading lacks.
+        // The first segment has no cut before it and nothing a re-read would add.
+        let mut offset = 0usize;
+        for segment in &segments {
+            if element_join_respaced(segment) {
+                if offset == 0 {
+                    return None;
+                }
+                let from = prev_nontrivia(operands, offset).unwrap_or(0);
+                if element_join_respaced(&operands[from..offset + segment.len()]) {
+                    return None;
+                }
+            }
+            offset += segment.len() + 1;
         }
         // #52's conjunct, at the statement's own level: one bounded element, so the head leads
         // and the OnBreak parentheses the `bound` decides wrap the broken form — the pass the

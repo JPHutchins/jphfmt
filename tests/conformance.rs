@@ -3185,3 +3185,40 @@ fn an_unknown_directive_name_is_refused_outside_a_define() {
         assert_eq!(format(&src), src, "stmt-expr: {name:?}");
     }
 }
+
+#[test]
+fn a_brace_element_chain_wears_its_parens_when_a_segment_refusal_reads_across_the_break() {
+    // #148: pass 1's chain broke between segments (no refusal, parens on the break) where pass 0's
+    // chain held the break *inside* its star segment — read span-local, the star looked
+    // declarator-possible and the chain was refused, falling back to a bound-less form without
+    // parens. The refusal now re-reads the segment with the operand before it in view; the `&`
+    // proves a multiply, the refusal clears, and the first pass writes the paren-bound broken chain
+    // every pass keeps. The first line overruns width 1 — the formatter's own best-effort output —
+    // so this pins the exact form and the fixpoint, not the width bound.
+    let once = jphfmt::format_with_width("=''\"\"\"\"{A&*\n.}", 1);
+    assert_eq!(once, " = ''\"\"\"\"{\n\t(\n\t\tA &\n\t\t* .\n\t),\n}\n");
+    assert_eq!(
+        jphfmt::format_with_width(&once, 1),
+        once,
+        "and it is a fixpoint"
+    );
+}
+
+#[test]
+fn a_segment_reread_starts_at_the_cut_and_stays_inside_the_window() {
+    // The re-read's window must end at the segment's true end — the off-by-one dropped the follower
+    // a refusal keys on and cleared refusals vacuously — and it must start at the segment's own cut
+    // operator, which sits at depth zero: a window starting at the previous segment's closer went
+    // bracket-negative and disabled every depth-gated refusal. A type-context star inside the
+    // segment keeps the refusal standing (`int * .` respaces to `int *.`), and a call-ended previous
+    // segment changes nothing.
+    for src in ["x = a | int *\n.;\n", "x = f(a) | int *\n[0];\n"] {
+        let once = format(src);
+        assert_eq!(format(&once), once, "must be idempotent: {src:?}");
+        assert_eq!(
+            significant(&once),
+            significant(src),
+            "no tokens lost: {src:?}"
+        );
+    }
+}
