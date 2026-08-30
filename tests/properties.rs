@@ -31,6 +31,20 @@ fn pieced() -> impl Strategy<Value = String> {
         .prop_map(|pieces| pieces.concat())
 }
 
+/// The #146 class shape: a braced element, its label tail, and a call head the walk attaches across
+/// a newline. The character-level generator cannot spell the shape in any realistic draw, and the
+/// pieced one reaches it only when a dozen pieces line up; this assembles it constantly, so a
+/// two-pass flip of that mechanism is found, not hoped for.
+const BIASED_PIECES: &[&str] = &[
+    "A", "a", "{", "}", "*=", "?", ":", ",", "=", ")", "(", "()", "(aa() /)", "\n", "\t", " ",
+    "\\", "\"", "x", ";", "&", "|", "/",
+];
+
+fn biased_bracket() -> impl Strategy<Value = String> {
+    proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
+        .prop_map(|pieces| pieces.concat())
+}
+
 /// Whichever of `before`'s characters the output holds fewer of, if any.
 fn dropped(before: &str, after: &str) -> Option<(char, usize, usize)> {
     let out = kept(after);
@@ -84,6 +98,16 @@ proptest! {
     /// here rather than depending on one conformance pin.
     #[test]
     fn pieced_input_is_idempotent_across_widths(s in pieced(), width in 1usize..=120) {
+        let once = format_with_width(&s, width);
+        prop_assert_eq!(format_with_width(&once, width), once);
+    }
+
+    /// The #146 class: a brace whose reserve measured a callee-`(` newline gap one way on the pass
+    /// that laid it and another on the next, flipping the brace's fits verdict. The character and
+    /// pieced generators almost never spell it; [`biased_bracket`] assembles it constantly, so a
+    /// regression of that mechanism fails here rather than depending on one conformance pin.
+    #[test]
+    fn biased_bracket_input_is_idempotent_across_widths(s in biased_bracket(), width in 1usize..=32) {
         let once = format_with_width(&s, width);
         prop_assert_eq!(format_with_width(&once, width), once);
     }

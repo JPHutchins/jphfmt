@@ -92,7 +92,13 @@ fn emit_tokens(
             } else {
                 build_cond_doc(inner)
             };
-            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+            emit_doc(
+                &doc,
+                trailing_reserved(toks, close + 1, in_define_body),
+                out,
+                col,
+                width,
+            );
             i = close + 1;
             continue;
         }
@@ -104,7 +110,7 @@ fn emit_tokens(
             for tok in &toks[i..brace] {
                 emit_str(out, col, tok.text);
             }
-            i = emit_brace(toks, brace, true, out, col, width);
+            i = emit_brace(toks, brace, true, in_define_body, out, col, width);
             continue;
         }
 
@@ -123,7 +129,13 @@ fn emit_tokens(
                 // join `build_expr_doc`'s call arm makes for nested calls.
                 emit_str(out, col, t.text);
                 let doc = build_call_body(inner, Fit::Measured);
-                emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+                emit_doc(
+                    &doc,
+                    trailing_reserved(toks, close + 1, in_define_body),
+                    out,
+                    col,
+                    width,
+                );
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
                 i = close + 1;
@@ -148,7 +160,13 @@ fn emit_tokens(
                     let doc = build_call_body(inner, Fit::Measured);
                     if holds_forced_break(&doc) {
                         emit_str(out, col, t.text);
-                        emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+                        emit_doc(
+                            &doc,
+                            trailing_reserved(toks, close + 1, in_define_body),
+                            out,
+                            col,
+                            width,
+                        );
                         pending_func_def =
                             next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
                         i = close + 1;
@@ -194,7 +212,7 @@ fn emit_tokens(
             && !opens_definition_body(toks, i)
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, out, col, width);
+            i = emit_brace(toks, i, false, in_define_body, out, col, width);
             continue;
         }
 
@@ -211,7 +229,7 @@ fn emit_tokens(
             && !contains_comment(&toks[paren..i])
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, out, col, width);
+            i = emit_brace(toks, i, false, in_define_body, out, col, width);
             continue;
         }
 
@@ -233,7 +251,13 @@ fn emit_tokens(
             && !holds_unsafe_hash(&toks[i + 1..close], in_define_body)
             && let Some(doc) = build_bracketed_group(&toks[i + 1..close], bracketing)
         {
-            emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+            emit_doc(
+                &doc,
+                trailing_reserved(toks, close + 1, in_define_body),
+                out,
+                col,
+                width,
+            );
             i = close + 1;
             continue;
         }
@@ -671,6 +695,7 @@ fn emit_brace(
     toks: &[Token],
     open: usize,
     padded: bool,
+    in_define_body: bool,
     out: &mut String,
     col: &mut usize,
     width: usize,
@@ -694,7 +719,13 @@ fn emit_brace(
         return close + 1;
     }
     let doc = build_brace_doc(inner, padded);
-    emit_doc(&doc, trailing_reserved(toks, close + 1), out, col, width);
+    emit_doc(
+        &doc,
+        trailing_reserved(toks, close + 1, in_define_body),
+        out,
+        col,
+        width,
+    );
     close + 1
 }
 
@@ -829,7 +860,33 @@ fn ends_reserve(toks: &[Token], j: usize) -> bool {
     }
 }
 
-fn trailing_reserved(toks: &[Token], from: usize) -> usize {
+/// Whether the walk's call arm will attach the `(` across the newline at `nl`, dropping the gap —
+/// the reserve then measures the attached form the next pass will see, or the two passes' reserves
+/// differ by the call head's width and a fits/explode verdict flips on the pass that attaches
+/// (#146). The same conditions the arm itself carries, so the prediction and the attach cannot
+/// disagree.
+fn closes_call_gap(toks: &[Token], nl: usize, in_define_body: bool) -> bool {
+    let Some(open) = next_nontrivia(toks, nl + 1).filter(|&k| toks[k].text == "(") else {
+        return false;
+    };
+    if !is_call_head_pair(toks, open) {
+        return false;
+    }
+    let Some(close) = match_bracket(toks, open) else {
+        return false;
+    };
+    let inner = &toks[open + 1..close];
+    if contains_comment(inner) || !is_balanced(inner) {
+        return false;
+    }
+    if !has_middle_newline(inner) {
+        return !holds_unsafe_hash(inner, in_define_body);
+    }
+    let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
+    !holds_hash && holds_forced_break(&build_call_body(inner, Fit::Measured))
+}
+
+fn trailing_reserved(toks: &[Token], from: usize, in_define_body: bool) -> usize {
     // `pending` holds the width of a whitespace run: it counts only once something follows it, since
     // whitespace ending the line never reaches the output — reserving for it would measure a line
     // this pass is about to shorten, and reach a different verdict than the next pass does.
@@ -856,7 +913,12 @@ fn trailing_reserved(toks: &[Token], from: usize) -> usize {
             return width + pending + display_width(t.text);
         }
         let counted = match t.kind {
-            TokenKind::Newline => break,
+            TokenKind::Newline => {
+                if closes_call_gap(toks, j, in_define_body) {
+                    continue;
+                }
+                break;
+            }
             TokenKind::LineComment | TokenKind::BlockComment => continue,
             // Nothing past a bracket or a `;` shares this construct's fate: anything past the
             // bracket can break onto a later line, and the `;` ends the statement.
@@ -966,36 +1028,63 @@ mod tests {
     #[test]
     fn trailing_reserved_counts_a_tab_as_tab_width() {
         let toks = [tok(TokenKind::Unknown, "a\tb"), tok(TokenKind::Punct, ";")];
-        assert_eq!(trailing_reserved(&toks, 0), 1 + TAB_WIDTH + 1 + 1);
+        assert_eq!(trailing_reserved(&toks, 0, false), 1 + TAB_WIDTH + 1 + 1);
     }
 
     #[test]
     fn trailing_reserved_stops_at_newline() {
         let toks = [tok(TokenKind::Newline, "\n"), tok(TokenKind::Punct, ";")];
-        assert_eq!(trailing_reserved(&toks, 0), 0);
+        assert_eq!(trailing_reserved(&toks, 0, false), 0);
+    }
+
+    #[test]
+    fn trailing_reserved_measures_the_call_head_across_a_newline() {
+        // #146: the walk's call arm attaches `a(` across the newline, so the reserve measures the
+        // attached form — `a` and the `(` — the same width the next pass's token stream reserves.
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Newline, "\n"),
+            tok(TokenKind::Punct, "("),
+            tok(TokenKind::Punct, ")"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0, false), 2);
+    }
+
+    #[test]
+    fn trailing_reserved_stops_at_a_newline_the_walk_keeps() {
+        // A comment in the arguments refuses the attach (the walk passes the call through
+        // verbatim), so the newline is the stop it always was.
+        let toks = [
+            tok(TokenKind::Ident, "a"),
+            tok(TokenKind::Newline, "\n"),
+            tok(TokenKind::Punct, "("),
+            tok(TokenKind::BlockComment, "/*c*/"),
+            tok(TokenKind::Punct, ")"),
+        ];
+        assert_eq!(trailing_reserved(&toks, 0, false), 1);
     }
 
     #[test]
     fn trailing_reserved_stops_at_the_statement_end() {
         // The `;` counts (1) and ends the reserve: what follows it is another statement's.
         let toks = [tok(TokenKind::Punct, ";"), tok(TokenKind::Punct, "(")];
-        assert_eq!(trailing_reserved(&toks, 0), 1);
+        assert_eq!(trailing_reserved(&toks, 0, false), 1);
     }
 
     #[test]
     fn trailing_reserved_counts_punct_then_stops_at_bracket() {
         // ` {` of a function body: the space and brace count, and the brace stops the reserve.
         let toks = [tok(TokenKind::Whitespace, " "), tok(TokenKind::Punct, "{")];
-        assert_eq!(trailing_reserved(&toks, 0), 2);
+        assert_eq!(trailing_reserved(&toks, 0, false), 2);
     }
 
     #[test]
     fn trailing_reserved_does_not_count_the_last_tokens_trailing_space() {
         let last = [tok(TokenKind::Unknown, "'x ")];
-        assert_eq!(trailing_reserved(&last, 0), display_width("'x"));
+        assert_eq!(trailing_reserved(&last, 0, false), display_width("'x"));
         // The same whitespace in a token that is not the last reaches the output, and counts.
         let inner = [tok(TokenKind::Unknown, "'x "), tok(TokenKind::Ident, "y")];
-        assert_eq!(trailing_reserved(&inner, 0), display_width("'x y"));
+        assert_eq!(trailing_reserved(&inner, 0, false), display_width("'x y"));
     }
 
     #[test]
@@ -1004,7 +1093,7 @@ mod tests {
             tok(TokenKind::LineComment, "// hi"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), 1);
+        assert_eq!(trailing_reserved(&toks, 0, false), 1);
     }
 
     #[test]
@@ -1025,7 +1114,10 @@ mod tests {
             tok(TokenKind::Ident, "c"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), display_width("a | b = c;"));
+        assert_eq!(
+            trailing_reserved(&toks, 0, false),
+            display_width("a | b = c;")
+        );
         // A `return` heads a fragment the same way, while no assignment has.
         let toks = [
             tok(TokenKind::Ident, "return"),
@@ -1037,7 +1129,10 @@ mod tests {
             tok(TokenKind::Ident, "b"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), display_width("return a |"));
+        assert_eq!(
+            trailing_reserved(&toks, 0, false),
+            display_width("return a |")
+        );
         // After the last `=` the chain is the reserve's again.
         let toks = [
             tok(TokenKind::Ident, "a"),
@@ -1051,6 +1146,6 @@ mod tests {
             tok(TokenKind::Ident, "c"),
             tok(TokenKind::Punct, ";"),
         ];
-        assert_eq!(trailing_reserved(&toks, 0), display_width("a = b |"));
+        assert_eq!(trailing_reserved(&toks, 0, false), display_width("a = b |"));
     }
 }
