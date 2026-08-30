@@ -27,8 +27,8 @@ jobs:
         run: |
           # One cell per src file — the crate's mutation targets — except builders.rs, which splits
           # into four of cargo-mutants' own --shard slices so a reaped runner costs a quarter (#65).
-          # See mutants_plan.py for the plan itself.
-          matrix=$(find src -name '*.rs' | sort | uv run .github/workflows/mutants_plan.py)
+          # The plan itself is mutants_report.py's plan mode.
+          matrix=$(find src -name '*.rs' | sort | uv run .github/workflows/mutants_report.py plan)
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           prior=$(gh run list --workflow mutants --limit 100 \

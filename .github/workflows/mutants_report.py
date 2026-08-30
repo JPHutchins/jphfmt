@@ -1,5 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
+# dependencies = ["msgspec==0.21.1", "mypy==2.3.1"]
 # ///
 """The mutation report the nightly workflow files.
 
@@ -17,9 +18,45 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import msgspec
+
 # GitHub rejects a body past 65536 characters. #65 was cut off just under it, losing the totals that
 # sit at the tail; what does not fit here is counted in the report and kept in the run's artifact.
 BODY_LIMIT = 60000
+
+
+class Cell(msgspec.Struct):
+    """One shard cell: a file, its cargo-mutants --shard slice when it has one, and the index the
+    artifact name and the merge key on."""
+
+    file: str
+    index: str
+    shard: str = ""
+
+
+# The one file whose whole-file sweep kept losing its runner (#65). A rename of the file must
+# rename this too; a plan whose list no longer holds it warns rather than silently degrading to a
+# whole-file cell.
+SHARDED = "src/reflow/builders.rs"
+
+
+def plan(files: list[str], shards: int) -> list[Cell]:
+    """One cell per file, and SHARDED split into cargo-mutants' own --shard slices.
+
+    >>> plan(["src/a.rs", "src/reflow/builders.rs"], 4)
+    [Cell(file='src/a.rs', index='0', shard=''), Cell(file='src/reflow/builders.rs', index='1', shard='0/4'), Cell(file='src/reflow/builders.rs', index='2', shard='1/4'), Cell(file='src/reflow/builders.rs', index='3', shard='2/4'), Cell(file='src/reflow/builders.rs', index='4', shard='3/4')]
+    """
+    cells: list[Cell] = []
+    if SHARDED not in files:
+        print(f"::warning::{SHARDED} is not in the plan; it sweeps as a whole file", file=sys.stderr)
+    for file in files:
+        if file == SHARDED:
+            for part in range(shards):
+                cells.append(Cell(file=file, index=str(len(cells)), shard=f"{part}/{shards}"))
+        else:
+            cells.append(Cell(file=file, index=str(len(cells))))
+    return cells
+
 
 type Json = dict[str, Any]
 
@@ -476,10 +513,26 @@ def main(argv: tuple[str, ...]) -> int:
 			print(f"all_missing={'true' if all_missing else 'false'}")
 			if empty:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
+		case ("plan",):
+			files = sys.stdin.read().splitlines()
+			print(msgspec.json.encode(plan(files, 4)).decode())
+		case ("--self-test",):
+			import doctest
+
+			return doctest.testmod().failed
+		case ("--self-check", *paths):
+			from mypy import api
+
+			stdout, stderr, status = api.run(["--strict", *paths])
+			sys.stdout.write(stdout)
+			sys.stderr.write(stderr)
+			return status
 		case _:
 			print(__doc__)
 			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
 			print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
+			print("       mutants_report.py plan < FILES_LIST")
+			print("       mutants_report.py --self-test | --self-check FILES...")
 			return 2
 	return 0
 
