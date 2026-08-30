@@ -24,10 +24,18 @@ class Cell(msgspec.Struct):
     shard: str = ""
 
 
+# The one file whose whole-file sweep kept losing its runner (#65). A rename of the file must
+# rename this too; a plan whose list no longer holds it warns rather than silently degrading to a
+# whole-file cell.
+SHARDED = "src/reflow/builders.rs"
+
+
 def plan(files: list[str], shards: int) -> list[Cell]:
     cells: list[Cell] = []
+    if SHARDED not in files:
+        print(f"::warning::{SHARDED} is not in the plan; it sweeps as a whole file", file=sys.stderr)
     for file in files:
-        if file == "src/reflow/builders.rs":
+        if file == SHARDED:
             for part in range(shards):
                 cells.append(Cell(file=file, index=str(len(cells)), shard=f"{part}/{shards}"))
         else:

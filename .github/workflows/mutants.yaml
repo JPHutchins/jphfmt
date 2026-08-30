@@ -20,9 +20,7 @@ jobs:
       prior: ${{ steps.list.outputs.prior }}
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-mutants
+      - uses: astral-sh/setup-uv@v6
       - id: list
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,7 +28,7 @@ jobs:
           # One cell per src file — the crate's mutation targets — except builders.rs, which splits
           # into four of cargo-mutants' own --shard slices so a reaped runner costs a quarter (#65).
           # See mutants_plan.py for the plan itself.
-          matrix=$(find src -name '*.rs' | sort | python3 .github/workflows/mutants_plan.py)
+          matrix=$(find src -name '*.rs' | sort | uv run .github/workflows/mutants_plan.py)
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           prior=$(gh run list --workflow mutants --limit 100 \
