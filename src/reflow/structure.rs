@@ -907,7 +907,6 @@ fn emit_directive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::TokenKind;
 
     fn tok(kind: TokenKind, text: &'static str) -> Token<'static> {
         Token { kind, text }

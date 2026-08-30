@@ -3185,3 +3185,21 @@ fn an_unknown_directive_name_is_refused_outside_a_define() {
         assert_eq!(format(&src), src, "stmt-expr: {name:?}");
     }
 }
+
+#[test]
+fn a_brace_element_chain_wears_its_parens_when_a_segment_refusal_reads_across_the_break() {
+    // #148: pass 1's chain broke between segments (no refusal, parens on the break) where pass 0's
+    // chain held the break *inside* its star segment — read span-local, the star looked
+    // declarator-possible and the chain was refused, falling back to a bound-less form without
+    // parens. The refusal now re-reads the segment with the operand before it in view; the `&`
+    // proves a multiply, the refusal clears, and the first pass writes the paren-bound broken chain
+    // every pass keeps. The first line overruns width 1 — the formatter's own best-effort output —
+    // so this pins the exact form and the fixpoint, not the width bound.
+    let once = jphfmt::format_with_width("=''\"\"\"\"{A&*\n.}", 1);
+    assert_eq!(once, " = ''\"\"\"\"{\n\t(\n\t\tA &\n\t\t* .\n\t),\n}\n");
+    assert_eq!(
+        jphfmt::format_with_width(&once, 1),
+        once,
+        "and it is a fixpoint"
+    );
+}
