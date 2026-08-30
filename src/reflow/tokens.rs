@@ -1030,9 +1030,15 @@ pub(super) fn holds_unsafe_hash(toks: &[Token], in_define_body: bool) -> bool {
     if in_define_body {
         holds_directive(toks)
     } else {
-        toks.iter()
-            .any(|t| t.kind == TokenKind::Punct && t.text == "#")
+        holds_hash_fragment(toks)
     }
+}
+
+/// Whether any token is a `#` or `##` fragment — the shape every laid path guards, since its lines
+/// are not the layout's to own. One spelling for the call arm and for the reserve's attach
+/// prediction.
+pub(super) fn holds_hash_fragment(toks: &[Token]) -> bool {
+    toks.iter().any(|t| matches!(t.text, "#" | "##"))
 }
 
 /// Whether a chain's head holds a shape the two passes measure differently. Pass 1's single

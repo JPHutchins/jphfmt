@@ -3194,8 +3194,8 @@ fn a_brace_reserve_measures_a_call_head_the_walk_will_attach() {
     // brace's fits verdict — pass 1 inline, pass 2 exploded, pass 3 stable. The reserve now
     // measures the attached form the walk will write, so the first pass decides what every pass
     // keeps. The issue's seed and its minimized member, each pinned at width 22. The full seed's
-    // stable last line overruns 22 — the formatter's own best-effort output — so it asserts the
-    // exact form and the fixpoint, not the width bound.
+    // stable last line overruns 22 — the formatter's own best-effort output — so its hand-inlined
+    // assertions below check the exact form and the fixpoint, not the width bound.
     assert_laid_out(
         ": ?=, ,)A{*=}?,::?:\ta\n()",
         22,

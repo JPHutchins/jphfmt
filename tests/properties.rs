@@ -101,7 +101,10 @@ proptest! {
         let once = format_with_width(&s, width);
         prop_assert_eq!(format_with_width(&once, width), once);
     }
+}
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200_000))]
     /// The #146 class: a brace whose reserve measured a callee-`(` newline gap one way on the pass
     /// that laid it and another on the next, flipping the brace's fits verdict. The character and
     /// pieced generators almost never spell it; [`biased_bracket`] assembles it constantly, so a
