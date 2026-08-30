@@ -797,11 +797,25 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         let mut offset = 0usize;
         for segment in &segments {
             if element_join_respaced(segment) {
-                if offset == 0 {
-                    return None;
-                }
-                let from = prev_nontrivia(operands, offset).unwrap_or(0);
-                if element_join_respaced(&operands[from..offset + segment.len()]) {
+                let refused = if offset == 0 {
+                    // The first segment's span-initial reading loses the head's last token — a
+                    // star after `? =` reads declarator-possible where the `=` proves the operand
+                    // it is (#153's draw). The head's assignment sits at depth zero
+                    // ([`operand_span`]), so a bracket-free head tail re-reads depth-neutral; a
+                    // head whose tail holds brackets keeps the refusal rather than re-reading
+                    // from a boundary that is not one.
+                    prev_nontrivia(toks, start).is_none_or(|tail| {
+                        !(start > tail
+                            && toks[tail..start]
+                                .iter()
+                                .all(|t| !matches!(t.text, "(" | "[" | "{" | ")" | "]" | "}"))
+                            && !element_join_respaced(&toks[tail..start + segment.len()]))
+                    })
+                } else {
+                    let from = prev_nontrivia(operands, offset).unwrap_or(0);
+                    element_join_respaced(&operands[from..offset + segment.len()])
+                };
+                if refused {
                     return None;
                 }
             }
@@ -873,11 +887,26 @@ fn ternary_arms<'a, 'src>(inner: &'a [Token<'src>]) -> Option<Vec<&'a [Token<'sr
     // A separator cannot open an arm: laying `? : ;` out would put the ` :` gap before a `;` that
     // `space_semicolons` tightens on the next pass, and this pass's output would be respaced — the
     // same class, one separator over (#121's search). An arm that would join a respaced pair is
-    // refused the way a chain's segment is.
+    // refused the way a chain's segment is, with the same context re-read: the arm-local reading
+    // loses the cut before it — a star at the arm's start reads span-initial, where the `:` cut
+    // proves the ternary arm it belongs to — so the refusal re-reads the arm from its own cut and
+    // stands only when the context confirms it (#153).
+    let mut offset = 0usize;
+    for arm in &arms {
+        if element_join_respaced(arm) {
+            if offset == 0 {
+                return None;
+            }
+            let from = prev_nontrivia(inner, offset).unwrap_or(0);
+            if element_join_respaced(&inner[from..offset + arm.len()]) {
+                return None;
+            }
+        }
+        offset += arm.len() + 1;
+    }
     (arms.len() >= 2
         && arms.iter().all(|s| has_non_trivia(s))
-        && arms.iter().all(|s| !opens_with_separator(s))
-        && arms.iter().all(|s| !element_join_respaced(s)))
+        && arms.iter().all(|s| !opens_with_separator(s)))
     .then_some(arms)
 }
 

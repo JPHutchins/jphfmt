@@ -919,8 +919,12 @@ fn trailing_reserved(toks: &[Token], from: usize, in_define_body: bool) -> usize
         // A chain breaks after its operator as a bracket group breaks after its bracket: what
         // follows can land on a later line, so its flat width is not this construct's to reserve —
         // and once it has broken, the next pass measures a shorter run and decides differently.
+        // The separator the flat form writes is one space, the author's own gap notwithstanding —
+        // the layout respaces `0a&a` to `0a & a` — so the reserve measures the form it will
+        // write; the author's gap would make the next pass's reserve grow by the difference and
+        // flip a fits/explode verdict (#153's draw).
         if is_chain_break(toks, j) && j >= head {
-            return width + pending + display_width(t.text);
+            return width + 1 + display_width(t.text);
         }
         let counted = match t.kind {
             TokenKind::Newline => {
