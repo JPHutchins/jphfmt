@@ -431,8 +431,10 @@ def main(argv: tuple[str, ...]) -> int:
 			destination.write_text(json.dumps(merged_doc), encoding="utf-8")
 			Path(missing_txt).write_text("\n".join(missing), encoding="utf-8")
 			if missing:
+				head, *rest = missing
+				more = f", ... ({len(rest)} more)" if rest else ""
 				print(
-					f"::warning::{len(missing)} shards left no outcomes: {'\n'.join(missing)}",
+					f"::warning::{len(missing)} shards left no outcomes: {head}{more}",
 					file=sys.stderr,
 				)
 			print(f"missing={'true' if missing else 'false'}")

@@ -70,7 +70,7 @@ jobs:
             [ -n "$prior" ] || continue
             if gh run download "$prior" -n "mutants-out-${{ matrix.index }}" -D prior \
                 >/dev/null 2>&1 \
-              && [ -f prior/complete ]; then
+              && { [ -f prior/complete ] || [ -f prior/mutants.out/complete ]; }; then
               echo "shard already analyzed in run $prior — skipping"
               skip=true
               break
@@ -120,29 +120,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
-      - name: Download the prior runs' shards, newest first
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
-            if [ -f "merged/mutants-out-$idx/mutants.out/outcomes.json" ] \
-                || [ -f "merged/mutants-out-$idx/outcomes.json" ]; then
-              continue
-            fi
-            mkdir -p "prior-$idx"
-            while read -r prior; do
-              [ -n "$prior" ] || continue
-              gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
-                >/dev/null 2>&1 \
-                || gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
-                  >/dev/null 2>&1
-              [ -f "prior-$idx/complete" ] && break
-              rm -rf "prior-$idx"
-            done < <(echo "${{ needs.plan.outputs.prior }}")
-            if [ ! -f "prior-$idx/complete" ]; then
-              rm -rf "prior-$idx"
-            fi
-          done
       - name: Download the current run's shard artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,6 +141,29 @@ jobs:
                 echo "::error::artifacts API failed for mutants-out-$idx"
               fi
           done
+      - name: Download the prior runs' shards, newest first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+            if [ -f "merged/mutants-out-$idx/mutants.out/outcomes.json" ] \
+                || [ -f "merged/mutants-out-$idx/outcomes.json" ]; then
+              continue
+            fi
+            mkdir -p "prior-$idx"
+            while read -r prior; do
+              [ -n "$prior" ] || continue
+              gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
+                >/dev/null 2>&1 \
+                || gh run download "$prior" -n "mutants-out-$idx" -D "prior-$idx" \
+                  >/dev/null 2>&1
+              { [ -f "prior-$idx/complete" ] || [ -f "prior-$idx/mutants.out/complete" ]; } && break
+              rm -rf "prior-$idx"
+            done < <(echo "${{ needs.plan.outputs.prior }}")
+            if ! { [ -f "prior-$idx/complete" ] || [ -f "prior-$idx/mutants.out/complete" ]; }; then
+              rm -rf "prior-$idx"
+            fi
+          done
       - id: merge
         name: Merge the shards' outcomes
         run: |
@@ -172,7 +172,9 @@ jobs:
       - id: report
         run: |
           if [ -f merged/empty.txt ]; then
-            if [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
+            if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
+              title="Mutation sweep did not run"
+            elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
               title="Mutation sweep: no shard produced outcomes"
             else
               title="Mutation sweep: every shard completed with zero mutants"
@@ -180,7 +182,7 @@ jobs:
             if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
               body="The sweep did not run: the plan left no shard jobs."
             elif [ "${{ steps.merge.outputs.missing }}" = "true" ]; then
-              body="The mutation sweep ran no shard: every shard failed or left no outcomes."
+              body="The shards listed below left no outcomes; the others completed."
             else
               body="Every shard completed and none found a mutant."
             fi
@@ -208,19 +210,20 @@ jobs:
               echo "**Shards with no outcomes** — a runner shutdown or a build failure took them;"
               echo "a re-dispatch resumes exactly these:"
               echo '```'
-              cat merged/missing.txt
+              head -n 20 merged/missing.txt
+              [ "$(wc -l < merged/missing.txt)" -gt 20 ] && echo "... and more"
               echo '```'
             } >> mutants-report.md
           fi
       - id: rolling
-        if: steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true'
+        if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      - if: steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true'
+      - if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
