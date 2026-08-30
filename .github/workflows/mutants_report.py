@@ -272,6 +272,28 @@ def parsed_summary(text: str) -> dict[str, int] | None:
     }
 
 
+def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> dict[str, int] | None:
+    """The sweep.log counts at either artifact depth, or the empty dict for a zero-mutant file."""
+    for log in (
+        Path(f"{merged_root}/mutants-out-{index}/mutants.out/sweep.log"),
+        Path(f"{merged_root}/mutants-out-{index}/sweep.log"),
+        Path(f"{prior_root}-{index}/mutants.out/sweep.log"),
+        Path(f"{prior_root}-{index}/sweep.log"),
+    ):
+        if not log.exists():
+            continue
+        try:
+            text = log.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            continue
+        summary = parsed_summary(text)
+        if summary is not None:
+            return summary
+        if "Found 0 mutants to test" in text:
+            return {}
+    return None
+
+
 def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[Json, list[str]]:
     """One merged outcomes document and the shard files that left no readable one.
 
@@ -302,6 +324,8 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
     totals: dict[str, int] = {}
     missing: list[str] = []
     for shard in shards:
+        if not isinstance(shard, dict):
+            raise SystemExit(f"shard cell malformed: {shard!r}")
         file, index = shard.get("file"), shard.get("index")
         if not isinstance(file, str) or not isinstance(index, str):
             raise SystemExit(f"shard cell malformed: {shard!r}")
@@ -321,24 +345,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             except SystemExit:
                 continue
         if data is None:
-            summary = None
-            logs = (
-                Path(f"{merged_root}/mutants-out-{index}/mutants.out/sweep.log"),
-                Path(f"{merged_root}/mutants-out-{index}/sweep.log"),
-                Path(f"{prior_root}-{index}/mutants.out/sweep.log"),
-                Path(f"{prior_root}-{index}/sweep.log"),
-            )
-            for log in logs:
-                if not log.exists():
-                    continue
-                try:
-                    text = log.read_text(encoding="utf-8")
-                except (OSError, ValueError):
-                    continue
-                summary = parsed_summary(text)
-                if summary is None and "Found 0 mutants to test" in text:
-                    summary = {}
-                break
+            summary = _summary_from_logs(index, merged_root, prior_root)
             if summary is None:
                 missing.append(file)
                 continue
@@ -347,12 +354,24 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             continue
         try:
             tallied = counts(data)
-            outcomes.extend(one for one in listed(data.get("outcomes")) if isinstance(one, dict))
+            entries = listed(data.get("outcomes"))
+            if tallied.tested == 0 and entries:
+                raise SystemExit("reports no mutants tested but holds outcome entries")
+            if tallied.missed == 0 and any(
+                isinstance(one, dict) and one.get("summary") == "MissedMutant" for one in entries
+            ):
+                raise SystemExit("reports no missed but holds MissedMutant entries")
+            outcomes.extend(one for one in entries if isinstance(one, dict))
             totals["total_mutants"] = totals.get("total_mutants", 0) + tallied.tested
             for field in ("caught", "missed", "unviable", "timeout"):
                 totals[field] = totals.get(field, 0) + getattr(tallied, field)
         except SystemExit as err:
-            missing.append(f"{file} ({err})")
+            summary = _summary_from_logs(index, merged_root, prior_root)
+            if summary is not None:
+                for field, value in summary.items():
+                    totals[field] = totals.get(field, 0) + value
+            else:
+                missing.append(f"{file} ({err})")
     return {"outcomes": outcomes, **totals}, missing
 
 

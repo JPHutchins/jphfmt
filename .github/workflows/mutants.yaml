@@ -33,7 +33,7 @@ jobs:
               | map(.value as $f | {file: $f, index: (.key | tostring)})')
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
-          prior=$(gh run list --workflow mutants --limit 100 \
+          prior=$(gh run list --workflow mutants --limit 100 --paginate \
             --json databaseId,headSha,status,conclusion \
             --jq 'map(select(.headSha == "${{ github.sha }}" and .status == "completed")) | .[].databaseId' 2>/dev/null || true)
           { echo "prior<<EOF"; echo "$prior"; echo "EOF"; } >>"$GITHUB_OUTPUT"
@@ -123,14 +123,15 @@ jobs:
       - name: Download the current run's shard artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
-          for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
+          for idx in $(jq -r '.[].index' <<<"$MATRIX" 2>/dev/null || true); do
             mkdir -p "merged/mutants-out-$idx"
             gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
               >/dev/null 2>&1 \
               || gh run download "$GITHUB_RUN_ID" -n "mutants-out-$idx" -D "merged/mutants-out-$idx" \
                 >/dev/null 2>&1 \
-              || if names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+              || if names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
                   --jq '.artifacts[].name' 2>/dev/null); then
                 if echo "$names" | grep -qx "mutants-out-$idx"; then
                   echo "::error::download failed for mutants-out-$idx though the artifact exists"
@@ -144,10 +145,13 @@ jobs:
       - name: Download the prior runs' shards, newest first
         env:
           GH_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
-          for idx in $(jq -r '.[].index' <<< '${{ needs.plan.outputs.matrix || '[]' }}' 2>/dev/null || true); do
-            if [ -f "merged/mutants-out-$idx/mutants.out/outcomes.json" ] \
-                || [ -f "merged/mutants-out-$idx/outcomes.json" ]; then
+          for idx in $(jq -r '.[].index' <<<"$MATRIX" 2>/dev/null || true); do
+            if jq -e 'type == "object"' "merged/mutants-out-$idx/mutants.out/outcomes.json" \
+                >/dev/null 2>&1 \
+                || jq -e 'type == "object"' "merged/mutants-out-$idx/outcomes.json" \
+                >/dev/null 2>&1; then
               continue
             fi
             mkdir -p "prior-$idx"
@@ -166,10 +170,14 @@ jobs:
           done
       - id: merge
         name: Merge the shards' outcomes
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
-          uv run .github/workflows/mutants_report.py merge '${{ needs.plan.outputs.matrix || '[]' }}' \
+          uv run .github/workflows/mutants_report.py merge "$MATRIX" \
             merged prior merged/outcomes.json merged/missing.txt merged/empty.txt >>"$GITHUB_OUTPUT"
       - id: report
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
           if [ -f merged/empty.txt ]; then
             if [ "${{ steps.merge.outputs.ran }}" != "true" ]; then
@@ -201,7 +209,7 @@ jobs:
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
             "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            mutants-report.md '${{ needs.plan.outputs.matrix || '[]' }}' >>"$GITHUB_OUTPUT"
+            mutants-report.md "$MATRIX" >>"$GITHUB_OUTPUT"
           # A partial merge must never read as clean: the issue body names the shards that left
           # no outcomes, and the missed-count gate below cannot suppress an update on it.
           if [ -s merged/missing.txt ]; then
@@ -211,7 +219,7 @@ jobs:
               echo "a re-dispatch resumes exactly these:"
               echo '```'
               head -n 20 merged/missing.txt
-              [ "$(wc -l < merged/missing.txt)" -gt 20 ] && echo "... and more"
+              [ -n "$(sed -n '21p' merged/missing.txt)" ] && echo "... and more"
               echo '```'
             } >> mutants-report.md
           fi
