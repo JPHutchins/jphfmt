@@ -20,6 +20,9 @@ jobs:
       prior: ${{ steps.list.outputs.prior }}
     steps:
       - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
       - id: list
         env:
           GH_TOKEN: ${{ github.token }}
@@ -27,10 +30,13 @@ jobs:
           # The sharded set is src/ by decision: those are the crate's mutation targets. The old
           # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
           # and build scripts are test runners, not mutation targets, and are out of scope.
-          # One cell per src file: {file, index}.
-          matrix=$(find src -name '*.rs' | sort \
-            | jq -R -s -c 'split("\n") | map(select(length > 0)) | to_entries
-              | map(.value as $f | {file: $f, index: (.key | tostring)})')
+          # One cell per src file, except builders.rs — the largest file, whose whole-file sweep
+          # kept losing its runner to host shutdowns (#65) — which splits into four ordinal
+          # chunks of cargo-mutants' own --list, each cell a `-F` regex naming exactly its chunk.
+          # The chunk regexes are exact-name alternations, so the cells partition the file by
+          # construction, and a failed --list falls back to one whole-file cell rather than
+          # dropping the file.
+          matrix=$(find src -name '*.rs' | sort | python3 .github/workflows/mutants_plan.py)
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           prior=$(gh run list --workflow mutants --limit 100 \
@@ -91,11 +97,14 @@ jobs:
         continue-on-error: true
         env:
           FILE: ${{ matrix.file }}
+          RE: ${{ matrix.re }}
         run: |
           set -o pipefail
           mkdir -p mutants.out
           rc=0
-          cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
+          args=()
+          [ -n "$RE" ] && args=(-F "$RE")
+          cargo mutants --jobs 8 --file "$FILE" "${args[@]}" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
           # This grep must accept exactly what mutants_report.py's parsed_summary does — its regex
           # is the authority; a parser change changes this grep in the same change.
           { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; } \
