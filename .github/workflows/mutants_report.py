@@ -470,7 +470,16 @@ def main(argv: tuple[str, ...]) -> int:
 			all_missing = bool(shards) and len(missing) == len(shards)
 			print(f"all_missing={'true' if all_missing else 'false'}")
 			if empty:
-				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
+				message = (
+					"the sweep did not run — the plan left no shard jobs\n"
+					if not shards
+					else "no shard produced outcomes — every shard left nothing\n"
+					if all_missing
+					else "some shards left no outcomes; the rest found zero mutants\n"
+					if missing
+					else "every shard completed with zero mutants\n"
+				)
+				Path(empty_txt).write_text(message, encoding="utf-8")
 		case _:
 			print(__doc__)
 			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")

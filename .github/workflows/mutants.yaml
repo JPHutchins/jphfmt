@@ -96,10 +96,15 @@ jobs:
           mkdir -p mutants.out
           rc=0
           cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
-          # This grep must accept exactly what mutants_report.py's parsed_summary does — its regex
-          # is the authority; a parser change changes this grep in the same change.
-          { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; } \
-            && touch mutants.out/complete
+          # The marker stands for exactly what the merge can recover: a clean run (outcomes.json),
+          # or a summary line the parser accepts. A non-zero rc without a parseable summary leaves
+          # no marker, so a resume re-runs the shard instead of skipping one the merge cannot
+          # count — a drifted exit-2 run cannot strand itself forever. The grep must accept
+          # exactly what mutants_report.py's parsed_summary does — its regex is the authority; a
+          # parser change changes this grep in the same change.
+          if [ "$rc" -eq 0 ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; then
+            touch mutants.out/complete
+          fi
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
         uses: actions/upload-artifact@v7
         with:
