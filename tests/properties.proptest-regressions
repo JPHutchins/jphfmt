@@ -18,3 +18,6 @@ cc 888b26ec4167c607aa8494815acf56a021e4101d8c85f1dd68f1d540dd4c1d3c # shrinks to
 cc c9d59b6862a6c46de7f5ab14dfdffdf3ee6e9aa48bff8d75de2c0895e88764ff # shrinks to s = "if({,}})"
 cc 3a34284fa85482a1627383a0b14514ceda9c01666c02a09a9d7cc378def34e95 # shrinks to s = "({,}})({"
 cc 6ec1e000175b51d87268a4f6a8053cda731b00225f69f78fbd451656feb4c395 # shrinks to s = "({;,;})"
+cc 8650d67f909c917cb8cb5b77f0dc1ed9322cf4e316c0a69237343d3252a8c983 # shrinks to s = "=\"\"\"\"{\"\":*\n0\"\"?}"
+cc 40f97c4b8b307fc5ab5d9eda5d9f47aa008460e93156351e155bf57589dbd26b # shrinks to s = "=.{_/aAA|a 'A.a.0A_Aa00a0\ta\"\"A(A(\"'/\"a_\t&\t0a.A0#&a&\n00\nA0aA0&__&\na\taa\"}A_A=0a&a;"
+cc dfb938ed6ff954ef912e007b027f95c055d73125268241703324b06a5af7000d # shrinks to s = "=\"\"{?=*\n0&\"\"}", width = 1
