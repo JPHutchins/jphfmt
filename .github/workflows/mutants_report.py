@@ -287,6 +287,9 @@ def shard_map(shards: list[Any]) -> str:
     )
 
 
+ZERO_MUTANTS = "Found 0 mutants to test"
+
+
 def parsed_summary(text: str) -> dict[str, int] | None:
     """The counts cargo-mutants' summary line carries, the only record a timeout-bearing
     sweep leaves when it never writes outcomes.json. cargo-mutants omits a zero-valued
@@ -322,6 +325,34 @@ def parsed_summary(text: str) -> dict[str, int] | None:
     }
 
 
+def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
+    """A shard counts as analyzed iff its outcomes file exists, its log names a zero-mutant file,
+    or its log carries the parseable summary — the same evidence the merge's fallback reads, so the
+    marker and the fallback cannot disagree.
+
+    >>> from tempfile import TemporaryDirectory
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "sweep.log").write_text("6 mutants tested in 4m: 5 caught, 1 unviable", encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    True
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "sweep.log").write_text(ZERO_MUTANTS, encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    True
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "sweep.log").write_text("baseline failed to build", encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    False
+    """
+    if (outcomes_dir / "outcomes.json").is_file():
+        return True
+    try:
+        text = log.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return ZERO_MUTANTS in text or parsed_summary(text) is not None
+
+
 def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> dict[str, int] | None:
     """The sweep.log counts at either artifact depth, or the empty dict for a zero-mutant file."""
     for log in (
@@ -339,7 +370,7 @@ def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> dict[st
         summary = parsed_summary(text)
         if summary is not None:
             return summary
-        if "Found 0 mutants to test" in text:
+        if ZERO_MUTANTS in text:
             return {}
     return None
 
@@ -516,6 +547,8 @@ def main(argv: tuple[str, ...]) -> int:
 		case ("plan",):
 			files = sys.stdin.read().splitlines()
 			print(msgspec.json.encode(plan(files, 4)).decode())
+		case ("sweep-marked", outcomes_dir, log):
+			return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
 		case ("--self-test",):
 			import doctest
 
@@ -532,6 +565,7 @@ def main(argv: tuple[str, ...]) -> int:
 			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
 			print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
 			print("       mutants_report.py plan < FILES_LIST")
+			print("       mutants_report.py sweep-marked OUTCOMES_DIR SWEEP_LOG")
 			print("       mutants_report.py --self-test | --self-check FILES...")
 			return 2
 	return 0

@@ -84,6 +84,8 @@ jobs:
         if: steps.prior.outputs.skip != 'true'
         with:
           tool: cargo-mutants
+      - uses: astral-sh/setup-uv@v6
+        if: steps.prior.outputs.skip != 'true'
       - id: sweep
         if: steps.prior.outputs.skip != 'true'
         continue-on-error: true
@@ -92,15 +94,13 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -o pipefail
-          mkdir -p mutants.out
-          rc=0
           args=()
           [ -n "$SHARD" ] && args=(--shard "$SHARD")
-          cargo mutants --jobs 8 --file "$FILE" "${args[@]}" --output mutants.out 2>&1 | tee mutants.out/sweep.log || rc=$?
-          # This grep must accept exactly what mutants_report.py's parsed_summary does — its regex
-          # is the authority; a parser change changes this grep in the same change.
-          { [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; } \
-            && touch mutants.out/complete
+          cargo mutants --jobs 8 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
+          if uv run .github/workflows/mutants_report.py sweep-marked mutants.out mutants.sweep.log; then
+            cp mutants.sweep.log mutants.out/sweep.log
+            touch mutants.out/complete
+          fi
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''
         uses: actions/upload-artifact@v7
         with:
