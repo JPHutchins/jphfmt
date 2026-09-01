@@ -543,16 +543,30 @@ def main(argv: tuple[str, ...]) -> int:
 			all_missing = bool(shards) and len(missing) == len(shards)
 			print(f"all_missing={'true' if all_missing else 'false'}")
 			if empty:
-				message = (
-					"the sweep did not run — the plan left no shard jobs\n"
-					if not shards
-					else "no shard produced outcomes — every shard left nothing\n"
-					if all_missing
-					else "some shards left no outcomes; the rest found zero mutants\n"
-					if missing
-					else "every shard completed with zero mutants\n"
+				print(
+					"title="
+					+ (
+						"Mutation sweep did not run"
+						if not shards
+						else "Mutation sweep: no shard produced outcomes"
+						if all_missing
+						else "Mutation sweep: some shards left no outcomes"
+						if missing
+						else "Mutation sweep: every shard completed with zero mutants"
+					)
 				)
-				Path(empty_txt).write_text(message, encoding="utf-8")
+				Path(empty_txt).write_text(
+					(
+						"The sweep did not run: the plan left no shard jobs."
+						if not shards
+						else "Every shard left no outcomes — the shards below are the whole sweep."
+						if all_missing
+						else "The shards below left no outcomes; the rest completed and none found a mutant."
+						if missing
+						else "Every shard completed and none found a mutant."
+					),
+					encoding="utf-8",
+				)
 		case ("plan",):
 			files = sys.stdin.read().splitlines()
 			print(msgspec.json.encode(plan(files, 4)).decode())
