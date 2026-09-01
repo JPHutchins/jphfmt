@@ -153,9 +153,11 @@ jobs:
           MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
           for idx in $(jq -r '.[].index' <<<"$MATRIX" 2>/dev/null || true); do
-            if jq -e 'type == "object"' "merged/mutants-out-$idx/mutants.out/outcomes.json" \
+            if uv run .github/workflows/mutants_report.py decodable \
+                "merged/mutants-out-$idx/mutants.out/outcomes.json" \
                 >/dev/null 2>&1 \
-                || jq -e 'type == "object"' "merged/mutants-out-$idx/outcomes.json" \
+                || uv run .github/workflows/mutants_report.py decodable \
+                  "merged/mutants-out-$idx/outcomes.json" \
                 >/dev/null 2>&1; then
               continue
             fi

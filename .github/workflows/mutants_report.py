@@ -443,17 +443,28 @@ def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
     False
     """
     if (outcomes_dir / "outcomes.json").is_file():
+        # Decodable is analyzed, drift-failing included: the reject is deterministic — a
+        # re-run cannot change it — and the merge's guard-failure fallback recovers the
+        # counts from the uploaded log. Only the no-evidence class re-runs.
         try:
-            data = loaded(outcomes_dir / "outcomes.json", OutcomesDoc)
+            loaded(outcomes_dir / "outcomes.json", OutcomesDoc)
         except SystemExit:
             pass
         else:
-            return drift_reason(data) is None
+            return True
     try:
         text = log.read_text(encoding="utf-8")
     except (OSError, ValueError):
         return False
-    return ZERO_MUTANTS in text or parsed_summary(text) is not None
+    return log_evidence(text) is not None
+
+
+def log_evidence(text: str) -> SummaryCounts | None:
+    """The counts a sweep log carries: a parseable summary, or the zero-mutant shape — the one
+    classification the shard marker and the merge's fallback share."""
+    if ZERO_MUTANTS in text:
+        return SummaryCounts(total_mutants=0)
+    return parsed_summary(text)
 
 
 def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> SummaryCounts | None:
@@ -470,11 +481,9 @@ def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> Summary
             text = log.read_text(encoding="utf-8")
         except (OSError, ValueError):
             continue
-        summary = parsed_summary(text)
+        summary = log_evidence(text)
         if summary is not None:
             return summary
-        if ZERO_MUTANTS in text:
-            return SummaryCounts(total_mutants=0)
     return None
 
 
@@ -623,7 +632,7 @@ def main(argv: tuple[str, ...]) -> int:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("merge", "[]", tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
     ...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"))
-    (0, 'missing=false\\nempty=true\\nran=false\\nall_missing=false\\npartial=false\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
+    (0, 'missing=false\\nran=false\\npartial=false\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
 
     The report mode's stdout drives the rolling and retirement gates; the all-missing branch
     of the merge drives the no-outcomes title and body.
@@ -639,7 +648,7 @@ def main(argv: tuple[str, ...]) -> int:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("merge", json.dumps([{"file": "a.rs", "index": "0"}]), tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
     ...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"), Path(tmp, "missing.txt").read_text(encoding="utf-8"))
-    (0, 'missing=true\\nempty=true\\nran=true\\nall_missing=true\\npartial=false\\ntitle=Mutation sweep: no shard produced outcomes\\n', 'Every shard left no outcomes — the shards below are the whole sweep.', 'a.rs')
+    (0, 'missing=true\\nran=true\\npartial=false\\ntitle=Mutation sweep: no shard produced outcomes\\n', 'Every shard left no outcomes — the shards below are the whole sweep.', 'a.rs')
     """
     match argv:
         case ("report", outcomes, repo, sha, run, out, shards_json):
@@ -675,10 +684,8 @@ def main(argv: tuple[str, ...]) -> int:
             empty = not merged_doc.outcomes and not any(
                 (merged_doc.total_mutants, merged_doc.missed, merged_doc.caught, merged_doc.unviable, merged_doc.timeout)
             )
-            print(f"empty={'true' if empty else 'false'}")
             print(f"ran={'true' if shards else 'false'}")
             all_missing = bool(shards) and len(missing) == len(shards)
-            print(f"all_missing={'true' if all_missing else 'false'}")
             print(f"partial={'true' if missing and not empty else 'false'}")
             if empty:
                 print(
@@ -710,6 +717,12 @@ def main(argv: tuple[str, ...]) -> int:
             print(msgspec.json.encode(plan(files, 4)).decode())
         case ("sweep-marked", outcomes_dir, log):
             return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
+        case ("decodable", path):
+            try:
+                loaded(Path(path), OutcomesDoc)
+            except SystemExit:
+                return 1
+            return 0
         case ("--self-test",):
             import doctest
 
@@ -727,6 +740,7 @@ def main(argv: tuple[str, ...]) -> int:
             print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
             print("       mutants_report.py plan < FILES_LIST")
             print("       mutants_report.py sweep-marked OUTCOMES_DIR SWEEP_LOG")
+            print("       mutants_report.py decodable OUTCOMES_PATH")
             print("       mutants_report.py --self-test | --self-check FILES...")
             return 2
     return 0
