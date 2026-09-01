@@ -90,13 +90,15 @@ class OutcomesDoc(Totals):
     as None, and each entry decodes on its own, so one malformed entry cannot forfeit the
     readable rest of the document.
 
-    >>> msgspec.json.decode(b'{"total_mutants": 1, "outcomes": null}', type=OutcomesDoc).outcomes is None
-    True
+    >>> entries(msgspec.json.decode(b'{"outcomes": null}', type=OutcomesDoc))
+    []
     >>> entries(msgspec.json.decode(b'{"outcomes": ["Baseline"]}', type=OutcomesDoc))
     []
+    >>> counts(msgspec.json.decode(b'{"total_mutants": 3, "outcomes": "x"}', type=OutcomesDoc))
+    Counts(tested=3, caught=0, missed=0, unviable=0, timeout=0)
     """
 
-    outcomes: list[msgspec.Raw] | None = None
+    outcomes: msgspec.Raw = msgspec.field(default=msgspec.Raw(b"null"))
 
 
 class SummaryCounts(Totals):
@@ -231,9 +233,17 @@ def survivor(mutant: Mutant) -> Survivor | None:
 
 def readable(outcomes: OutcomesDoc | MergedDoc) -> list[msgspec.Raw]:
     """The raw entries that decode on their own; one malformed entry is skipped, and the merged
-    document carries the readable rest verbatim."""
+    document carries the readable rest verbatim. A non-list outcomes field reads as empty, as
+    the old listed() did — the counts still merge."""
+    raw = outcomes.outcomes
+    if raw is None:
+        return []
+    try:
+        listed_entries = msgspec.json.decode(raw, type=list[msgspec.Raw])
+    except msgspec.ValidationError:
+        return []
     kept: list[msgspec.Raw] = []
-    for one in outcomes.outcomes or []:
+    for one in listed_entries:
         try:
             msgspec.json.decode(one, type=Outcome)
         except (msgspec.ValidationError, msgspec.DecodeError):
@@ -248,10 +258,10 @@ def entries(outcomes: OutcomesDoc | MergedDoc) -> list[Outcome]:
 
 
 def drift_reason(data: OutcomesDoc) -> str | None:
-    """The drift guards, in one place: the merge names the shard by the reason, and the sweep
-    marker refuses to mark a shard the merge would reject — so a re-dispatch re-runs exactly the
-    shards that can be fixed, never the ones that deterministically re-reject."""
-    if data.total_mutants == 0 and (data.outcomes or []):
+    """The drift guards, in one place: the merge names the shard by the reason and recovers its
+    counts from the log; the sweep marker analyzes whatever decodes, because the reject is
+    deterministic and a re-run cannot change it."""
+    if data.total_mutants == 0 and readable(data):
         return "reports no mutants tested but holds outcome entries"
     if data.missed == 0 and any(one.summary == "MissedMutant" for one in entries(data)):
         return "reports no missed but holds MissedMutant entries"
@@ -321,10 +331,15 @@ def function_lines(function: str, items: tuple[Survivor, ...], link: str) -> tup
     return (f"**`{function}`** ({len(items)})", "", *(entry(one, link) for one in items), "")
 
 
-def file_section(file: str, items: tuple[Survivor, ...], link: str) -> str:
+def file_section(file: str, items: tuple[Survivor, ...], total: int, link: str) -> str:
+    count = (
+        f"{total} survived"
+        if len(items) == total
+        else f"{total} survived, {len(items)} shown"
+    )
     return "\n".join(
         (
-            f"<details><summary><b>{file}</b> — {len(items)} survived</summary>",
+            f"<details><summary><b>{file}</b> — {count}</summary>",
             "",
             *(
                 line
@@ -337,11 +352,14 @@ def file_section(file: str, items: tuple[Survivor, ...], link: str) -> str:
     )
 
 
-def inventory(shown: tuple[Survivor, ...], link: str) -> str:
+def inventory(shown: tuple[Survivor, ...], link: str, totals: Counter[str] | None = None) -> str:
     """Grouped by iteration, which holds because [`ordered`] leaves each file's entries adjacent — so
-    a prefix renders as exactly the head of the whole."""
+    a prefix renders as exactly the head of the whole. `totals` names each file's full survivor
+    count, so a prefix cut mid-file labels the partial section honestly."""
+    if totals is None:
+        totals = Counter(one.file for one in shown)
     return "\n".join(
-        file_section(file, tuple(group), link)
+        file_section(file, tuple(group), totals[file], link)
         for file, group in groupby(shown, key=lambda one: one.file)
     )
 
@@ -349,14 +367,15 @@ def inventory(shown: tuple[Survivor, ...], link: str) -> str:
 def fitted(order: tuple[Survivor, ...], link: str, spare: int) -> tuple[str, int]:
     """Bisects on the entry count, which is sound because rendered length only grows with it. Per
     entry rather than per section, because one file's section can exceed the whole budget."""
-    whole = inventory(order, link)
+    totals = Counter(one.file for one in order)
+    whole = inventory(order, link, totals)
     if len(whole) <= spare:
         return whole, 0
     fits, over = 0, len(order)
     while over - fits > 1:
         half = (fits + over) // 2
-        fits, over = (half, over) if len(inventory(order[:half], link)) <= spare else (fits, half)
-    return inventory(order[:fits], link), len(order) - fits
+        fits, over = (half, over) if len(inventory(order[:half], link, totals)) <= spare else (fits, half)
+    return inventory(order[:fits], link, totals), len(order) - fits
 
 
 def title(tally: Counts, sha: str) -> str:
@@ -489,7 +508,7 @@ def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> Summary
 
 def merge_shards(
     shards: list[Cell], merged_root: str, prior_root: str
-) -> tuple[MergedDoc, list[str]]:
+) -> tuple[MergedDoc, list[str], list[str]]:
     """One merged outcomes document and the shard files that left no readable one.
 
     The four branch shapes, exercised end to end in a temp directory:
@@ -511,10 +530,10 @@ def merge_shards(
     >>> _ = (root / "merged/mutants-out-4/mutants.out").mkdir(parents=True)
     >>> _ = (root / "merged/mutants-out-4/mutants.out/outcomes.json").write_text('{"total_mutants": 0, "outcomes": [{"summary": "CaughtMutant"}]}', encoding="utf-8")
     >>> cells = [Cell(file="a", index=str(i)) for i in range(5)]
-    >>> merged_doc, missing = merge_shards(cells, str(root / "merged"), str(root / "prior"))
+    >>> merged_doc, missing, dead = merge_shards(cells, str(root / "merged"), str(root / "prior"))
     >>> (merged_doc.total_mutants, merged_doc.missed, missing)
     (617, 55, ['a', 'a: reports no mutants tested but holds outcome entries'])
-    >>> [msgspec.json.decode(one, type=Outcome) for one in merged_doc.outcomes]
+    >>> entries(merged_doc)
     [Outcome(summary='CaughtMutant', scenario=None)]
     >>> import shutil
     >>> shutil.rmtree(tmp)
@@ -523,8 +542,10 @@ def merge_shards(
     zero-mutant shard contributes nothing, and the shard that fails a drift guard is named missing
     with its reason instead of aborting the merge.
     """
-    merged = MergedDoc(outcomes=[])
+    merged = MergedDoc()
     missing: list[str] = []
+    dead: list[str] = []
+    readable_entries: list[msgspec.Raw] = []
     for cell in shards:
         name = f"{cell.file} [shard {cell.shard}]" if cell.shard else cell.file
         candidates = (
@@ -546,6 +567,7 @@ def merge_shards(
             summary = _summary_from_logs(cell.index, merged_root, prior_root)
             if summary is None:
                 missing.append(name)
+                dead.append(name)
                 continue
             add_counts(merged, summary)
             continue
@@ -559,11 +581,10 @@ def merge_shards(
                 continue
             add_counts(merged, summary)
             continue
-        if merged.outcomes is None:
-            merged.outcomes = []
-        merged.outcomes.extend(readable(data))
+        readable_entries.extend(readable(data))
         add_counts(merged, data)
-    return merged, missing
+    merged.outcomes = msgspec.Raw(msgspec.json.encode(readable_entries))
+    return merged, missing, dead
 
 
 def body(
@@ -632,7 +653,7 @@ def main(argv: tuple[str, ...]) -> int:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("merge", "[]", tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
     ...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"))
-    (0, 'missing=false\\nran=false\\npartial=false\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
+    (0, 'missing=false\\nran=false\\npartial=false\\nresumable=false\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
 
     The report mode's stdout drives the rolling and retirement gates; the all-missing branch
     of the merge drives the no-outcomes title and body.
@@ -648,7 +669,7 @@ def main(argv: tuple[str, ...]) -> int:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("merge", json.dumps([{"file": "a.rs", "index": "0"}]), tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
     ...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"), Path(tmp, "missing.txt").read_text(encoding="utf-8"))
-    (0, 'missing=true\\nran=true\\npartial=false\\ntitle=Mutation sweep: no shard produced outcomes\\n', 'Every shard left no outcomes — the shards below are the whole sweep.', 'a.rs')
+    (0, 'missing=true\\nran=true\\npartial=false\\nresumable=true\\ntitle=Mutation sweep: no shard produced outcomes\\n', 'Every shard left no outcomes — the shards below are the whole sweep.', 'a.rs')
     """
     match argv:
         case ("report", outcomes, repo, sha, run, out, shards_json):
@@ -668,7 +689,7 @@ def main(argv: tuple[str, ...]) -> int:
             print(f"title={title(tally, sha)}")
         case ("merge", shards_json, merged_root, prior_root, out, missing_txt, empty_txt):
             shards = msgspec.json.decode(shards_json, type=list[Cell])
-            merged_doc, missing = merge_shards(shards, merged_root, prior_root)
+            merged_doc, missing, dead = merge_shards(shards, merged_root, prior_root)
             destination = Path(out)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(msgspec.json.encode(merged_doc))
@@ -681,12 +702,13 @@ def main(argv: tuple[str, ...]) -> int:
                     file=sys.stderr,
                 )
             print(f"missing={'true' if missing else 'false'}")
-            empty = not merged_doc.outcomes and not any(
+            empty = not readable(merged_doc) and not any(
                 (merged_doc.total_mutants, merged_doc.missed, merged_doc.caught, merged_doc.unviable, merged_doc.timeout)
             )
             print(f"ran={'true' if shards else 'false'}")
             all_missing = bool(shards) and len(missing) == len(shards)
             print(f"partial={'true' if missing and not empty else 'false'}")
+            print(f"resumable={'true' if dead else 'false'}")
             if empty:
                 print(
                     "title="
@@ -718,6 +740,16 @@ def main(argv: tuple[str, ...]) -> int:
         case ("sweep-marked", outcomes_dir, log):
             return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
         case ("decodable", path):
+            """The prior-download gate's verdict: the schema decode, nothing weaker. Pinned so the
+            gate and the decode cannot drift apart.
+
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as tmp:
+            ...     _ = Path(tmp, "ok.json").write_bytes(msgspec.json.encode(OutcomesDoc(total_mutants=1)))
+            ...     _ = Path(tmp, "bad.json").write_text("{corrupt", encoding="utf-8")
+            ...     (main(("decodable", f"{tmp}/ok.json")), main(("decodable", f"{tmp}/bad.json")))
+            (0, 1)
+            """
             try:
                 loaded(Path(path), OutcomesDoc)
             except SystemExit:
