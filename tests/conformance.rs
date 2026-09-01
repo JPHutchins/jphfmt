@@ -2376,8 +2376,11 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             16,
         ),
         (
+            // #154's refusal now fires for this head: the claim's flat group and the arm's
+            // budget disagree, so the walk lays the group broken and the operands — which fit
+            // the remaining line — stay flat. A fixpoint, pinned as such.
             "void f(void) {\n\t(f(x)) + b = c | d;\n}\n",
-            "void f(void) {\n\t(f(x)) + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            "void f(void) {\n\t(f(\n\t\tx\n\t)) + b = c | d;\n}\n",
             19,
         ),
         (
@@ -2511,6 +2514,53 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
         ),
     ] {
         assert_laid_out(src, width, expected);
+    }
+}
+
+#[test]
+fn a_group_chain_head_does_not_relay_one_line_wider() {
+    // #154. A statement chain whose head holds a bracketed group: the claim renders the group
+    // against the statement's own reserve (only the `;`), while the next pass — the head's
+    // authored break makes its claim refuse — renders it through the group arm against the
+    // group's own trailing reserve. The two budgets disagreed on the group's shape, so the
+    // passes relaid it one line wider each pass. The claim now compares the two renders and
+    // refuses when they differ, sending both passes through the group arm. The issue's seed,
+    // pinned at the probe boundary and either side. Exact-output and fixpoint only: at 10 and
+    // 11 the chain's continuation indent alone exceeds the width, like the width-4 pin above.
+    for (src, width, expected) in [
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            11,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = (\n\t0 >\n\t_A. .\n);\n",
+        ),
+        // The refusal band: the claim and the group arm disagree, the walk lays the group, and
+        // the operands — which fit the remaining line — stay flat. One width per distinct
+        // output; the neighbors reproduce these byte for byte.
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            13,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
+        ),
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            17,
+            "a\"\"(\n\tA / A &\n\tA\n) = 0>_A. .;\n",
+        ),
+        // The authored-newline form: the reserve stops at the author's break, the budgets
+        // equal, and the claim's render is a fixpoint on the first pass.
+        (
+            "a\"\"(A/A&A)\n= 0>_A. .;",
+            19,
+            "a\"\"(A / A & A) = (\n\t0 >\n\t_A. .\n);\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(once, expected, "{src:?} at {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "and it is a fixpoint"
+        );
     }
 }
 

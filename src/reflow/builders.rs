@@ -241,7 +241,7 @@ fn tight_against_previous(toks: &[Token], open: usize) -> bool {
     }
 }
 
-fn build_expr_doc(toks: &[Token]) -> Doc {
+pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
     {
