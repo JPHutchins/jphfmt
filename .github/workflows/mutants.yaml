@@ -20,17 +20,15 @@ jobs:
       prior: ${{ steps.list.outputs.prior }}
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
       - id: list
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The sharded set is src/ by decision: those are the crate's mutation targets. The old
-          # unfiltered sweep ran over the same files cargo-mutants would mutate; tests/, benches/,
-          # and build scripts are test runners, not mutation targets, and are out of scope.
-          # One cell per src file: {file, index}.
-          matrix=$(find src -name '*.rs' | sort \
-            | jq -R -s -c 'split("\n") | map(select(length > 0)) | to_entries
-              | map(.value as $f | {file: $f, index: (.key | tostring)})')
+          # One cell per src file — the crate's mutation targets — except builders.rs, which splits
+          # into four of cargo-mutants' own --shard slices so a reaped runner costs a quarter (#65).
+          # The plan itself is mutants_report.py's plan mode.
+          matrix=$(find src -name '*.rs' | sort | uv run .github/workflows/mutants_report.py plan)
           jq -e 'length > 0' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
           prior=$(gh run list --workflow mutants --limit 100 \
@@ -45,8 +43,8 @@ jobs:
             echo "$outside" | sed 's/^/  /' >&2
           fi
 
-  # One shard per source file: a runner shutdown costs the shard it killed, not the whole sweep —
-  # the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
+  # One shard per cell of the plan: a runner shutdown costs the shard it killed, not the whole
+  # sweep — the 51-minute monolith that died in #136 becomes many minutes-long cells, each with its own
   # outcomes artifact. A shard whose outcomes already exist from a prior run of this SHA skips —
   # the resume: a re-dispatch after a shutdown re-runs only the shards that died. The check runs
   # before the toolchain installs, so a skipped shard pays nothing.
@@ -86,24 +84,21 @@ jobs:
         if: steps.prior.outputs.skip != 'true'
         with:
           tool: cargo-mutants
+      - uses: astral-sh/setup-uv@v6
+        if: steps.prior.outputs.skip != 'true'
       - id: sweep
         if: steps.prior.outputs.skip != 'true'
         continue-on-error: true
         env:
           FILE: ${{ matrix.file }}
+          SHARD: ${{ matrix.shard }}
         run: |
           set -o pipefail
-          mkdir -p mutants.out
-          cargo mutants --jobs 8 --file "$FILE" --output mutants.out 2>&1 | tee mutants.out/sweep.log || true
-          # The marker stands for exactly what the merge can recover, and nothing else — the exit
-          # code plays no part: an intact outcomes.json, the zero-mutant text the merge's summary
-          # fallback reads, or a summary line the parser accepts. Anything else leaves no marker,
-          # so a resume re-runs the shard instead of skipping one the merge cannot count. The
-          # grep must accept exactly what mutants_report.py's parsed_summary does — its regex is
-          # the authority; a parser change changes this grep in the same change.
-          if [ -f mutants.out/outcomes.json ] \
-              || grep -qF 'Found 0 mutants to test' mutants.out/sweep.log \
-              || grep -qE '[0-9]+ mutants tested in [^:]*: [0-9]+ (missed|caught|unviable|timeouts)' mutants.out/sweep.log; then
+          args=()
+          [ -n "$SHARD" ] && args=(--shard "$SHARD")
+          cargo mutants --jobs 8 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
+          if uv run .github/workflows/mutants_report.py sweep-marked mutants.out mutants.sweep.log; then
+            cp mutants.sweep.log mutants.out/sweep.log
             touch mutants.out/complete
           fi
       - if: steps.prior.outputs.skip != 'true' && hashFiles('mutants.out/complete') != ''

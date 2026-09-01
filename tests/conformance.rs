@@ -3249,3 +3249,46 @@ fn a_segment_reread_starts_at_the_cut_and_stays_inside_the_window() {
         );
     }
 }
+
+#[test]
+fn a_ternary_arm_rereads_its_star_from_the_cut() {
+    // #153: a fresh 1M draw found the ternary's arm refusal firing only on the broken form — the
+    // arm `*\n0 "" ?` read its star span-initial, the ternary was refused, and the generic fallback
+    // joined the break it meant to protect, writing a tight `"":` the next pass's ternary path
+    // re-laid with ` : `. The arm's refusal now re-reads from its own `:` cut, which proves the
+    // star belongs to a ternary arm, not a declarator; the first pass writes the ternary form
+    // every pass keeps.
+    let once = format("=\"\"\"\"{\"\":*\n0\"\"?}");
+    assert_eq!(once, " = \"\"\"\"{\"\" : * 0\"\"?}\n");
+    assert_eq!(format(&once), once, "and it is a fixpoint");
+}
+
+#[test]
+fn a_chain_head_recontextualizes_the_first_segments_star() {
+    // #153's draw, the chain form: the first segment `*\n0` read its star span-initial and refused
+    // the chain, so the generic fallback collapsed the break and wrote a form the next pass's chain
+    // path re-laid with its own separators. The first segment's refusal now re-reads with the
+    // head's last token in view — the `=` after `?` proves the operand the star is — and the first
+    // pass writes the chain form every pass keeps.
+    let once = format("=\"\"{?=*\n0&\"\"}");
+    assert_eq!(once, " = \"\"{? = * 0 & \"\"}\n");
+    assert_eq!(format(&once), once, "and it is a fixpoint");
+}
+
+#[test]
+fn a_brace_reserve_counts_the_chain_separator_the_layout_writes() {
+    // #153's draw, the reserve form: pass 1's tail was the author's tight `0a&a` (the reserve
+    // measured 9 and the brace fit exactly), the layout respaced it to `0a & a`, and pass 2's
+    // reserve measured 10 — one column past the boundary, flipping the brace's fits verdict. The
+    // reserve now counts the chain separator the layout will write — one space — the author's own
+    // gap notwithstanding. The stable form's string interior overruns the width, so this pins the
+    // exact form and the fixpoint, not the width bound.
+    let once = format(
+        "=.{_/aAA|a 'A.a.0A_Aa00a0\ta\"\"A(A(\"'/\"a_\t&\t0a.A0#&a&\n00\nA0aA0&__&\na\taa\"}A_A=0a&a;",
+    );
+    assert_eq!(
+        once,
+        " = .{\n\t_ / aAA | a 'A.a.0A_Aa00a0\ta\"\"A(A(\"' / \"a_\t&\t0a.A0#&a&\n00\nA0aA0&__&\na\taa\",\n}A_A = 0a & a;\n"
+    );
+    assert_eq!(format(&once), once, "and it is a fixpoint");
+}
