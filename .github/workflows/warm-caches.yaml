@@ -1,0 +1,56 @@
+name: warm-caches
+
+on:
+  schedule:
+    # Weekly, Monday, off the :00 mark: GitHub evicts a cache entry seven days after its last
+    # access, and one restore a week keeps the entry alive with ~zero steady-state margin — each
+    # restore lands at the moment the previous week's entry expires, and the design only holds
+    # because GitHub's eviction is a coarse sweep rather than a precise timer.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+# Serializes runs: a restore refreshes the cache's access time either way, so two at once buy
+# nothing. Queues rather than cancels.
+concurrency: warm-caches
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    # A dispatch on any other ref would save orphan entries under a throwaway key, dead weight
+    # against the shared quota that ages the real entries toward eviction.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Restore-only here: the save is the next cache step's, gated on the suite's own success —
+      # a partial store saved under the new key would freeze, since the first save under a key
+      # wins and every later exact hit skips saving.
+      - uses: ./.github/actions/code-review-setup
+        with:
+          save: "false"
+      # The store CI reads is the full suite's graph — the crane deps, checks and MSRV builds —
+      # not the devShell closure a `nix develop --command true` realizes. Running what validate
+      # runs makes the cron's save as good as CI's own.
+      - id: suite
+        run: nix develop --command camas
+      - uses: nix-community/cache-nix-action@v7
+        if: success()
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'editors/vscode/package-lock.json') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          lookup-only: "true"
+          save: "true"
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      # This cron is the only run that can write the npm cache CI reads, so a key-miss run must
+      # populate it: a save of an unused ~/.npm is junk, and setup-node never rewrites an
+      # exact-hit key — which is also why an exact hit skips the reinstall.
+      - if: steps.node.outputs.cache-hit != 'true'
+        run: npm ci
+        working-directory: editors/vscode
