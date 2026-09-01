@@ -3,7 +3,9 @@ name: warm-caches
 on:
   schedule:
     # Weekly, Monday, off the :00 mark: GitHub evicts a cache entry seven days after its last
-    # access, so one restore a week keeps the entry alive with a day's margin.
+    # access, and one restore a week keeps the entry alive with ~zero steady-state margin — each
+    # restore lands at the moment the previous week's entry expires, and the design only holds
+    # because GitHub's eviction is a coarse sweep rather than a precise timer.
     - cron: '17 4 * * 1'
   workflow_dispatch:
 
@@ -15,10 +17,10 @@ permissions:
   contents: read
 
 jobs:
-  # The same two cache-restoring steps ci.yaml runs, and nothing else: a restore is the access
-  # that resets the eviction clock, and on a key miss (a changed lockfile since the last hit)
-  # each action re-saves under the new key from the prefix it restored — so the next real CI run
-  # starts from the closest available content instead of cold.
+  # The same two cache-restoring steps ci.yaml runs, plus the work each cache is meant to hold: a
+  # restore is the access that resets the eviction clock, and on a key miss (a changed lockfile
+  # since the last hit) each action re-saves under the new key — populated now, so the next real
+  # CI run starts from the new content instead of cold or stale.
   warm:
     runs-on: ubuntu-latest
     steps:
@@ -32,8 +34,16 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
+      # Entering the shell builds what the new lockfile names, so a key-miss save holds the new
+      # store rather than the prefix entry's content — without it the cron could freeze pre-bump
+      # derivations under the new key, and every later exact hit would restore them forever.
+      - run: nix develop --command true
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
+      # This cron is the only run that can write the npm cache CI reads, so it must populate it:
+      # a save of an unused ~/.npm is junk, and setup-node never rewrites an exact-hit key.
+      - run: npm ci
+        working-directory: editors/vscode
