@@ -26,6 +26,7 @@ jobs:
       - uses: ./.github/actions/code-review-setup
         with:
           save: "true"
+          warm: "false"
       - run: nix develop --command camas
 
   # Build release binaries on every push/PR to catch breakage early.

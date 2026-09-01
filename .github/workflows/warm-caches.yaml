@@ -24,16 +24,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Restore-only here: the save is the next cache step's, gated on the suite's own success —
+      # a partial store saved under the new key would freeze, since the first save under a key
+      # wins and every later exact hit skips saving.
       - uses: ./.github/actions/code-review-setup
         with:
-          save: "true"
+          save: "false"
       # The store CI reads is the full suite's graph — the crane deps, checks and MSRV builds —
       # not the devShell closure a `nix develop --command true` realizes. Running what validate
-      # runs makes the cron's save as good as CI's own. A red suite still saves: the built store
-      # is the content the key names, and a failed test must not silently skip the one save this
-      # workflow exists to make.
-      - run: nix develop --command camas
-        continue-on-error: true
+      # runs makes the cron's save as good as CI's own.
+      - id: suite
+        run: nix develop --command camas
+      - uses: nix-community/cache-nix-action@v7
+        if: success()
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'editors/vscode/package-lock.json') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          lookup-only: "true"
+          save: "true"
       - uses: actions/setup-node@v6
         id: node
         with:

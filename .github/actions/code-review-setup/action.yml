@@ -10,8 +10,8 @@ inputs:
   save:
     description: Whether the post-step saves the store under the shared key
     default: "false"
-  save-always:
-    description: Save even when a step fails — a red suite's store is still the right content
+  warm:
+    description: Enter the dev shell once so later nix develop calls are fast
     default: "true"
 runs:
   using: composite
@@ -26,8 +26,8 @@ runs:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'editors/vscode/package-lock.json') }}
         restore-prefixes-first-match: nix-${{ runner.os }}-
         save: ${{ inputs.save }}
-        save-always: ${{ inputs.save-always }}
     # Warm the dev shell OUTSIDE the agent's wall budget so its own `nix develop --command …`
-    # validations are fast.
-    - shell: bash
+    # validations are fast. Callers whose next step is their own `nix develop` pass warm: "false".
+    - if: inputs.warm == 'true'
+      shell: bash
       run: nix develop --command true
