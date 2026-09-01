@@ -231,7 +231,7 @@ jobs:
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      - if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.case != 'swept')
+      - if: success() && (steps.merge.outputs.case != 'clean-zero' && steps.merge.outputs.case != 'swept-clean')
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}

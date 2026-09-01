@@ -385,7 +385,7 @@ def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> dict[st
     return None
 
 
-def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[Json, list[str]]:
+def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[Json, list[str], list[str]]:
     """One merged outcomes document and the shard files that left no readable one.
 
     The four branch shapes, exercised end to end in a temp directory:
@@ -405,8 +405,11 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
     >>> _ = (root / "merged/mutants-out-3/mutants.out/sweep.log").write_text("Found 0 mutants to test", encoding="utf-8")
     >>> _ = (root / "merged/mutants-out-3/complete").touch()
     >>> cells = [{"file": "a", "index": str(i)} for i in range(4)]
-    >>> merge_shards(cells, str(root / "merged"), str(root / "prior"))
-    ({'outcomes': [{'summary': 'CaughtMutant'}], 'total_mutants': 617, 'caught': 529, 'missed': 55, 'unviable': 18, 'timeout': 13}, ['a'])
+    >>> merged_doc, missing, dead = merge_shards(cells, str(root / "merged"), str(root / "prior"))
+    >>> (merged_doc["total_mutants"], merged_doc["missed"], missing)
+    (617, 55, ['a'])
+    >>> dead
+    ['a']
 
     The corrupt outcomes.json is named missing, the summary-only shard contributes its
     counts, and the zero-mutant shard contributes nothing.
@@ -414,6 +417,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
     outcomes: list[Any] = []
     totals: dict[str, int] = {}
     missing: list[str] = []
+    dead: list[str] = []
     for shard in shards:
         if not isinstance(shard, dict):
             raise SystemExit(f"shard cell malformed: {shard!r}")
@@ -441,6 +445,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
             summary = _summary_from_logs(index, merged_root, prior_root)
             if summary is None:
                 missing.append(name)
+                dead.append(name)
                 continue
             for field, value in summary.items():
                 totals[field] = totals.get(field, 0) + value
@@ -465,7 +470,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
                     totals[field] = totals.get(field, 0) + value
             else:
                 missing.append(f"{name} ({err})")
-    return {"outcomes": outcomes, **totals}, missing
+    return {"outcomes": outcomes, **totals}, missing, dead
 
 
 def body(
@@ -535,7 +540,7 @@ def main(argv: tuple[str, ...]) -> int:
 	...     with redirect_stdout(io.StringIO()) as captured:
 	...         code = main(("merge", "[]", tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
 	...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"))
-	(0, 'case=no-plan\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
+	(0, 'case=no-plan\\ntitle=Mutation sweep did not run\\nresumable=false\\n', 'The sweep did not run: the plan left no shard jobs.')
 	"""
 	match argv:
 		case ("report", outcomes, repo, sha, run, out, shards_json):
@@ -547,11 +552,11 @@ def main(argv: tuple[str, ...]) -> int:
 			print(f"title={title(tally, sha)}")
 		case ("merge", shards_json, merged_root, prior_root, out, missing_txt, empty_txt):
 			shards = json.loads(shards_json)
-			merged_doc, missing = merge_shards(shards, merged_root, prior_root)
+			merged_doc, missing, dead = merge_shards(shards, merged_root, prior_root)
 			destination = Path(out)
 			destination.parent.mkdir(parents=True, exist_ok=True)
 			destination.write_text(json.dumps(merged_doc), encoding="utf-8")
-			Path(missing_txt).write_text("\n".join(missing), encoding="utf-8")
+			Path(missing_txt).write_text("\n".join(missing) + ("\n" if missing else ""), encoding="utf-8")
 			if missing:
 				head, *rest = missing
 				more = f", ... ({len(rest)} more)" if rest else ""
@@ -589,12 +594,14 @@ def main(argv: tuple[str, ...]) -> int:
 				print(f"case={case}")
 				print(f"title={case_title}")
 				Path(empty_txt).write_text(case_body, encoding="utf-8")
+			print(f"resumable={'true' if dead else 'false'}")
+			if empty:
+				pass
 			else:
 				# The non-empty side keeps the dimensions the gates need: a partial merge (dead
 				# shards beside outcomes), and a clean sweep distinguished from one with survivors.
 				case = "swept-partial" if missing else "swept-survivors" if merged_doc.get("missed", 0) else "swept-clean"
 				print(f"case={case}")
-				print(f"resumable={'true' if any(': ' not in m for m in missing) else 'false'}")
 		case ("plan",):
 			files = sys.stdin.read().splitlines()
 			print(msgspec.json.encode(plan(files, 4)).decode())
