@@ -304,6 +304,10 @@ def ship(spec: str) -> int:
 
 def main(argv: tuple[str, ...]) -> int:
 	match argv:
+		case ("--self-test",):
+			import doctest
+
+			return doctest.testmod().failed
 		case ("check",):
 			return check()
 		case ("sync", version):
@@ -312,7 +316,7 @@ def main(argv: tuple[str, ...]) -> int:
 			return ship(spec)
 		case _:
 			print(__doc__)
-			print("usage: release.py check | sync X.Y.Z | ship (major|minor|patch|X.Y.Z)")
+			print("usage: release.py --self-test | check | sync X.Y.Z | ship (major|minor|patch|X.Y.Z)")
 			return 2
 
 
