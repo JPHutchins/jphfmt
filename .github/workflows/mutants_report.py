@@ -1,5 +1,6 @@
 # /// script
 # requires-python = ">=3.14"
+# dependencies = ["msgspec==0.21.1", "mypy==2.3.1"]
 # ///
 """The mutation report the nightly workflow files.
 
@@ -17,9 +18,45 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import msgspec
+
 # GitHub rejects a body past 65536 characters. #65 was cut off just under it, losing the totals that
 # sit at the tail; what does not fit here is counted in the report and kept in the run's artifact.
 BODY_LIMIT = 60000
+
+
+class Cell(msgspec.Struct):
+    """One shard cell: a file, its cargo-mutants --shard slice when it has one, and the index the
+    artifact name and the merge key on."""
+
+    file: str
+    index: str
+    shard: str = ""
+
+
+# The one file whose whole-file sweep kept losing its runner (#65). A rename of the file must
+# rename this too; a plan whose list no longer holds it warns rather than silently degrading to a
+# whole-file cell.
+SHARDED = "src/reflow/builders.rs"
+
+
+def plan(files: list[str], shards: int) -> list[Cell]:
+    """One cell per file, and SHARDED split into cargo-mutants' own --shard slices.
+
+    >>> plan(["src/a.rs", "src/reflow/builders.rs"], 4)
+    [Cell(file='src/a.rs', index='0', shard=''), Cell(file='src/reflow/builders.rs', index='1', shard='0/4'), Cell(file='src/reflow/builders.rs', index='2', shard='1/4'), Cell(file='src/reflow/builders.rs', index='3', shard='2/4'), Cell(file='src/reflow/builders.rs', index='4', shard='3/4')]
+    """
+    cells: list[Cell] = []
+    if SHARDED not in files:
+        print(f"::warning::{SHARDED} is not in the plan; it sweeps as a whole file", file=sys.stderr)
+    for file in files:
+        if file == SHARDED:
+            for part in range(shards):
+                cells.append(Cell(file=file, index=str(len(cells)), shard=f"{part}/{shards}"))
+        else:
+            cells.append(Cell(file=file, index=str(len(cells))))
+    return cells
+
 
 type Json = dict[str, Any]
 
@@ -239,12 +276,18 @@ def shard_map(shards: list[Any]) -> str:
 
     >>> shard_map([{"file": "src/doc.rs", "index": "0"}])
     '- `mutants-out-0` = `src/doc.rs`'
+    >>> shard_map([{"file": "src/doc.rs", "index": "0", "shard": "1/4"}])
+    '- `mutants-out-0` = `src/doc.rs` [shard 1/4]'
     """
     return "\n".join(
         f"- `mutants-out-{one.get('index')}` = `{one.get('file')}`"
+        f"{f' [shard {one.get('shard')}]' if one.get('shard') else ''}"
         for one in shards
         if isinstance(one, dict)
     )
+
+
+ZERO_MUTANTS = "Found 0 mutants to test"
 
 
 def parsed_summary(text: str) -> dict[str, int] | None:
@@ -282,6 +325,34 @@ def parsed_summary(text: str) -> dict[str, int] | None:
     }
 
 
+def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
+    """A shard counts as analyzed iff its outcomes file exists, its log names a zero-mutant file,
+    or its log carries the parseable summary — the same evidence the merge's fallback reads, so the
+    marker and the fallback cannot disagree.
+
+    >>> from tempfile import TemporaryDirectory
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "sweep.log").write_text("6 mutants tested in 4m: 5 caught, 1 unviable", encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    True
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "sweep.log").write_text(ZERO_MUTANTS, encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    True
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "sweep.log").write_text("baseline failed to build", encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    False
+    """
+    if (outcomes_dir / "outcomes.json").is_file():
+        return True
+    try:
+        text = log.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return ZERO_MUTANTS in text or parsed_summary(text) is not None
+
+
 def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> dict[str, int] | None:
     """The sweep.log counts at either artifact depth, or the empty dict for a zero-mutant file."""
     for log in (
@@ -299,7 +370,7 @@ def _summary_from_logs(index: str, merged_root: str, prior_root: str) -> dict[st
         summary = parsed_summary(text)
         if summary is not None:
             return summary
-        if "Found 0 mutants to test" in text:
+        if ZERO_MUTANTS in text:
             return {}
     return None
 
@@ -339,6 +410,8 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
         file, index = shard.get("file"), shard.get("index")
         if not isinstance(file, str) or not isinstance(index, str):
             raise SystemExit(f"shard cell malformed: {shard!r}")
+        named = shard.get("shard")
+        name = f"{file} [shard {named}]" if isinstance(named, str) and named else file
         candidates = (
             Path(f"{merged_root}/mutants-out-{index}/mutants.out/outcomes.json"),
             Path(f"{merged_root}/mutants-out-{index}/outcomes.json"),
@@ -357,7 +430,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
         if data is None:
             summary = _summary_from_logs(index, merged_root, prior_root)
             if summary is None:
-                missing.append(file)
+                missing.append(name)
                 continue
             for field, value in summary.items():
                 totals[field] = totals.get(field, 0) + value
@@ -381,7 +454,7 @@ def merge_shards(shards: list[Any], merged_root: str, prior_root: str) -> tuple[
                 for field, value in summary.items():
                     totals[field] = totals.get(field, 0) + value
             else:
-                missing.append(f"{file} ({err})")
+                missing.append(f"{name} ({err})")
     return {"outcomes": outcomes, **totals}, missing
 
 
@@ -471,10 +544,29 @@ def main(argv: tuple[str, ...]) -> int:
 			print(f"all_missing={'true' if all_missing else 'false'}")
 			if empty:
 				Path(empty_txt).write_text("no shard produced outcomes — the sweep did not run\n", encoding="utf-8")
+		case ("plan",):
+			files = sys.stdin.read().splitlines()
+			print(msgspec.json.encode(plan(files, 4)).decode())
+		case ("sweep-marked", outcomes_dir, log):
+			return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
+		case ("--self-test",):
+			import doctest
+
+			return doctest.testmod().failed
+		case ("--self-check", *paths):
+			from mypy import api
+
+			stdout, stderr, status = api.run(["--strict", *paths])
+			sys.stdout.write(stdout)
+			sys.stderr.write(stderr)
+			return status
 		case _:
 			print(__doc__)
 			print("       mutants_report.py merge SHARDS_JSON MERGED_ROOT PRIOR_ROOT OUT MISSING_TXT EMPTY_TXT")
 			print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
+			print("       mutants_report.py plan < FILES_LIST")
+			print("       mutants_report.py sweep-marked OUTCOMES_DIR SWEEP_LOG")
+			print("       mutants_report.py --self-test | --self-check FILES...")
 			return 2
 	return 0
 
