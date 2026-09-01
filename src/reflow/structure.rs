@@ -272,20 +272,24 @@ fn emit_tokens(
             // pass re-lays it differently and the passes flip the construct (#154). Refusing
             // sends both passes through the group arm, which agrees with itself.
             let head_end = operand_span(&toks[i..semi]);
-            let budget = width.saturating_sub(1).saturating_sub(*col);
+            // `render` subtracts the running column itself (doc.rs), so both budgets are total
+            // line budgets — the claim's own emit is `emit_doc(&doc, 1, …)` → `render(doc,
+            // width - 1, col, …)`, and the group arm renders at `width - trailing_reserved`.
+            let budget = width.saturating_sub(1);
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-            let head_doc = build_expr_doc(&toks[i..i + head_end]);
             let shape_agrees = (i..i + head_end)
                 .find(|&k| {
+                    // `(` only: the subscript `[` groups the arm also claims stay stable through
+                    // the boundary mechanism (#108's pins).
                     toks[k].text == "("
                         && group_bracketing(&toks[k]).is_some()
                         && !is_call_head_pair(toks, k)
                 })
                 .and_then(|k| match_bracket(toks, k))
                 .is_none_or(|close| {
-                    let group_budget = width
-                        .saturating_sub(trailing_reserved(toks, close + 1, in_define_body))
-                        .saturating_sub(*col);
+                    let head_doc = build_expr_doc(&toks[i..i + head_end]);
+                    let group_budget =
+                        width.saturating_sub(trailing_reserved(toks, close + 1, in_define_body));
                     render(&head_doc, budget, *col, base_level)
                         == render(&head_doc, group_budget, *col, base_level)
                 });

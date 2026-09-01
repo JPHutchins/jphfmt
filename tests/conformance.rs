@@ -2376,8 +2376,11 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
             16,
         ),
         (
+            // #154's refusal now fires for this head: the claim's flat group and the arm's
+            // budget disagree, so the walk lays the group broken and the operands — which fit
+            // the remaining line — stay flat. A fixpoint, pinned as such.
             "void f(void) {\n\t(f(x)) + b = c | d;\n}\n",
-            "void f(void) {\n\t(f(x)) + b = (\n\t\tc |\n\t\td\n\t);\n}\n",
+            "void f(void) {\n\t(f(\n\t\tx\n\t)) + b = c | d;\n}\n",
             19,
         ),
         (
@@ -2539,6 +2542,29 @@ fn a_group_chain_head_does_not_relay_one_line_wider() {
             "a\"\"(A/A&A)=0>_A.\t.;",
             12,
             "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
+        ),
+        // The refusal band: the claim and the group arm disagree, the walk lays the group, and
+        // the operands — which fit the remaining line — stay flat. Every line stays within the
+        // width, so the whole window is asserted like the boundary widths.
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            13,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
+        ),
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            16,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
+        ),
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            17,
+            "a\"\"(\n\tA / A &\n\tA\n) = 0>_A. .;\n",
+        ),
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            18,
+            "a\"\"(\n\tA / A &\n\tA\n) = 0>_A. .;\n",
         ),
     ] {
         let once = jphfmt::format_with_width(src, width);
