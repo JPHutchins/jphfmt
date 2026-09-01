@@ -229,7 +229,7 @@ jobs:
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.missing == 'true' && steps.merge.outputs.empty != 'true' && ' (partial shards)' || '' }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.partial == 'true' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
