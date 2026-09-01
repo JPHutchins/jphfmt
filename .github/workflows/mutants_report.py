@@ -326,9 +326,9 @@ def parsed_summary(text: str) -> dict[str, int] | None:
 
 
 def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
-    """A shard counts as analyzed iff its outcomes file exists, its log names a zero-mutant file,
-    or its log carries the parseable summary — the same evidence the merge's fallback reads, so the
-    marker and the fallback cannot disagree.
+    """A shard counts as analyzed iff its outcomes file decodes, its log names a zero-mutant
+    file, or its log carries the parseable summary — the same evidence the merge's fallback reads,
+    so the marker and the fallback cannot disagree.
 
     >>> from tempfile import TemporaryDirectory
     >>> with TemporaryDirectory() as tmp:
@@ -343,12 +343,22 @@ def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
     ...     _ = Path(tmp, "sweep.log").write_text("baseline failed to build", encoding="utf-8")
     ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
     False
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "outcomes.json").write_text("{corrupt", encoding="utf-8")
+    ...     _ = Path(tmp, "sweep.log").write_text("baseline failed to build", encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    False
     """
     if (outcomes_dir / "outcomes.json").is_file():
-        return True
+        try:
+            loaded(outcomes_dir / "outcomes.json")
+        except SystemExit:
+            pass
+        else:
+            return True
     try:
         text = log.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return False
     return ZERO_MUTANTS in text or parsed_summary(text) is not None
 
@@ -536,37 +546,38 @@ def main(argv: tuple[str, ...]) -> int:
 					f"::warning::{len(missing)} shards left no outcomes: {head}{more}",
 					file=sys.stderr,
 				)
-			print(f"missing={'true' if missing else 'false'}")
 			empty = not merged_doc["outcomes"] and merged_doc.get("total_mutants", 0) == 0
-			print(f"empty={'true' if empty else 'false'}")
-			print(f"ran={'true' if shards else 'false'}")
 			all_missing = bool(shards) and len(missing) == len(shards)
-			print(f"all_missing={'true' if all_missing else 'false'}")
 			if empty:
-				print(
-					"title="
-					+ (
-						"Mutation sweep did not run"
-						if not shards
-						else "Mutation sweep: no shard produced outcomes"
-						if all_missing
-						else "Mutation sweep: some shards left no outcomes"
-						if missing
-						else "Mutation sweep: every shard completed with zero mutants"
-					)
+				case = (
+					"no-plan"
+					if not shards
+					else "all-missing"
+					if all_missing
+					else "some-missing"
+					if missing
+					else "clean-zero"
 				)
-				Path(empty_txt).write_text(
-					(
-						"The sweep did not run: the plan left no shard jobs."
-						if not shards
-						else "Every shard left no outcomes — the shards below are the whole sweep."
-						if all_missing
-						else "The shards below left no outcomes; the rest completed and none found a mutant."
-						if missing
-						else "Every shard completed and none found a mutant."
+				case_title, case_body = {
+					"no-plan": ("Mutation sweep did not run", "The sweep did not run: the plan left no shard jobs."),
+					"all-missing": (
+						"Mutation sweep: no shard produced outcomes",
+						"Every shard left no outcomes — the shards below are the whole sweep.",
 					),
-					encoding="utf-8",
-				)
+					"some-missing": (
+						"Mutation sweep: some shards left no outcomes",
+						"The shards below left no outcomes; the rest completed and none found a mutant.",
+					),
+					"clean-zero": (
+						"Mutation sweep: every shard completed with zero mutants",
+						"Every shard completed and none found a mutant.",
+					),
+				}[case]
+				print(f"case={case}")
+				print(f"title={case_title}")
+				Path(empty_txt).write_text(case_body, encoding="utf-8")
+			else:
+				print("case=swept")
 		case ("plan",):
 			files = sys.stdin.read().splitlines()
 			print(msgspec.json.encode(plan(files, 4)).decode())

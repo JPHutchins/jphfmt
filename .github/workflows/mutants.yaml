@@ -188,11 +188,13 @@ jobs:
           if [ -f merged/empty.txt ]; then
             {
               cat merged/empty.txt
-              echo
-              echo '```'
-              cat merged/missing.txt
-              echo '```'
-              echo "A re-dispatch resumes the shards that died."
+              if [ -s merged/missing.txt ]; then
+                echo
+                echo '```'
+                cat merged/missing.txt
+                echo '```'
+                echo "A re-dispatch resumes the shards that died."
+              fi
             } > mutants-report.md
             echo "missed=0" >>"$GITHUB_OUTPUT"
             echo "title=${{ steps.merge.outputs.title }}" >>"$GITHUB_OUTPUT"
@@ -216,22 +218,22 @@ jobs:
             } >> mutants-report.md
           fi
       - id: rolling
-        if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
+        if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.case != 'swept')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      - if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
+      - if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.case != 'swept')
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.missing == 'true' && steps.merge.outputs.empty != 'true' && ' (partial shards)' || '' }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.case == 'some-missing' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: success() && steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
+        if: success() && steps.report.outputs.missed == '0' && steps.merge.outputs.case == 'clean-zero'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
