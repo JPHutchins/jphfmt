@@ -41,6 +41,7 @@ def nix_files(changed: tuple[str, ...]) -> bool:
 
 
 vscode = Project("editors/vscode")
+github = Project(".github")
 
 # The crane apps pin the toolchain and the +stable/+MSRV matrix in the flake, so there is no rustup.
 rust_fmt_check = Task("nix run .#fmt", when=RUST)
@@ -85,7 +86,7 @@ release = Sequential(
 
 typos = Task("uvx typos {paths}", paths=".", agent_format=AgentFormat("--format sarif", "sarif"))
 nix_fmt_check = Task("nix run .#fmt-nix", when=nix_files)
-PY_SCRIPTS = ("release.py", "corpus.py", ".github/workflows/mutants_report.py")
+PY_SCRIPTS = ("release.py", "corpus.py")
 
 
 def py_scripts(changed: tuple[str, ...]) -> tuple[str, ...]:
@@ -98,8 +99,7 @@ py_types = Task(
 	paths=py_scripts,
 )
 py_doctest = Parallel(
-	*(Task(f'uv run --python 3.14 --script "{path}" --self-test', when=path) for path in PY_SCRIPTS),
-	name="py_doctest",
+	*(Task(f'uv run --python 3.14 --script "{path}" --self-test', when=path) for path in PY_SCRIPTS)
 )
 # Not `camas --check` (JPHutchins/camas#277); the header above exists only to make this work.
 task_types = Task("uv run tasks.py --check", when="tasks.py")
@@ -109,7 +109,7 @@ rust_check_fast = Parallel(rust_fmt_check_fast, clippy_fast, test_fast, doc_fast
 rust_fix_fast = Sequential(rust_fmt_fix, clippy_fix_fast)
 fix_fast = Parallel(rust_fix_fast, vscode)
 rust = Sequential(rust_fix, rust_check)
-cross = Parallel(nix_fmt_check, typos, version_check, py_types, py_doctest, task_types)
+cross = Parallel(nix_fmt_check, typos, version_check, py_types, py_doctest, task_types, github)
 
 check = Parallel(rust_check, cross, vscode)
 check_fast = Parallel(rust_check_fast, cross, vscode)
