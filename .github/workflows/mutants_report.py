@@ -69,7 +69,7 @@ class Outcome(msgspec.Struct):
     """One outcome entry; cargo-mutants writes ``scenario`` as a name string for the simple
     outcomes and as an object for a missed mutant — the report reads only the object ones."""
 
-    summary: str
+    summary: str | None = None
     scenario: Scenario | str | None = None
 
 
@@ -86,19 +86,26 @@ class Totals(msgspec.Struct):
 
 
 class OutcomesDoc(Totals):
-    """The whole outcomes.json — the counts, and the entries."""
+    """The whole outcomes.json — the counts, and the entries. A null or foreign entry decodes
+    rather than failing the document; the report skips both.
 
-    outcomes: list[Outcome] = []
+    >>> msgspec.json.decode(b'{"total_mutants": 1, "outcomes": null}', type=OutcomesDoc).outcomes is None
+    True
+    >>> msgspec.json.decode(b'{"outcomes": ["Baseline"]}', type=OutcomesDoc).outcomes
+    ['Baseline']
+    """
+
+    outcomes: list[Outcome | str] | None = None
 
 
 class SummaryCounts(Totals):
     """The counts a sweep.log summary line carries, zero for the fields cargo-mutants omitted."""
 
-    total_mutants: int = 0
-
 
 class MergedDoc(OutcomesDoc):
     """The merge's output: every shard's outcomes and the summed counts."""
+
+    outcomes: list[Outcome | str] = []
 
 
 class Cell(msgspec.Struct):
@@ -221,6 +228,12 @@ def survivor(mutant: Mutant) -> Survivor | None:
     )
 
 
+def entries(outcomes: OutcomesDoc | MergedDoc) -> list[Outcome]:
+    """The entries the report reads — object outcomes only; a null or foreign entry is skipped,
+    so one malformed entry cannot forfeit the readable rest of the document."""
+    return [one for one in (outcomes.outcomes or []) if isinstance(one, Outcome)]
+
+
 def survivors(outcomes: OutcomesDoc | MergedDoc) -> tuple[Survivor, ...]:
     """The missed-mutant entries, pinned by a record in the shape a real outcomes.json carries.
 
@@ -233,7 +246,7 @@ def survivors(outcomes: OutcomesDoc | MergedDoc) -> tuple[Survivor, ...]:
     """
     return tuple(
         one
-        for outcome in outcomes.outcomes
+        for outcome in entries(outcomes)
         if outcome.summary == "MissedMutant"
         and isinstance(outcome.scenario, Scenario)
         and outcome.scenario.mutant is not None
@@ -382,9 +395,9 @@ ZERO_MUTANTS = "Found 0 mutants to test"
 
 
 def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
-    """A shard counts as analyzed iff its outcomes file exists, its log names a zero-mutant file,
-    or its log carries the parseable summary — the same evidence the merge's fallback reads, so the
-    marker and the fallback cannot disagree.
+    """A shard counts as analyzed iff its outcomes file decodes, its log names a zero-mutant
+    file, or its log carries the parseable summary — the same evidence the merge's fallback
+    reads, so the marker and the fallback cannot disagree.
 
     >>> from tempfile import TemporaryDirectory
     >>> with TemporaryDirectory() as tmp:
@@ -399,9 +412,19 @@ def sweep_marked(outcomes_dir: Path, log: Path) -> bool:
     ...     _ = Path(tmp, "sweep.log").write_text("baseline failed to build", encoding="utf-8")
     ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
     False
+    >>> with TemporaryDirectory() as tmp:
+    ...     _ = Path(tmp, "outcomes.json").write_text("{corrupt", encoding="utf-8")
+    ...     _ = Path(tmp, "sweep.log").write_text("baseline failed to build", encoding="utf-8")
+    ...     sweep_marked(Path(tmp), Path(tmp, "sweep.log"))
+    False
     """
     if (outcomes_dir / "outcomes.json").is_file():
-        return True
+        try:
+            loaded(outcomes_dir / "outcomes.json", OutcomesDoc)
+        except SystemExit:
+            pass
+        else:
+            return True
     try:
         text = log.read_text(encoding="utf-8")
     except (OSError, ValueError):
@@ -457,12 +480,14 @@ def merge_shards(
     >>> cells = [Cell(file="a", index=str(i)) for i in range(5)]
     >>> merge_shards(cells, str(root / "merged"), str(root / "prior"))
     (MergedDoc(total_mutants=617, caught=529, missed=55, unviable=18, timeout=13, outcomes=[Outcome(summary='CaughtMutant', scenario=None)]), ['a', 'a: reports no mutants tested but holds outcome entries'])
+    >>> import shutil
+    >>> shutil.rmtree(tmp)
 
     The corrupt outcomes.json is named missing, the summary-only shard contributes its counts, the
     zero-mutant shard contributes nothing, and the shard that fails a drift guard is named missing
     with its reason instead of aborting the merge.
     """
-    merged = MergedDoc()
+    merged = MergedDoc(outcomes=[])
     missing: list[str] = []
     for cell in shards:
         name = f"{cell.file} [shard {cell.shard}]" if cell.shard else cell.file
@@ -489,9 +514,9 @@ def merge_shards(
             add_counts(merged, summary)
             continue
         try:
-            if data.total_mutants == 0 and data.outcomes:
+            if data.total_mutants == 0 and entries(data):
                 raise SystemExit(f"{name}: reports no mutants tested but holds outcome entries")
-            if data.missed == 0 and any(one.summary == "MissedMutant" for one in data.outcomes):
+            if data.missed == 0 and any(one.summary == "MissedMutant" for one in entries(data)):
                 raise SystemExit(f"{name}: reports no missed but holds MissedMutant entries")
         except SystemExit as err:
             summary = _summary_from_logs(cell.index, merged_root, prior_root)
@@ -500,7 +525,7 @@ def merge_shards(
                 continue
             add_counts(merged, summary)
             continue
-        merged.outcomes.extend(data.outcomes)
+        merged.outcomes.extend(entries(data))
         add_counts(merged, data)
     return merged, missing
 
@@ -561,6 +586,18 @@ def tested(path: Path) -> tuple[MergedDoc, Counts]:
 
 
 def main(argv: tuple[str, ...]) -> int:
+    """The merge mode's stdout is the workflow's output contract, pinned here — the yaml gates
+    read these lines, and a desynced `key=value` shape or title would garble the rolling issue.
+
+    >>> from contextlib import redirect_stdout
+    >>> import io
+    >>> from tempfile import TemporaryDirectory
+    >>> with TemporaryDirectory() as tmp:
+    ...     with redirect_stdout(io.StringIO()) as captured:
+    ...         code = main(("merge", "[]", tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
+    ...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"))
+    (0, 'missing=false\\nempty=true\\nran=false\\nall_missing=false\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
+    """
     match argv:
         case ("report", outcomes, repo, sha, run, out, shards_json):
             data, tally = tested(Path(outcomes))
@@ -598,16 +635,30 @@ def main(argv: tuple[str, ...]) -> int:
             all_missing = bool(shards) and len(missing) == len(shards)
             print(f"all_missing={'true' if all_missing else 'false'}")
             if empty:
-                message = (
-                    "the sweep did not run — the plan left no shard jobs\n"
-                    if not shards
-                    else "no shard produced outcomes — every shard left nothing\n"
-                    if all_missing
-                    else "some shards left no outcomes; the rest found zero mutants\n"
-                    if missing
-                    else "every shard completed with zero mutants\n"
+                print(
+                    "title="
+                    + (
+                        "Mutation sweep did not run"
+                        if not shards
+                        else "Mutation sweep: no shard produced outcomes"
+                        if all_missing
+                        else "Mutation sweep: some shards left no outcomes"
+                        if missing
+                        else "Mutation sweep: every shard completed with zero mutants"
+                    )
                 )
-                Path(empty_txt).write_text(message, encoding="utf-8")
+                Path(empty_txt).write_text(
+                    (
+                        "The sweep did not run: the plan left no shard jobs."
+                        if not shards
+                        else "Every shard left no outcomes — the shards below are the whole sweep."
+                        if all_missing
+                        else "The shards below left no outcomes; the rest completed and none found a mutant."
+                        if missing
+                        else "Every shard completed and none found a mutant."
+                    ),
+                    encoding="utf-8",
+                )
         case ("plan",):
             files = sys.stdin.read().splitlines()
             print(msgspec.json.encode(plan(files, 4)).decode())
