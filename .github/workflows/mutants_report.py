@@ -524,6 +524,19 @@ def tested(path: Path) -> tuple[Json, Counts]:
 
 
 def main(argv: tuple[str, ...]) -> int:
+	"""The merge mode's stdout is the workflow's output contract, pinned here — the yaml gates
+	read these lines, and a desynced `key=value` shape or case token would misroute or garble the
+	rolling issue.
+
+	>>> from contextlib import redirect_stdout
+	>>> import io
+	>>> from tempfile import TemporaryDirectory
+	>>> with TemporaryDirectory() as tmp:
+	...     with redirect_stdout(io.StringIO()) as captured:
+	...         code = main(("merge", "[]", tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
+	...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"))
+	(0, 'case=no-plan\\ntitle=Mutation sweep did not run\\n', 'The sweep did not run: the plan left no shard jobs.')
+	"""
 	match argv:
 		case ("report", outcomes, repo, sha, run, out, shards_json):
 			data, tally = tested(Path(outcomes))
@@ -577,7 +590,11 @@ def main(argv: tuple[str, ...]) -> int:
 				print(f"title={case_title}")
 				Path(empty_txt).write_text(case_body, encoding="utf-8")
 			else:
-				print("case=swept")
+				# The non-empty side keeps the dimensions the gates need: a partial merge (dead
+				# shards beside outcomes), and a clean sweep distinguished from one with survivors.
+				case = "swept-partial" if missing else "swept-survivors" if merged_doc.get("missed", 0) else "swept-clean"
+				print(f"case={case}")
+				print(f"resumable={'true' if any(': ' not in m for m in missing) else 'false'}")
 		case ("plan",):
 			files = sys.stdin.read().splitlines()
 			print(msgspec.json.encode(plan(files, 4)).decode())

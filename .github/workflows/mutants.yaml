@@ -193,7 +193,9 @@ jobs:
                 echo '```'
                 cat merged/missing.txt
                 echo '```'
-                echo "A re-dispatch resumes the shards that died."
+                if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+                  echo "A re-dispatch resumes the shards that died."
+                fi
               fi
             } > mutants-report.md
             echo "missed=0" >>"$GITHUB_OUTPUT"
@@ -210,7 +212,11 @@ jobs:
             {
               echo
               echo "**Shards with no outcomes** — a runner shutdown or a build failure took them;"
-              echo "a re-dispatch resumes exactly these:"
+              if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+                echo "a re-dispatch resumes exactly these:"
+              else
+                echo "the merge rejected them, and a re-dispatch re-rejects the same files:"
+              fi
               echo '```'
               head -n 20 merged/missing.txt
               [ -n "$(sed -n '21p' merged/missing.txt)" ] && echo "... and more"
@@ -218,7 +224,7 @@ jobs:
             } >> mutants-report.md
           fi
       - id: rolling
-        if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.case != 'swept')
+        if: success() && (steps.merge.outputs.case != 'clean-zero' && steps.merge.outputs.case != 'swept-clean')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -229,11 +235,11 @@ jobs:
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.case == 'some-missing' && ' (partial shards)' || '' }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.case == 'swept-partial' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: success() && steps.report.outputs.missed == '0' && steps.merge.outputs.case == 'clean-zero'
+        if: success() && (steps.merge.outputs.case == 'clean-zero' || steps.merge.outputs.case == 'swept-clean')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
