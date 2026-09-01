@@ -277,7 +277,11 @@ fn emit_tokens(
             // width - 1, col, …)`, and the group arm renders at `width - trailing_reserved`.
             let budget = width.saturating_sub(1);
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-            let shape_agrees = (i..i + head_end)
+            // One helper owns both budgets: the claim's own reserve (the `;`, re-derived from
+            // `emit_doc(&doc, 1, …)`) and the group arm's `trailing_reserved`, so the two
+            // spellings cannot drift. An equal pair — an authored newline after the group stops
+            // the reserve at zero — renders once and never refuses.
+            let group_budget = (i..i + head_end)
                 .find(|&k| {
                     // `(` only: the subscript `[` groups the arm also claims stay stable through
                     // the boundary mechanism (#108's pins).
@@ -286,13 +290,17 @@ fn emit_tokens(
                         && !is_call_head_pair(toks, k)
                 })
                 .and_then(|k| match_bracket(toks, k))
-                .is_none_or(|close| {
-                    let head_doc = build_expr_doc(&toks[i..i + head_end]);
-                    let group_budget =
-                        width.saturating_sub(trailing_reserved(toks, close + 1, in_define_body));
-                    render(&head_doc, budget, *col, base_level)
-                        == render(&head_doc, group_budget, *col, base_level)
+                .map(|close| {
+                    width.saturating_sub(trailing_reserved(toks, close + 1, in_define_body))
                 });
+            let shape_agrees = group_budget.is_none_or(|group_budget| {
+                if group_budget == budget {
+                    return true;
+                }
+                let head_doc = build_expr_doc(&toks[i..i + head_end]);
+                render(&head_doc, budget, *col, base_level)
+                    == render(&head_doc, group_budget, *col, base_level)
+            });
             if shape_agrees {
                 emit_doc(&doc, 1, out, col, width);
                 i = semi;

@@ -2530,22 +2530,12 @@ fn a_group_chain_head_does_not_relay_one_line_wider() {
     for (src, width, expected) in [
         (
             "a\"\"(A/A&A)=0>_A.\t.;",
-            10,
-            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = (\n\t0 >\n\t_A. .\n);\n",
-        ),
-        (
-            "a\"\"(A/A&A)=0>_A.\t.;",
             11,
             "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = (\n\t0 >\n\t_A. .\n);\n",
         ),
-        (
-            "a\"\"(A/A&A)=0>_A.\t.;",
-            12,
-            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
-        ),
         // The refusal band: the claim and the group arm disagree, the walk lays the group, and
-        // the operands — which fit the remaining line — stay flat. Every line stays within the
-        // width, so the whole window is asserted like the boundary widths.
+        // the operands — which fit the remaining line — stay flat. One width per distinct
+        // output; the neighbors reproduce these byte for byte.
         (
             "a\"\"(A/A&A)=0>_A.\t.;",
             13,
@@ -2553,18 +2543,15 @@ fn a_group_chain_head_does_not_relay_one_line_wider() {
         ),
         (
             "a\"\"(A/A&A)=0>_A.\t.;",
-            16,
-            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
-        ),
-        (
-            "a\"\"(A/A&A)=0>_A.\t.;",
             17,
             "a\"\"(\n\tA / A &\n\tA\n) = 0>_A. .;\n",
         ),
+        // The authored-newline form: the reserve stops at the author's break, the budgets
+        // equal, and the claim's render is a fixpoint on the first pass.
         (
-            "a\"\"(A/A&A)=0>_A.\t.;",
-            18,
-            "a\"\"(\n\tA / A &\n\tA\n) = 0>_A. .;\n",
+            "a\"\"(A/A&A)\n= 0>_A. .;",
+            19,
+            "a\"\"(A / A & A) = (\n\t0 >\n\t_A. .\n);\n",
         ),
     ] {
         let once = jphfmt::format_with_width(src, width);
