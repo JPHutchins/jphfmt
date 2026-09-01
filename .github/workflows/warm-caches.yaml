@@ -17,33 +17,32 @@ permissions:
   contents: read
 
 jobs:
-  # The same two cache-restoring steps ci.yaml runs, plus the work each cache is meant to hold: a
-  # restore is the access that resets the eviction clock, and on a key miss (a changed lockfile
-  # since the last hit) each action re-saves under the new key — populated now, so the next real
-  # CI run starts from the new content instead of cold or stale.
   warm:
+    # A dispatch on any other ref would save orphan entries under a throwaway key, dead weight
+    # against the shared quota that ages the real entries toward eviction.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: ./.github/actions/code-review-setup
         with:
-          nix_conf: |
-            keep-env-derivations = true
-            keep-outputs = true
-      - uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-      # Entering the shell builds what the new lockfile names, so a key-miss save holds the new
-      # store rather than the prefix entry's content — without it the cron could freeze pre-bump
-      # derivations under the new key, and every later exact hit would restore them forever.
-      - run: nix develop --command true
+          save: "true"
+      # The store CI reads is the full suite's graph — the crane deps, checks and MSRV builds —
+      # not the devShell closure a `nix develop --command true` realizes. Running what validate
+      # runs makes the cron's save as good as CI's own. A red suite still saves: the built store
+      # is the content the key names, and a failed test must not silently skip the one save this
+      # workflow exists to make.
+      - run: nix develop --command camas
+        continue-on-error: true
       - uses: actions/setup-node@v6
+        id: node
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
-      # This cron is the only run that can write the npm cache CI reads, so it must populate it:
-      # a save of an unused ~/.npm is junk, and setup-node never rewrites an exact-hit key.
-      - run: npm ci
+      # This cron is the only run that can write the npm cache CI reads, so a key-miss run must
+      # populate it: a save of an unused ~/.npm is junk, and setup-node never rewrites an
+      # exact-hit key — which is also why an exact hit skips the reinstall.
+      - if: steps.node.outputs.cache-hit != 'true'
+        run: npm ci
         working-directory: editors/vscode
