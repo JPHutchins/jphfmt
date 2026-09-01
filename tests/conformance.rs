@@ -2515,6 +2515,43 @@ fn a_chain_head_does_not_alternate_with_the_wrapped_operands() {
 }
 
 #[test]
+fn a_group_chain_head_does_not_relay_one_line_wider() {
+    // #154. A statement chain whose head holds a bracketed group: the claim renders the group
+    // against the statement's own reserve (only the `;`), while the next pass — the head's
+    // authored break makes its claim refuse — renders it through the group arm against the
+    // group's own trailing reserve. The two budgets disagreed on the group's shape, so the
+    // passes relaid it one line wider each pass. The claim now compares the two renders and
+    // refuses when they differ, sending both passes through the group arm. The issue's seed,
+    // pinned at the probe boundary and either side. Exact-output and fixpoint only: at 10 and
+    // 11 the chain's continuation indent alone exceeds the width, like the width-4 pin above.
+    for (src, width, expected) in [
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            10,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = (\n\t0 >\n\t_A. .\n);\n",
+        ),
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            11,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = (\n\t0 >\n\t_A. .\n);\n",
+        ),
+        (
+            "a\"\"(A/A&A)=0>_A.\t.;",
+            12,
+            "a\"\"(\n\tA /\n\t\tA &\n\tA\n) = 0>_A. .;\n",
+        ),
+    ] {
+        let once = jphfmt::format_with_width(src, width);
+        assert_eq!(once, expected, "{src:?} at {width}");
+        assert_eq!(
+            jphfmt::format_with_width(&once, width),
+            once,
+            "and it is a fixpoint"
+        );
+    }
+}
+
+#[test]
 fn a_call_in_a_chain_head_is_laid_out_on_the_first_pass() {
     // #108's other half. A head rendered flat is laid out anyway on the *next* pass — the operands
     // below it have broken by then, so the span reaches a handler that does measure it — and the
