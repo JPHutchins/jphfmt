@@ -86,9 +86,9 @@ class Totals(msgspec.Struct):
 
 
 class OutcomesDoc(Totals):
-    """The whole outcomes.json — the counts, and the entries as raw JSON. A null list decodes
-    as None, and each entry decodes on its own, so one malformed entry cannot forfeit the
-    readable rest of the document.
+    """The whole outcomes.json — the counts, and the entries as raw JSON. A null (or non-list)
+    outcomes field reads as empty, because the list decode of ``b"null"`` fails; each entry
+    decodes on its own, so one malformed entry cannot forfeit the readable rest of the document.
 
     >>> entries(msgspec.json.decode(b'{"outcomes": null}', type=OutcomesDoc))
     []
@@ -163,8 +163,10 @@ class Survivor(NamedTuple):
 
 
 def loaded[T](path: Path, type: type[T]) -> T:
+    """A document decode that tolerates additive format keys: unknown keys are ignored, and a
+    declared count that is not a whole number still fails."""
     try:
-        return msgspec.json.decode(path.read_bytes(), type=type)
+        return msgspec.json.decode(path.read_bytes(), type=type, strict=False)
     except (OSError, msgspec.ValidationError, msgspec.DecodeError) as err:
         raise SystemExit(f"{path}: not a decodable outcomes document ({err})") from err
 
@@ -235,17 +237,14 @@ def readable(outcomes: OutcomesDoc | MergedDoc) -> list[msgspec.Raw]:
     """The raw entries that decode on their own; one malformed entry is skipped, and the merged
     document carries the readable rest verbatim. A non-list outcomes field reads as empty, as
     the old listed() did — the counts still merge."""
-    raw = outcomes.outcomes
-    if raw is None:
-        return []
     try:
-        listed_entries = msgspec.json.decode(raw, type=list[msgspec.Raw])
+        listed_entries = msgspec.json.decode(outcomes.outcomes, type=list[msgspec.Raw])
     except msgspec.ValidationError:
         return []
     kept: list[msgspec.Raw] = []
     for one in listed_entries:
         try:
-            msgspec.json.decode(one, type=Outcome)
+            msgspec.json.decode(one, type=Outcome, strict=False)
         except (msgspec.ValidationError, msgspec.DecodeError):
             continue
         kept.append(one)
@@ -254,17 +253,37 @@ def readable(outcomes: OutcomesDoc | MergedDoc) -> list[msgspec.Raw]:
 
 def entries(outcomes: OutcomesDoc | MergedDoc) -> list[Outcome]:
     """Each entry decoded on its own; one malformed entry is skipped, the readable rest kept."""
-    return [msgspec.json.decode(one, type=Outcome) for one in readable(outcomes)]
+    return [msgspec.json.decode(one, type=Outcome, strict=False) for one in readable(outcomes)]
 
 
-def drift_reason(data: OutcomesDoc) -> str | None:
+def drift_reason(data: OutcomesDoc, kept: list[msgspec.Raw]) -> str | None:
     """The drift guards, in one place: the merge names the shard by the reason and recovers its
     counts from the log; the sweep marker analyzes whatever decodes, because the reject is
-    deterministic and a re-run cannot change it."""
-    if data.total_mutants == 0 and readable(data):
+    deterministic and a re-run cannot change it. Guard #2 scans the raw entries' summary keys,
+    shape-independent, so a restructured Mutant record — one the per-entry decode skipped —
+    still trips it:
+
+    >>> restructured = msgspec.json.decode(
+    ...     b'{"total_mutants": 1, "missed": 0, "outcomes": [{"summary": "MissedMutant", "scenario": {"Mutant": {"restructured": true}}}]}',
+    ...     type=OutcomesDoc,
+    ... )
+    >>> drift_reason(restructured, readable(restructured))
+    'reports no missed but holds MissedMutant entries'
+    """
+    if data.total_mutants == 0 and kept:
         return "reports no mutants tested but holds outcome entries"
-    if data.missed == 0 and any(one.summary == "MissedMutant" for one in entries(data)):
-        return "reports no missed but holds MissedMutant entries"
+    if data.missed == 0:
+        try:
+            raw_entries = msgspec.json.decode(data.outcomes, type=list[msgspec.Raw])
+        except msgspec.ValidationError:
+            raw_entries = []
+        for one in raw_entries:
+            try:
+                decoded = msgspec.json.decode(one, type=dict[str, object])
+            except msgspec.ValidationError:
+                continue
+            if decoded.get("summary") == "MissedMutant":
+                return "reports no missed but holds MissedMutant entries"
     return None
 
 
@@ -513,30 +532,26 @@ def merge_shards(
 
     The four branch shapes, exercised end to end in a temp directory:
 
-    >>> import tempfile
-    >>> tmp = tempfile.mkdtemp()
-    >>> root = Path(tmp)
-    >>> _ = (root / "merged/mutants-out-0/mutants.out").mkdir(parents=True)
-    >>> _ = (root / "merged/mutants-out-0/mutants.out/outcomes.json").write_text('{"total_mutants": 5, "caught": 3, "outcomes": [{"summary": "CaughtMutant"}]}', encoding="utf-8")
-    >>> _ = (root / "merged/mutants-out-0/complete").touch()
-    >>> _ = (root / "merged/mutants-out-1/mutants.out").mkdir(parents=True)
-    >>> _ = (root / "merged/mutants-out-1/mutants.out/outcomes.json").write_text("{corrupt", encoding="utf-8")
-    >>> _ = (root / "merged/mutants-out-2/mutants.out").mkdir(parents=True)
-    >>> _ = (root / "merged/mutants-out-2/mutants.out/sweep.log").write_text("612 mutants tested in 4h: 55 missed, 526 caught, 18 unviable, 13 timeouts", encoding="utf-8")
-    >>> _ = (root / "merged/mutants-out-2/complete").touch()
-    >>> _ = (root / "merged/mutants-out-3/mutants.out").mkdir(parents=True)
-    >>> _ = (root / "merged/mutants-out-3/mutants.out/sweep.log").write_text("Found 0 mutants to test", encoding="utf-8")
-    >>> _ = (root / "merged/mutants-out-3/complete").touch()
-    >>> _ = (root / "merged/mutants-out-4/mutants.out").mkdir(parents=True)
-    >>> _ = (root / "merged/mutants-out-4/mutants.out/outcomes.json").write_text('{"total_mutants": 0, "outcomes": [{"summary": "CaughtMutant"}]}', encoding="utf-8")
-    >>> cells = [Cell(file="a", index=str(i)) for i in range(5)]
-    >>> merged_doc, missing, dead = merge_shards(cells, str(root / "merged"), str(root / "prior"))
-    >>> (merged_doc.total_mutants, merged_doc.missed, missing)
-    (617, 55, ['a', 'a: reports no mutants tested but holds outcome entries'])
-    >>> entries(merged_doc)
-    [Outcome(summary='CaughtMutant', scenario=None)]
-    >>> import shutil
-    >>> shutil.rmtree(tmp)
+    >>> from tempfile import TemporaryDirectory
+    >>> with TemporaryDirectory() as tmp:
+    ...     root = Path(tmp)
+    ...     _ = (root / "merged/mutants-out-0/mutants.out").mkdir(parents=True)
+    ...     _ = (root / "merged/mutants-out-0/mutants.out/outcomes.json").write_text('{"total_mutants": 5, "caught": 3, "outcomes": [{"summary": "CaughtMutant"}]}', encoding="utf-8")
+    ...     _ = (root / "merged/mutants-out-0/complete").touch()
+    ...     _ = (root / "merged/mutants-out-1/mutants.out").mkdir(parents=True)
+    ...     _ = (root / "merged/mutants-out-1/mutants.out/outcomes.json").write_text("{corrupt", encoding="utf-8")
+    ...     _ = (root / "merged/mutants-out-2/mutants.out").mkdir(parents=True)
+    ...     _ = (root / "merged/mutants-out-2/mutants.out/sweep.log").write_text("612 mutants tested in 4h: 55 missed, 526 caught, 18 unviable, 13 timeouts", encoding="utf-8")
+    ...     _ = (root / "merged/mutants-out-2/complete").touch()
+    ...     _ = (root / "merged/mutants-out-3/mutants.out").mkdir(parents=True)
+    ...     _ = (root / "merged/mutants-out-3/mutants.out/sweep.log").write_text("Found 0 mutants to test", encoding="utf-8")
+    ...     _ = (root / "merged/mutants-out-3/complete").touch()
+    ...     _ = (root / "merged/mutants-out-4/mutants.out").mkdir(parents=True)
+    ...     _ = (root / "merged/mutants-out-4/mutants.out/outcomes.json").write_text('{"total_mutants": 0, "outcomes": [{"summary": "CaughtMutant"}]}', encoding="utf-8")
+    ...     cells = [Cell(file="a", index=str(i)) for i in range(5)]
+    ...     merged_doc, missing, dead = merge_shards(cells, str(root / "merged"), str(root / "prior"))
+    ...     ((merged_doc.total_mutants, merged_doc.missed, missing), entries(merged_doc))
+    ((617, 55, ['a', 'a: reports no mutants tested but holds outcome entries']), [Outcome(summary='CaughtMutant', scenario=None)])
 
     The corrupt outcomes.json is named missing, the summary-only shard contributes its counts, the
     zero-mutant shard contributes nothing, and the shard that fails a drift guard is named missing
@@ -571,8 +586,9 @@ def merge_shards(
                 continue
             add_counts(merged, summary)
             continue
+        kept = readable(data)
         try:
-            if (reason := drift_reason(data)) is not None:
+            if (reason := drift_reason(data, kept)) is not None:
                 raise SystemExit(f"{name}: {reason}")
         except SystemExit as err:
             summary = _summary_from_logs(cell.index, merged_root, prior_root)
@@ -581,7 +597,7 @@ def merge_shards(
                 continue
             add_counts(merged, summary)
             continue
-        readable_entries.extend(readable(data))
+        readable_entries.extend(kept)
         add_counts(merged, data)
     merged.outcomes = msgspec.Raw(msgspec.json.encode(readable_entries))
     return merged, missing, dead
@@ -669,7 +685,7 @@ def main(argv: tuple[str, ...]) -> int:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("merge", json.dumps([{"file": "a.rs", "index": "0"}]), tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
     ...     (code, captured.getvalue(), Path(tmp, "empty.txt").read_text(encoding="utf-8"), Path(tmp, "missing.txt").read_text(encoding="utf-8"))
-    (0, 'missing=true\\nran=true\\npartial=false\\nresumable=true\\ntitle=Mutation sweep: no shard produced outcomes\\n', 'Every shard left no outcomes — the shards below are the whole sweep.', 'a.rs')
+    (0, 'missing=true\\nran=true\\npartial=false\\nresumable=true\\ntitle=Mutation sweep: no shard produced outcomes\\n', 'Every shard left no outcomes — the shards below are the whole sweep.', 'a.rs\\n')
     """
     match argv:
         case ("report", outcomes, repo, sha, run, out, shards_json):
@@ -693,7 +709,7 @@ def main(argv: tuple[str, ...]) -> int:
             destination = Path(out)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(msgspec.json.encode(merged_doc))
-            Path(missing_txt).write_text("\n".join(missing), encoding="utf-8")
+            Path(missing_txt).write_text("\n".join(missing) + ("\n" if missing else ""), encoding="utf-8")
             if missing:
                 head, *rest = missing
                 more = f", ... ({len(rest)} more)" if rest else ""
@@ -702,7 +718,7 @@ def main(argv: tuple[str, ...]) -> int:
                     file=sys.stderr,
                 )
             print(f"missing={'true' if missing else 'false'}")
-            empty = not readable(merged_doc) and not any(
+            empty = merged_doc.outcomes == msgspec.Raw(b"[]") and not any(
                 (merged_doc.total_mutants, merged_doc.missed, merged_doc.caught, merged_doc.unviable, merged_doc.timeout)
             )
             print(f"ran={'true' if shards else 'false'}")
@@ -739,22 +755,6 @@ def main(argv: tuple[str, ...]) -> int:
             print(msgspec.json.encode(plan(files, 4)).decode())
         case ("sweep-marked", outcomes_dir, log):
             return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
-        case ("decodable", path):
-            """The prior-download gate's verdict: the schema decode, nothing weaker. Pinned so the
-            gate and the decode cannot drift apart.
-
-            >>> from tempfile import TemporaryDirectory
-            >>> with TemporaryDirectory() as tmp:
-            ...     _ = Path(tmp, "ok.json").write_bytes(msgspec.json.encode(OutcomesDoc(total_mutants=1)))
-            ...     _ = Path(tmp, "bad.json").write_text("{corrupt", encoding="utf-8")
-            ...     (main(("decodable", f"{tmp}/ok.json")), main(("decodable", f"{tmp}/bad.json")))
-            (0, 1)
-            """
-            try:
-                loaded(Path(path), OutcomesDoc)
-            except SystemExit:
-                return 1
-            return 0
         case ("--self-test",):
             import doctest
 
@@ -772,7 +772,6 @@ def main(argv: tuple[str, ...]) -> int:
             print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
             print("       mutants_report.py plan < FILES_LIST")
             print("       mutants_report.py sweep-marked OUTCOMES_DIR SWEEP_LOG")
-            print("       mutants_report.py decodable OUTCOMES_PATH")
             print("       mutants_report.py --self-test | --self-check FILES...")
             return 2
     return 0

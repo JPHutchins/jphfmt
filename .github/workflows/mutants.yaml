@@ -83,7 +83,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         if: steps.prior.outputs.skip != 'true'
         with:
-          tool: cargo-mutants
+          # Pinned alongside the parser: an unpinned tool is a silent report-format migration.
+          tool: cargo-mutants@27.1.0
       - uses: astral-sh/setup-uv@v6
         if: steps.prior.outputs.skip != 'true'
       - id: sweep
@@ -156,6 +157,10 @@ jobs:
             if uv run .github/workflows/mutants_report.py sweep-marked \
                 "merged/mutants-out-$idx/mutants.out" \
                 "merged/mutants-out-$idx/mutants.out/sweep.log" \
+                >/dev/null 2>&1 \
+              || uv run .github/workflows/mutants_report.py sweep-marked \
+                "merged/mutants-out-$idx" \
+                "merged/mutants-out-$idx/sweep.log" \
                 >/dev/null 2>&1; then
               continue
             fi
@@ -195,12 +200,16 @@ jobs:
             else
               {
                 cat merged/empty.txt
-                if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+                if [ -s merged/missing.txt ]; then
                   echo
                   echo '```'
                   cat merged/missing.txt
                   echo '```'
-                  echo "A re-dispatch resumes the shards that died."
+                  if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+                    echo "A re-dispatch resumes the shards that died."
+                  else
+                    echo "The merge rejected them, and a re-dispatch re-rejects the same files."
+                  fi
                 fi
               } > mutants-report.md
               echo "title=${{ steps.merge.outputs.title }}" >>"$GITHUB_OUTPUT"
@@ -216,11 +225,15 @@ jobs:
           # no outcomes, and the missed-count gate below cannot suppress an update on it.
           # The append is outside the report's BODY_LIMIT fit; its worst case — the header plus
           # 20 names plus the ellipsis line — stays under the ~5.5K slack to GitHub's 65536 cap.
-          if [ -s merged/missing.txt ] && [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+          if [ -s merged/missing.txt ]; then
             {
               echo
               echo "**Shards with no outcomes** — a runner shutdown or a build failure took them;"
-              echo "a re-dispatch resumes exactly these:"
+              if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+                echo "a re-dispatch resumes exactly these:"
+              else
+                echo "the merge rejected them, and a re-dispatch re-rejects the same files:"
+              fi
               echo '```'
               head -n 20 merged/missing.txt
               [ -n "$(sed -n '21p' merged/missing.txt)" ] && echo "... and more"
