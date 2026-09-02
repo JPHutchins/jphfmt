@@ -280,7 +280,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             if !text.is_empty() || !parts.is_empty() {
                 pending_space = true;
             }
-            j += 1;
+            j = j.saturating_add(1);
         } else if t.kind == TokenKind::Punct
             && t.text == "{"
             && let Some(close) = match_brace(toks, j)
@@ -292,7 +292,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
                 !tight_against_previous(toks, j),
             );
             parts.push(build_brace_doc(&toks[j + 1..close], false));
-            j = close + 1;
+            j = close.saturating_add(1);
         } else if t.kind == TokenKind::Punct
             && t.text == "("
             && call_head_before(toks, j)
@@ -303,7 +303,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             // and stays a fixpoint across passes (§2.5).
             flush_pending(&mut text, &mut parts, &mut pending_space, false);
             parts.push(build_call_body(&toks[j + 1..close], Fit::Measured));
-            j = close + 1;
+            j = close.saturating_add(1);
         } else if t.kind == TokenKind::Punct
             && let Some(bracketing) = group_bracketing(&t)
             && let Some(close) = match_bracket(toks, j)
@@ -338,10 +338,10 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
                 }
                 pending_space = false;
                 text.push_str(t.text);
-                j += 1;
+                j = j.saturating_add(1);
                 continue;
             }
-            j = close + 1;
+            j = close.saturating_add(1);
         } else {
             // A bracket the author left a gap before is still tight (§2.5), even when it has nothing to
             // lay out and falls through to here: a space would be tightened on the next pass.
@@ -350,7 +350,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
             }
             pending_space = false;
             text.push_str(t.text);
-            j += 1;
+            j = j.saturating_add(1);
         }
     }
     if !text.is_empty() {

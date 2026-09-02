@@ -97,12 +97,12 @@ jobs:
           set -o pipefail
           args=()
           [ -n "$SHARD" ] && args=(--shard "$SHARD")
-          # Bounded test timeout: a mutation that hangs the suite costs 3x the baseline test
-          # time instead of cargo-mutants' 5x auto-set — the builders shard's budget-arithmetic
-          # mutants (+= to -=, + to *) hung through the full 5x, and the shard died to the
-          # runner's preemption every dispatch. A hung mutant lands as a reportable timeout
-          # outcome rather than taking the shard down.
-          cargo mutants --jobs 8 --timeout-multiplier 3 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
+          # Bounded test timeout: 4x the baseline test time instead of cargo-mutants' 5x
+          # auto-set. The builders shard's cursor-arithmetic hang class is fixed at the source
+          # (builders.rs advances are saturating_add, which cargo-mutants cannot invert), so
+          # the bound is defense in depth for any hang that remains — and 4x keeps ~2x CPU
+          # headroom under --jobs 8 contention, where 3x misclassifies slow-but-finite mutants.
+          cargo mutants --jobs 8 --timeout-multiplier 4 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
           if uv run .github/workflows/mutants_report.py sweep-marked mutants.out mutants.sweep.log; then
             cp mutants.sweep.log mutants.out/sweep.log
             touch mutants.out/complete
@@ -246,14 +246,14 @@ jobs:
             } >> mutants-report.md
           fi
       - id: rolling
-        if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
+        if: success() && (steps.report.outputs.missed != '0' || steps.report.outputs.timedout != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      - if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
+      - if: success() && (steps.report.outputs.missed != '0' || steps.report.outputs.timedout != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
@@ -261,7 +261,7 @@ jobs:
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: success() && steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
+        if: success() && steps.report.outputs.missed == '0' && steps.report.outputs.timedout == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

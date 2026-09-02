@@ -398,9 +398,16 @@ def fitted(order: tuple[Survivor, ...], link: str, spare: int) -> tuple[str, int
 
 
 def title(tally: Counts, sha: str) -> str:
-    if not tally.missed:
-        return f"Mutation testing: all {tally.tested} mutants caught at {sha[:7]}"
-    return f"Mutation testing: {tally.missed} surviving mutants at {sha[:7]}"
+    """A timed-out mutant was not evaluated, so a timeout-bearing sweep never claims all caught.
+
+    >>> title(Counts(tested=10, caught=0, missed=0, unviable=0, timeout=3), "abc1234")
+    'Mutation testing: 3 mutants timed out at abc1234'
+    """
+    if tally.missed:
+        return f"Mutation testing: {tally.missed} surviving mutants at {sha[:7]}"
+    if tally.timeout:
+        return f"Mutation testing: {tally.timeout} mutants timed out at {sha[:7]}"
+    return f"Mutation testing: all {tally.tested} mutants caught at {sha[:7]}"
 
 
 def shard_map(shards: list[Cell]) -> str:
@@ -623,6 +630,9 @@ def body(
     if not found:
         claim = (
             "Every mutant was caught. Nothing to triage."
+            if not tally.missed and not tally.timeout
+            else f"The summary counts {tally.timeout} timed out — unevaluated, not caught — and "
+            "the survivor inventory is empty; their logs and diffs are in the run's artifacts."
             if not tally.missed
             else f"The summary counts {tally.missed} missed, and no `MissedMutant` entry was found "
             "for any of them — read the artifact rather than this, and check whether "
@@ -680,7 +690,7 @@ def main(argv: tuple[str, ...]) -> int:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("report", f"{tmp}/merged.json", "JPHutchins/jphfmt", "abc1234", "run-url", f"{tmp}/report.md", "[]"))
     ...     (code, captured.getvalue())
-    (0, 'missed=1\\ntitle=Mutation testing: 1 surviving mutants at abc1234\\n')
+    (0, 'missed=1\\ntimedout=0\\ntitle=Mutation testing: 1 surviving mutants at abc1234\\n')
     >>> with TemporaryDirectory() as tmp:
     ...     with redirect_stdout(io.StringIO()) as captured:
     ...         code = main(("merge", json.dumps([{"file": "a.rs", "index": "0"}]), tmp, tmp, f"{tmp}/out.json", f"{tmp}/missing.txt", f"{tmp}/empty.txt"))
@@ -702,6 +712,7 @@ def main(argv: tuple[str, ...]) -> int:
                 encoding="utf-8",
             )
             print(f"missed={tally.missed}")
+            print(f"timedout={tally.timeout}")
             print(f"title={title(tally, sha)}")
         case ("merge", shards_json, merged_root, prior_root, out, missing_txt, empty_txt):
             shards = msgspec.json.decode(shards_json, type=list[Cell])
