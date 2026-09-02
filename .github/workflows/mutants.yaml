@@ -153,9 +153,9 @@ jobs:
           MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
           for idx in $(jq -r '.[].index' <<<"$MATRIX" 2>/dev/null || true); do
-            if jq -e 'type == "object"' "merged/mutants-out-$idx/mutants.out/outcomes.json" \
-                >/dev/null 2>&1 \
-                || jq -e 'type == "object"' "merged/mutants-out-$idx/outcomes.json" \
+            if uv run .github/workflows/mutants_report.py sweep-marked \
+                "merged/mutants-out-$idx/mutants.out" \
+                "merged/mutants-out-$idx/mutants.out/sweep.log" \
                 >/dev/null 2>&1; then
               continue
             fi
@@ -186,20 +186,26 @@ jobs:
           MATRIX: ${{ needs.plan.outputs.matrix || '[]' }}
         run: |
           if [ -f merged/empty.txt ]; then
-            {
-              cat merged/empty.txt
-              if [ -s merged/missing.txt ]; then
-                echo
-                echo '```'
-                cat merged/missing.txt
-                echo '```'
+            if [ "${{ needs.plan.result }}" != "success" ]; then
+              # An empty matrix reaches the merge only when the plan job failed — its jq gate
+              # hard-fails first — so this diagnosis names the cause instead of blaming a plan
+              # that ran.
+              echo "The plan job failed; its logs carry the cause." > mutants-report.md
+              echo "title=Mutation sweep did not run" >>"$GITHUB_OUTPUT"
+            else
+              {
+                cat merged/empty.txt
                 if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
+                  echo
+                  echo '```'
+                  cat merged/missing.txt
+                  echo '```'
                   echo "A re-dispatch resumes the shards that died."
                 fi
-              fi
-            } > mutants-report.md
+              } > mutants-report.md
+              echo "title=${{ steps.merge.outputs.title }}" >>"$GITHUB_OUTPUT"
+            fi
             echo "missed=0" >>"$GITHUB_OUTPUT"
-            echo "title=${{ steps.merge.outputs.title }}" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
@@ -208,15 +214,13 @@ jobs:
             mutants-report.md "$MATRIX" >>"$GITHUB_OUTPUT"
           # A partial merge must never read as clean: the issue body names the shards that left
           # no outcomes, and the missed-count gate below cannot suppress an update on it.
-          if [ -s merged/missing.txt ]; then
+          # The append is outside the report's BODY_LIMIT fit; its worst case — the header plus
+          # 20 names plus the ellipsis line — stays under the ~5.5K slack to GitHub's 65536 cap.
+          if [ -s merged/missing.txt ] && [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
             {
               echo
               echo "**Shards with no outcomes** — a runner shutdown or a build failure took them;"
-              if [ "${{ steps.merge.outputs.resumable }}" = "true" ]; then
-                echo "a re-dispatch resumes exactly these:"
-              else
-                echo "the merge rejected them, and a re-dispatch re-rejects the same files:"
-              fi
+              echo "a re-dispatch resumes exactly these:"
               echo '```'
               head -n 20 merged/missing.txt
               [ -n "$(sed -n '21p' merged/missing.txt)" ] && echo "... and more"
@@ -224,22 +228,22 @@ jobs:
             } >> mutants-report.md
           fi
       - id: rolling
-        if: success() && (steps.merge.outputs.case != 'clean-zero' && steps.merge.outputs.case != 'swept-clean')
+        if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           number=$(gh issue list --label mutation-testing --state open --limit 1 \
             --json number --jq '.[0].number // ""')
           echo "number=$number" >>"$GITHUB_OUTPUT"
-      - if: success() && (steps.merge.outputs.case != 'clean-zero' && steps.merge.outputs.case != 'swept-clean')
+      - if: success() && (steps.report.outputs.missed != '0' || steps.merge.outputs.missing == 'true' || steps.merge.outputs.ran != 'true')
         uses: peter-evans/create-issue-from-file@v6
         with:
           issue-number: ${{ steps.rolling.outputs.number }}
-          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.case == 'swept-partial' && ' (partial shards)' || '' }}
+          title: ${{ steps.report.outputs.title }}${{ steps.merge.outputs.partial == 'true' && ' (partial shards)' || '' }}
           content-filepath: mutants-report.md
           labels: 'mutation-testing'
       - name: Retire the rolling issue on a complete clean sweep
-        if: success() && (steps.merge.outputs.case == 'clean-zero' || steps.merge.outputs.case == 'swept-clean')
+        if: success() && steps.report.outputs.missed == '0' && steps.merge.outputs.missing != 'true' && steps.merge.outputs.ran == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
