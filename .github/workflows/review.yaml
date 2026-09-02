@@ -24,7 +24,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       (github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'failure')
-    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.54
+    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.55
     with:
       head_sha:      ${{ github.event.workflow_run.head_sha }}
       head_branch:   ${{ github.event.workflow_run.head_branch }}
@@ -43,9 +43,10 @@ jobs:
       # masks it, but a cache miss fetches from it). alpha.19's egress canary fails the job closed if
       # harden-runner silently drops this back to audit (step-security/harden-runner#675).
       #
-      # The last two are the same cold-cache class as cache.nixos.org: rust-overlay's toolchain
-      # tarballs are fixed-output derivations that cache.nixos.org does not substitute, so a cold
-      # store cache builds them and fetches from static.rust-lang.org, falling back to the
+      # The rust and npm hosts are the same cold-cache class as cache.nixos.org: the toolchain
+      # and node_modules tarballs are fixed-output derivations that cache.nixos.org does not
+      # substitute, so a cold store cache builds them and fetches from static.rust-lang.org and
+      # registry.npmjs.org, falling back to the
       # tarballs.nixos.org mirror. The audit pass ran against a warm cache and never saw either;
       # GitHub evicts the store cache after 7 idle days, which is when this surfaces.
       use_setup_action: true
@@ -58,6 +59,7 @@ jobs:
         cache.nixos.org:443
         static.rust-lang.org:443
         tarballs.nixos.org:443
+        registry.npmjs.org:443
         *.actions.githubusercontent.com:443
       mechanic_time_limit: 3m
       mechanic_grace_period: 90s

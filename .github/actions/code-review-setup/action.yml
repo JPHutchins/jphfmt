@@ -3,6 +3,16 @@
 # the Nix toolchain, store cache, and dev-shell warm-up live here, in jphfmt's repo. Mirrors CI.
 name: code-review-setup
 description: Nix toolchain + store cache + warmed dev shell so the review agent can run `nix develop --command …`
+inputs:
+  # Restore-only by default: the review path must never write the shared key — its devShell-only
+  # entry would shadow the full-store save the validate job makes once the bump merges, and the
+  # exact-hit skip would freeze the thin entry under the new key until the next bump.
+  save:
+    description: Whether the post-step saves the store under the shared key
+    default: "false"
+  warm:
+    description: Enter the dev shell once so later nix develop calls are fast
+    default: "true"
 runs:
   using: composite
   steps:
@@ -13,9 +23,11 @@ runs:
           keep-outputs = true
     - uses: nix-community/cache-nix-action@v7
       with:
-        primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
+        primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'editors/vscode/package-lock.json') }}
         restore-prefixes-first-match: nix-${{ runner.os }}-
+        save: ${{ inputs.save }}
     # Warm the dev shell OUTSIDE the agent's wall budget so its own `nix develop --command …`
-    # validations are fast.
-    - shell: bash
+    # validations are fast. Callers whose next step is their own `nix develop` pass warm: "false".
+    - if: inputs.warm == 'true'
+      shell: bash
       run: nix develop --command true

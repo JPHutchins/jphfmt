@@ -7,8 +7,8 @@
 
 use super::builders::{
     Bound, Fit, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
-    build_cond_doc, build_for_doc, build_statement_element, group_bracketing, holds_forced_break,
-    statement_segments,
+    build_cond_doc, build_expr_doc, build_for_doc, build_statement_element, group_bracketing,
+    holds_forced_break, statement_segments,
 };
 use super::scope::scoped;
 use super::tokens::{
@@ -16,8 +16,8 @@ use super::tokens::{
     directive_end, element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia,
     holds_hash_fragment, holds_unsafe_hash, is_backslash, is_balanced, is_call_head,
     is_call_head_pair, is_chain_break, is_comment, is_control_keyword, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, prev_nontrivia,
-    prev_significant, spans_lines, split_brace_line_comment, statement_end,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, operand_span,
+    prev_nontrivia, prev_significant, spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -266,11 +266,46 @@ fn emit_tokens(
             && !toks[i..semi].iter().any(|s| s.text == "{")
             && let Some(doc) = build_chain_doc(&toks[i..semi], Bound::Parens)
         {
-            // Only the `;` is reserved. `trailing_reserved` would also count whatever shares the
-            // line after it, which this pass's own whitespace changes shift — an unstable measure.
-            emit_doc(&doc, 1, out, col, width);
-            i = semi;
-            continue;
+            // The claim renders a head group against the statement's own reserve — only the `;` —
+            // while the next pass's group arm renders the same group against the group's own
+            // trailing reserve. When the two budgets disagree on the group's shape, the next
+            // pass re-lays it differently and the passes flip the construct (#154). Refusing
+            // sends both passes through the group arm, which agrees with itself.
+            let head_end = operand_span(&toks[i..semi]);
+            // `render` subtracts the running column itself (doc.rs), so both budgets are total
+            // line budgets — the claim's own emit is `emit_doc(&doc, 1, …)` → `render(doc,
+            // width - 1, col, …)`, and the group arm renders at `width - trailing_reserved`.
+            let budget = width.saturating_sub(1);
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+            // One helper owns both budgets: the claim's own reserve (the `;`, re-derived from
+            // `emit_doc(&doc, 1, …)`) and the group arm's `trailing_reserved`, so the two
+            // spellings cannot drift. An equal pair — an authored newline after the group stops
+            // the reserve at zero — renders once and never refuses.
+            let group_budget = (i..i + head_end)
+                .find(|&k| {
+                    // `(` only: the subscript `[` groups the arm also claims stay stable through
+                    // the boundary mechanism (#108's pins).
+                    toks[k].text == "("
+                        && group_bracketing(&toks[k]).is_some()
+                        && !is_call_head_pair(toks, k)
+                })
+                .and_then(|k| match_bracket(toks, k))
+                .map(|close| {
+                    width.saturating_sub(trailing_reserved(toks, close + 1, in_define_body))
+                });
+            let shape_agrees = group_budget.is_none_or(|group_budget| {
+                if group_budget == budget {
+                    return true;
+                }
+                let head_doc = build_expr_doc(&toks[i..i + head_end]);
+                render(&head_doc, budget, *col, base_level)
+                    == render(&head_doc, group_budget, *col, base_level)
+            });
+            if shape_agrees {
+                emit_doc(&doc, 1, out, col, width);
+                i = semi;
+                continue;
+            }
         }
 
         if t.kind == TokenKind::Punct {
