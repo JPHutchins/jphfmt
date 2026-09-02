@@ -97,7 +97,12 @@ jobs:
           set -o pipefail
           args=()
           [ -n "$SHARD" ] && args=(--shard "$SHARD")
-          cargo mutants --jobs 8 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
+          # Bounded test timeout: a mutation that hangs the suite costs 3x the baseline test
+          # time instead of cargo-mutants' 5x auto-set — the builders shard's budget-arithmetic
+          # mutants (+= to -=, + to *) hung through the full 5x, and the shard died to the
+          # runner's preemption every dispatch. A hung mutant lands as a reportable timeout
+          # outcome rather than taking the shard down.
+          cargo mutants --jobs 8 --timeout-multiplier 3 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
           if uv run .github/workflows/mutants_report.py sweep-marked mutants.out mutants.sweep.log; then
             cp mutants.sweep.log mutants.out/sweep.log
             touch mutants.out/complete
