@@ -23,10 +23,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/code-review-setup
+      - uses: nixbuild/nix-quick-install-action@v35
         with:
-          save: "true"
-          warm: "false"
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
       - run: nix develop --command camas
 
   # Build release binaries on every push/PR to catch breakage early.
