@@ -269,10 +269,16 @@ def drift_reason(data: OutcomesDoc, kept: list[msgspec.Raw]) -> str | None:
     ... )
     >>> drift_reason(restructured, readable(restructured))
     'reports no missed but holds MissedMutant entries'
+    >>> timed_out = msgspec.json.decode(
+    ...     b'{"total_mutants": 1, "missed": 0, "timeout": 0, "outcomes": [{"summary": "Timeout", "scenario": {"Mutant": {"name": "x.rs:1:1: replace + with * in f", "file": "x.rs", "span": {"start": {"line": 1, "column": 1}, "end": {"line": 1, "column": 2}}}}}]}',
+    ...     type=OutcomesDoc,
+    ... )
+    >>> drift_reason(timed_out, readable(timed_out))
+    'reports no timeouts but holds Timeout entries'
     """
     if data.total_mutants == 0 and kept:
         return "reports no mutants tested but holds outcome entries"
-    if data.missed == 0:
+    if data.missed == 0 or data.timeout == 0:
         try:
             raw_entries = msgspec.json.decode(data.outcomes, type=list[msgspec.Raw])
         except msgspec.ValidationError:
@@ -282,8 +288,10 @@ def drift_reason(data: OutcomesDoc, kept: list[msgspec.Raw]) -> str | None:
                 decoded = msgspec.json.decode(one, type=dict[str, object])
             except msgspec.ValidationError:
                 continue
-            if decoded.get("summary") == "MissedMutant":
+            if data.missed == 0 and decoded.get("summary") == "MissedMutant":
                 return "reports no missed but holds MissedMutant entries"
+            if data.timeout == 0 and decoded.get("summary") == "Timeout":
+                return "reports no timeouts but holds Timeout entries"
     return None
 
 

@@ -220,6 +220,9 @@ jobs:
               echo "title=${{ steps.merge.outputs.title }}" >>"$GITHUB_OUTPUT"
             fi
             echo "missed=0" >>"$GITHUB_OUTPUT"
+            # The gates read timedout too; unset it would read as not-zero and fire the update
+            # gate (and block the retire gate) on the empty case.
+            echo "timedout=0" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           uv run .github/workflows/mutants_report.py report merged/outcomes.json \
