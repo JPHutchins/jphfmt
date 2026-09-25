@@ -287,12 +287,12 @@ fn space_pointers(pieces: &mut [Piece]) {
     let mut j = 0;
     while j < pieces.len() {
         if !(is_star(&pieces[j].1) && j > 0) {
-            j += 1;
+            j = j.saturating_add(1);
             continue;
         }
         let mut k = j;
         while k + 1 < pieces.len() && is_star(&pieces[k + 1].1) {
-            k += 1;
+            k = k.saturating_add(1);
         }
         let prev_is_type = is_type_context(pieces[j - 1].1.text)
             || (pieces[j - 1].1.kind == TokenKind::Ident
@@ -340,7 +340,7 @@ fn space_pointers(pieces: &mut [Piece]) {
                 };
             }
         }
-        j = k + 1;
+        j = k.saturating_add(1);
     }
 }
 

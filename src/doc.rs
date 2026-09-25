@@ -193,16 +193,14 @@ pub fn render(doc: &Doc, width: usize, start_col: usize, base_level: usize) -> S
 /// the work still queued in `rest` up to the first newline or [`Doc::Boundary`]?
 fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
     let mut work: Vec<(Mode, &Doc)> = vec![(Mode::Flat, doc)];
-    let mut rest_idx = rest.len();
+    let mut rest_iter = rest.iter().rev();
     loop {
         let (mode, d, from_rest) = if let Some((mode, d)) = work.pop() {
             (mode, d, false)
         } else {
-            if rest_idx == 0 {
+            let Some(&(_, mode, d)) = rest_iter.next() else {
                 return true;
-            }
-            rest_idx -= 1;
-            let (_, mode, d) = rest[rest_idx];
+            };
             (mode, d, true)
         };
         match d {
