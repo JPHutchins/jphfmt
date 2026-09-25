@@ -67,11 +67,12 @@ fn emit_tokens(
         if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(out) {
             let is_define = next_nontrivia(toks, i + 1)
                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
-            i = if is_define {
+            i = (if is_define {
                 emit_define(toks, i, out, col, *depth, width)
             } else {
                 emit_directive(toks, i, out, col, depth)
-            };
+            })
+            .max(i.saturating_add(1));
             continue;
         }
 
@@ -103,7 +104,8 @@ fn emit_tokens(
             for tok in &toks[i..brace] {
                 emit_str(out, col, tok.text);
             }
-            i = emit_brace(toks, brace, true, in_define_body, out, col, width);
+            i = emit_brace(toks, brace, true, in_define_body, out, col, width)
+                .max(i.saturating_add(1));
             continue;
         }
 
@@ -178,7 +180,7 @@ fn emit_tokens(
                 format_stmt_expr(toks, i, base_level, width, in_define_body)
             {
                 emit_str(out, col, &block);
-                i = next;
+                i = next.max(i.saturating_add(1));
                 continue;
             }
         }
@@ -187,7 +189,8 @@ fn emit_tokens(
         // with one statement per line, body indented, `}` at the definition's own indent level.
         if t.kind == TokenKind::Punct && t.text == "{" && pending_func_def {
             pending_func_def = false;
-            i = emit_func_body(toks, i, out, in_define_body, col, depth, width);
+            i = emit_func_body(toks, i, out, in_define_body, col, depth, width)
+                .max(i.saturating_add(1));
             continue;
         }
 
@@ -200,7 +203,8 @@ fn emit_tokens(
             && !opens_definition_body(toks, i)
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, in_define_body, out, col, width);
+            i = emit_brace(toks, i, false, in_define_body, out, col, width)
+                .max(i.saturating_add(1));
             continue;
         }
 
@@ -217,7 +221,8 @@ fn emit_tokens(
             && !contains_comment(&toks[paren..i])
             && match_brace(toks, i).is_some()
         {
-            i = emit_brace(toks, i, false, in_define_body, out, col, width);
+            i = emit_brace(toks, i, false, in_define_body, out, col, width)
+                .max(i.saturating_add(1));
             continue;
         }
 
@@ -708,7 +713,7 @@ fn format_stmt_expr(
     s.push('\n');
     s.push_str(&close_indent);
     s.push_str("})");
-    Some((s, paren_close + 1))
+    Some((s, paren_close.saturating_add(1)))
 }
 
 /// Format the `{...}` opening at `open` (an initializer when `padded` is false, an enum body when
@@ -725,7 +730,7 @@ fn emit_brace(
 ) -> usize {
     let Some(close) = match_brace(toks, open) else {
         emit_str(out, col, toks[open].text);
-        return open + 1;
+        return open.saturating_add(1);
     };
     let inner = &toks[open + 1..close];
     // The blanket `#` is load-bearing, not a stale copy of [`holds_directive`]: a `{}` list holding any
@@ -739,7 +744,7 @@ fn emit_brace(
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
         }
-        return close + 1;
+        return close.saturating_add(1);
     }
     let doc = build_brace_doc(inner, padded);
     emit_doc(
@@ -749,7 +754,7 @@ fn emit_brace(
         col,
         width,
     );
-    close + 1
+    close.saturating_add(1)
 }
 
 /// Format a function definition body: always break with `{\n\tstatements\n}`, the statements walked
@@ -767,7 +772,7 @@ fn emit_func_body(
 ) -> usize {
     let Some(close) = match_brace(toks, open) else {
         emit_str(out, col, toks[open].text);
-        return open + 1;
+        return open.saturating_add(1);
     };
     let inner = &toks[open + 1..close];
     if !is_balanced(inner) {
@@ -775,7 +780,7 @@ fn emit_func_body(
         for tok in &toks[open + 1..=close] {
             emit_str(out, col, tok.text);
         }
-        return close + 1;
+        return close.saturating_add(1);
     }
 
     let base_level = current_line_indent_cols(out) / TAB_WIDTH;
@@ -799,7 +804,7 @@ fn emit_func_body(
             }
         }
         emit_str(out, col, "}");
-        return close + 1;
+        return close.saturating_add(1);
     }
 
     emit_str(out, col, "\n");
@@ -814,7 +819,7 @@ fn emit_func_body(
     emit_str(out, col, &close_indent);
     emit_str(out, col, "}");
 
-    close + 1
+    close.saturating_add(1)
 }
 
 /// Append `s` to `out`, tracking the display column (tabs count as [`TAB_WIDTH`]).
