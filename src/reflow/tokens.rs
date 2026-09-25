@@ -345,7 +345,7 @@ pub(super) fn directive_end(toks: &[Token], start: usize) -> usize {
     while i < toks.len() {
         let is_newline = toks[i].kind == TokenKind::Newline;
         let continued = is_newline && i > 0 && is_backslash(&toks[i - 1]);
-        i += 1;
+        i = i.saturating_add(1);
         if is_newline && !continued {
             break;
         }
@@ -568,12 +568,12 @@ fn comma_declares(toks: &[Token], comma: usize) -> bool {
     let mut k = comma;
     loop {
         while k > 0 && is_trivia(&toks[k - 1]) {
-            k -= 1;
+            k = k.saturating_sub(1);
         }
         if k == 0 || !declarator_shaped(&toks[k - 1]) {
             break;
         }
-        k -= 1;
+        k = k.saturating_sub(1);
     }
     // The walk stopped at a non-declarator boundary token, or ran into the span's start — the
     // latter is an unknown head, refused.

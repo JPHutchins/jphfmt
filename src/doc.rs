@@ -201,7 +201,7 @@ fn fits(mut remaining: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
             if rest_idx == 0 {
                 return true;
             }
-            rest_idx -= 1;
+            rest_idx = rest_idx.saturating_sub(1);
             let (_, mode, d) = rest[rest_idx];
             (mode, d, true)
         };

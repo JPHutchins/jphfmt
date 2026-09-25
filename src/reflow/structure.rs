@@ -92,7 +92,7 @@ fn emit_tokens(
                 col,
                 width,
             );
-            i = close + 1;
+            i = close.saturating_add(1);
             continue;
         }
 
@@ -124,7 +124,7 @@ fn emit_tokens(
                 );
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                i = close + 1;
+                i = close.saturating_add(1);
                 continue;
             }
             if let Some((_, close)) = forced_call_pair(toks, open) {
@@ -145,7 +145,7 @@ fn emit_tokens(
                 );
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                i = close + 1;
+                i = close.saturating_add(1);
                 continue;
             }
             if let Some(close) = match_bracket(toks, open)
@@ -166,7 +166,7 @@ fn emit_tokens(
                 }
                 pending_func_def =
                     next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                i = close + 1;
+                i = close.saturating_add(1);
                 continue;
             }
         }
@@ -246,7 +246,7 @@ fn emit_tokens(
                 col,
                 width,
             );
-            i = close + 1;
+            i = close.saturating_add(1);
             continue;
         }
 
@@ -325,11 +325,11 @@ fn emit_tokens(
             && prev_nontrivia(toks, i).is_some_and(|j| toks[j].text == "[")
             && next_nontrivia(toks, i + 1).is_some_and(|j| toks[j].text == "{")
         {
-            i += 1;
+            i = i.saturating_add(1);
             continue;
         }
         emit_str(out, col, t.text);
-        i += 1;
+        i = i.saturating_add(1);
     }
 }
 
