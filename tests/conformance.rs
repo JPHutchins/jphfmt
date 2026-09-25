@@ -3342,3 +3342,13 @@ fn a_brace_reserve_counts_the_chain_separator_the_layout_writes() {
     );
     assert_eq!(format(&once), once, "and it is a fixpoint");
 }
+
+#[test]
+fn a_call_head_before_a_brace_is_a_definition_body() {
+    // #65's survivor: the pending-func-def prediction reads the `{` after a call head — the
+    // `!=` mutant of that comparison misses the body and leaves `{ return x; }` flat, while the
+    // body arm always breaks one statement per line.
+    let once = format("int f(int x) { return x; }\n");
+    assert_eq!(once, "int f(int x) {\n\treturn x;\n}\n");
+    assert_eq!(format(&once), once, "and it is a fixpoint");
+}
