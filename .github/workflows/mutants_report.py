@@ -731,6 +731,24 @@ def exclude_check() -> int:
             for name in names[:5]:
                 print(f"  {name}")
             return 1
+    configured = subprocess.run(
+        ["cargo", "mutants", "--list"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if configured.returncode != 0:
+        print(f"::error::cargo mutants --list (with config) failed: {configured.stderr.strip()}")
+        return 1
+    configured_names = {
+        re.sub(r"\x1b\[[0-9;]*m", "", name) for name in configured.stdout.splitlines()
+    }
+    removed = set(names) - configured_names
+    expected_all = {name for expected in EXCLUDED.values() for name in expected}
+    if removed != expected_all:
+        print(f"::error::the sweep's config excludes {sorted(removed)}, expected {sorted(expected_all)}")
+        return 1
     return 0
 
 def main(argv: tuple[str, ...]) -> int:
