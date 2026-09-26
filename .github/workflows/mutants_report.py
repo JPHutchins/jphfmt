@@ -701,7 +701,8 @@ def exclude_check() -> int:
     import subprocess
     import tomllib
 
-    config = tomllib.loads(Path(".cargo/mutants.toml").read_text(encoding="utf-8"))
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / ".cargo/mutants.toml").read_text(encoding="utf-8"))
     toml_patterns = config.get("exclude_re", [])
     if toml_patterns != list(EXCLUDED):
         print("::error::.cargo/mutants.toml exclude_re drifted from the registry:")
@@ -710,6 +711,7 @@ def exclude_check() -> int:
         return 1
     listed = subprocess.run(
         ["cargo", "mutants", "--list", "--no-config"],
+        cwd=root,
         capture_output=True,
         text=True,
         check=False,
