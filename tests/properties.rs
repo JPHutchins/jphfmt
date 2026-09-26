@@ -44,17 +44,19 @@ const BIASED_PIECES: &[&str] = &[
 
 /// The #172 class shape: a declarator head holding a nested group with a break — the head's
 /// join refusal flipped between the canonical and verbatim readings. Assembled constantly, like
-/// [`biased_bracket`], so a regression of that mechanism fails here rather than depending on one
+/// [`biased_shapes`], so a regression of that mechanism fails here rather than depending on one
 /// conformance pin.
 fn declarator_head() -> impl Strategy<Value = String> {
     (
         proptest::sample::select(&["int (*f", "int (*f\n", "int (*"][..]),
-        proptest::sample::select(&["(int)", "\n(int)", "(int\n)", "(aa() /)"][..]),
+        proptest::sample::select(&["(int)", "\n(int)", "(int\n)", "(aa() /)", "\n[int]"][..]),
     )
         .prop_map(|(head, inner)| format!("{head}{inner}) = a | b;"))
 }
 
-fn biased_bracket() -> impl Strategy<Value = String> {
+/// The #146 and #172 classes share this generator: the piece pool and the declarator-head
+/// strategy split the draws, each at enough cases for its class.
+fn biased_shapes() -> impl Strategy<Value = String> {
     prop_oneof![
         proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
             .prop_map(|pieces| pieces.concat()),
@@ -127,7 +129,7 @@ proptest! {
     /// pieced generators almost never spell it; [`biased_bracket`] assembles it constantly, so a
     /// regression of that mechanism fails here rather than depending on one conformance pin.
     #[test]
-    fn biased_bracket_input_is_idempotent_across_widths(s in biased_bracket(), width in 1usize..=32) {
+    fn biased_shape_input_is_idempotent_across_widths(s in biased_shapes(), width in 1usize..=32) {
         let once = format_with_width(&s, width);
         prop_assert_eq!(format_with_width(&once, width), once);
     }
