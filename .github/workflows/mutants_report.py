@@ -23,6 +23,23 @@ import msgspec
 # sit at the tail; what does not fit here is counted in the report and kept in the run's artifact.
 BODY_LIMIT = 60000
 
+PINNED_TOOL = "cargo-mutants 27.1.0"
+PINNED_TEST_ARGS = ["--lib", "--test", "conformance"]
+
+EXCLUDED: dict[str, tuple[str, ...]] = {
+    r"structure\.rs:311:60: replace / with [%*] in emit_tokens": (
+        "src/reflow/structure.rs:311:60: replace / with % in emit_tokens",
+        "src/reflow/structure.rs:311:60: replace / with * in emit_tokens",
+    ),
+    r"structure\.rs:269:42: replace \+ with \* in emit_tokens": (
+        "src/reflow/structure.rs:269:42: replace + with * in emit_tokens",
+    ),
+    r"tokens\.rs:644:37: replace == with != in joined_pair_respaced": (
+        "src/reflow/tokens.rs:644:37: replace == with != in joined_pair_respaced",
+    ),
+}
+
+
 
 class Position(msgspec.Struct):
     """One end of a span; cargo-mutants nests both ends, and the report reads the start."""
@@ -676,6 +693,97 @@ def tested(path: Path) -> tuple[MergedDoc, Counts]:
     return data, tally
 
 
+
+
+def exclude_check() -> int:
+    """The sweep-config gate: `.cargo/mutants.toml` carries the patterns the sweep applies and
+    the test-arg pin that keeps the randomized proptest target out of scoring; this module
+    carries what each must be, and the live pinned cargo-mutants proves both against the
+    current source — a drifted line:col, a dropped pin, or a tool-version bump fails loudly
+    instead of silently changing what the sweep excludes or scores.
+    """
+    import subprocess
+    import tomllib
+
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / ".cargo/mutants.toml").read_text(encoding="utf-8"))
+
+    def list_mutants(*extra: str) -> tuple[int, list[str]]:
+        try:
+            listed = subprocess.run(
+                ["cargo", "mutants", "--list", "--colors", "never", "--json", *extra],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            # A machine without the tool has no sweep to gate; the plan job and the dev shell
+            # both install it, and a missing tool is not this check's failure.
+            print("::notice::cargo-mutants is not installed; the sweep-config gate is skipped")
+            return 0, []
+        if listed.returncode != 0:
+            cause = listed.stderr.strip() or "no stderr"
+            print(f"::error::cargo mutants --list {' '.join(extra) or '(config)'} "
+                  f"failed (exit {listed.returncode}): {cause}")
+            return 1, []
+        return 0, [m["name"] for m in msgspec.json.decode(listed.stdout)]
+
+    try:
+        version = subprocess.run(
+            ["cargo", "mutants", "--version"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        import shutil
+
+        if shutil.which("cargo") is None:
+            print("::notice::cargo is not installed; the sweep-config gate is skipped")
+            return 0
+        print("::error::cargo-mutants is not on PATH (cargo is): the sweep-config gate cannot run")
+        return 1
+    if version.stdout.strip() != PINNED_TOOL:
+        print(f"::error::cargo-mutants {version.stdout.strip()!r} runs here; "
+              f"the registry is validated against {PINNED_TOOL!r}")
+        return 1
+    toml_patterns = config.get("exclude_re", [])
+    if toml_patterns != list(EXCLUDED):
+        print("::error::.cargo/mutants.toml exclude_re drifted from the registry:")
+        print(f"  toml: {toml_patterns}")
+        print(f"  registry: {list(EXCLUDED)}")
+        return 1
+    pinned_args = config.get("additional_cargo_test_args")
+    if pinned_args != PINNED_TEST_ARGS:
+        print("::error::.cargo/mutants.toml additional_cargo_test_args drifted:")
+        print(f"  toml: {pinned_args}")
+        print(f"  pinned: {PINNED_TEST_ARGS}")
+        return 1
+    code, names = list_mutants("--no-config")
+    if code:
+        return code
+    for pattern, expected in EXCLUDED.items():
+        matched = [name for name in names if re.search(pattern, name)]
+        if set(matched) != set(expected):
+            print(f"::error::the pattern {pattern!r} matches {matched}, expected {list(expected)}")
+            file_prefix = expected[0].split(":", 1)[0] + ":"
+            nearby = [name for name in names if name.startswith(file_prefix)]
+            print("::notice::nearby mutants at that file:")
+            for name in nearby[:8]:
+                print(f"  {name}")
+            return 1
+    code, configured = list_mutants()
+    if code:
+        return code
+    removed = set(names) - set(configured)
+    expected_all = {name for expected in EXCLUDED.values() for name in expected}
+    if removed != expected_all or set(configured) | removed != set(names):
+        print(f"::error::the sweep's config excludes {sorted(removed)}, expected {sorted(expected_all)}")
+        return 1
+    return 0
+
 def main(argv: tuple[str, ...]) -> int:
     """The merge mode's stdout is the workflow's output contract, pinned here — the yaml gates
     read these lines, and a desynced `key=value` shape or title would garble the rolling issue.
@@ -774,6 +882,8 @@ def main(argv: tuple[str, ...]) -> int:
             print(msgspec.json.encode(plan(files, 4)).decode())
         case ("sweep-marked", outcomes_dir, log):
             return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
+        case ("exclude-check",):
+            return exclude_check()
         case ("--self-test",):
             import doctest
 
@@ -791,7 +901,7 @@ def main(argv: tuple[str, ...]) -> int:
             print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
             print("       mutants_report.py plan < FILES_LIST")
             print("       mutants_report.py sweep-marked OUTCOMES_DIR SWEEP_LOG")
-            print("       mutants_report.py --self-test | --self-check FILES...")
+            print("       mutants_report.py exclude-check | --self-test | --self-check FILES...")
             return 2
     return 0
 
