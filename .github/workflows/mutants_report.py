@@ -738,8 +738,13 @@ def exclude_check() -> int:
             check=False,
         )
     except FileNotFoundError:
-        print("::notice::cargo-mutants is not installed; the sweep-config gate is skipped")
-        return 0
+        import shutil
+
+        if shutil.which("cargo") is None:
+            print("::notice::cargo is not installed; the sweep-config gate is skipped")
+            return 0
+        print("::error::cargo-mutants is not on PATH (cargo is): the sweep-config gate cannot run")
+        return 1
     if version.stdout.strip() != PINNED_TOOL:
         print(f"::error::cargo-mutants {version.stdout.strip()!r} runs here; "
               f"the registry is validated against {PINNED_TOOL!r}")
@@ -763,7 +768,8 @@ def exclude_check() -> int:
         matched = [name for name in names if re.search(pattern, name)]
         if set(matched) != set(expected):
             print(f"::error::the pattern {pattern!r} matches {matched}, expected {list(expected)}")
-            nearby = [name for name in names if name.startswith(expected[0].split(":")[1] + ":")]
+            file_prefix = expected[0].split(":", 1)[0] + ":"
+            nearby = [name for name in names if name.startswith(file_prefix)]
             print("::notice::nearby mutants at that file:")
             for name in nearby[:8]:
                 print(f"  {name}")
@@ -773,7 +779,7 @@ def exclude_check() -> int:
         return code
     removed = set(names) - set(configured)
     expected_all = {name for expected in EXCLUDED.values() for name in expected}
-    if removed != expected_all:
+    if removed != expected_all or set(configured) | removed != set(names):
         print(f"::error::the sweep's config excludes {sorted(removed)}, expected {sorted(expected_all)}")
         return 1
     return 0

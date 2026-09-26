@@ -103,8 +103,9 @@ jobs:
           # the bound is defense in depth for any hang that remains — and 4x keeps ~2x CPU
           # headroom under --jobs 8 contention, where 3x misclassifies slow-but-finite mutants.
           # The proven-equivalent exclusions live in .cargo/mutants.toml, which cargo-mutants
-          # reads by default; the exclude-check gate in the plan job proves they still match
-          # exactly their recorded mutants on the current source.
+          # reads by default; the sweep-config gate (mutants_report.py exclude-check, run by
+          # the root check task) proves they still match exactly their recorded mutants on the
+          # current source.
           cargo mutants --jobs 8 --timeout-multiplier 4 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
           if uv run .github/workflows/mutants_report.py sweep-marked mutants.out mutants.sweep.log; then
             cp mutants.sweep.log mutants.out/sweep.log

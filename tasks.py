@@ -117,7 +117,7 @@ fix_fast = Parallel(rust_fix_fast, vscode)
 rust = Sequential(rust_fix, rust_check)
 cross = Parallel(nix_fmt_check, typos, version_check, py_types, py_doctest, task_types, github)
 
-check = Parallel(rust_check, cross, vscode)
+check = Parallel(rust_check, cross, vscode, mutants_gate)
 check_fast = Parallel(rust_check_fast, cross, vscode)
 ci = Parallel(check, audit)
 all = Parallel(rust, cross, vscode)
