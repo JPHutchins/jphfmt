@@ -39,8 +39,7 @@ fn pieced() -> impl Strategy<Value = String> {
 /// is found, not hoped for.
 const BIASED_PIECES: &[&str] = &[
     "A", "a", "{", "}", "*=", "?", ":", ",", "=", ")", "(", "()", "(aa() /)", "\n", "\t", " ",
-    "\\", "\"", "x", ";", "&", "|", "/",
-    "int", "(*", "*\n(", "\n(", ") = ",
+    "\\", "\"", "x", ";", "&", "|", "/", "int", "(*", "*\n(", "\n(", ") = ",
 ];
 
 /// The #172 class shape: a declarator head holding a nested group with a break — the head's
