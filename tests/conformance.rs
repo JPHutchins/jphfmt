@@ -3363,6 +3363,8 @@ fn a_chain_head_whose_nested_group_breaks_explodes_it_on_the_first_pass() {
     assert_eq!(once, "int (*f(\n\tint\n)) = (\n\ta |\n\tb\n);\n");
     assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
 }
+
+#[test]
 fn an_index_map_whose_ternary_chain_explodes_stays_exploded() {
     // #65's survivor: the bracketed-group arm's is_balanced span — its + with * mutant includes
     // the bracket itself in the balance check, refuses the group, and the fallback leaves the
@@ -3370,5 +3372,4 @@ fn an_index_map_whose_ternary_chain_explodes_stays_exploded() {
     let once = format("int j = arr[a ? b : c ? d : e];\n");
     assert_eq!(once, "int j = arr[\n\ta ? b :\n\tc ? d :\n\te\n];\n");
     assert_eq!(format(&once), once, "and it is a fixpoint");
-
 }
