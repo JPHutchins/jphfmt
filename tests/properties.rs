@@ -31,18 +31,36 @@ fn pieced() -> impl Strategy<Value = String> {
         .prop_map(|pieces| pieces.concat())
 }
 
-/// The #146 class shape: a braced element, its label tail, and a call head the walk attaches across
-/// a newline. The character-level generator cannot spell the shape in any realistic draw, and the
-/// pieced one reaches it only when a dozen pieces line up; this assembles it constantly, so a
-/// two-pass flip of that mechanism is found, not hoped for.
+/// The #146 and #172 class shapes: a braced element, its label tail, and a call head the walk
+/// attaches across a newline; and a declarator head holding a nested group with a break, whose
+/// join refusal flips between the canonical and verbatim readings. The character-level generator
+/// cannot spell either shape in any realistic draw, and the pieced one reaches them only when a
+/// dozen pieces line up; this assembles them constantly, so a two-pass flip of either mechanism
+/// is found, not hoped for.
 const BIASED_PIECES: &[&str] = &[
     "A", "a", "{", "}", "*=", "?", ":", ",", "=", ")", "(", "()", "(aa() /)", "\n", "\t", " ",
     "\\", "\"", "x", ";", "&", "|", "/",
+    "int", "(*", "*\n(", "\n(", ") = ",
 ];
 
+/// The #172 class shape: a declarator head holding a nested group with a break — the head's
+/// join refusal flipped between the canonical and verbatim readings. Assembled constantly, like
+/// [`biased_bracket`], so a regression of that mechanism fails here rather than depending on one
+/// conformance pin.
+fn declarator_head() -> impl Strategy<Value = String> {
+    (
+        proptest::sample::select(&["int (*f", "int (*f\n", "int (*"][..]),
+        proptest::sample::select(&["(int)", "\n(int)", "(int\n)", "(aa() /)"][..]),
+    )
+        .prop_map(|(head, inner)| format!("{head}{inner}) = a | b;"))
+}
+
 fn biased_bracket() -> impl Strategy<Value = String> {
-    proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
-        .prop_map(|pieces| pieces.concat())
+    prop_oneof![
+        proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
+            .prop_map(|pieces| pieces.concat()),
+        declarator_head(),
+    ]
 }
 
 /// Whichever of `before`'s characters the output holds fewer of, if any.
