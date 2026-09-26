@@ -506,8 +506,8 @@ pub(super) fn opens_with_separator(toks: &[Token]) -> bool {
 }
 
 /// Whether the `(` at `j` follows a callee identifier — the pair `space_call_heads` tightens. The
-/// one spelling for that pass and for [`respaced_when_joined`], whose joined pair the tightening
-/// would respace (#121's search).
+/// one spelling for that pass and for [`respaced_when_joined`], which writes this canonical tight
+/// form rather than refusing it (#121's search).
 pub(super) fn is_call_head_pair(toks: &[Token], j: usize) -> bool {
     toks[j].kind == TokenKind::Punct
         && toks[j].text == "("
@@ -516,7 +516,8 @@ pub(super) fn is_call_head_pair(toks: &[Token], j: usize) -> bool {
 
 /// Whether the `[` at `j` indexes a value — the shape `space_subscripts` tightens. An attribute's
 /// `[[` opens a construct of its own and keeps its gap. The one spelling for that pass and for
-/// [`respaced_when_joined`], whose joined pair the tightening would respace (#121's search).
+/// [`respaced_when_joined`], which writes this canonical tight form rather than refusing it
+/// (#121's search).
 pub(super) fn is_subscript(toks: &[Token], j: usize) -> bool {
     toks[j].kind == TokenKind::Punct
         && toks[j].text == "["
@@ -617,28 +618,21 @@ fn broken_after(toks: &[Token], j: usize) -> bool {
 }
 
 pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
-    joined_pair_respaced(inner, false, false)
+    joined_pair_respaced(inner, false)
 }
 
-/// The depth-zero reading of [`respaced_when_joined`]: a nested break is the nested group's own to
-/// refuse — its handler writes the canonical tight form — so a hit below depth zero would freeze the
-/// enclosing container for nothing. Callers whose collapse joins only the span's own breaks ask this
-/// one; a caller that joins every break, nested included, asks [`respaced_when_joined`].
+/// The depth-zero reading of [`respaced_when_joined`]: the joins the element fallback's collapse
+/// writes wrong — a space a later pass respaces — where the group and call arms write the canonical
+/// tight form and take no refusal of their own: the depth-zero bit-field colon, a `*` whose gap to a
+/// non-identifier a declarator verdict would tighten (ambiguous locally, so §6 refuses it), and a
+/// `;` the collapse puts a space before, which `space_semicolons` strips. A nested break below depth
+/// zero is the nested group's own to refuse, so a hit there would freeze the enclosing container for
+/// nothing (#121's search).
 pub(super) fn respaced_when_joined_top(inner: &[Token]) -> bool {
-    joined_pair_respaced(inner, true, false)
+    joined_pair_respaced(inner, true)
 }
 
-/// The joins the element fallback's collapse writes wrong — a space a later pass respaces — where
-/// the group and call arms already write the canonical tight form and take no refusal of their own:
-/// the depth-zero bit-field colon, a `*` whose gap to a non-identifier a declarator verdict would
-/// tighten (ambiguous locally, so §6 refuses it), and a `;` the collapse puts a space before, which
-/// `space_semicolons` strips. The top-level reading, braces included, since a nested construct
-/// refuses its own breaks (#121's search).
-pub(super) fn element_join_respaced(toks: &[Token]) -> bool {
-    joined_pair_respaced(toks, true, true)
-}
-
-fn joined_pair_respaced(inner: &[Token], top_only: bool, canonical_joins: bool) -> bool {
+fn joined_pair_respaced(inner: &[Token], top_only: bool) -> bool {
     // The question is only ever about a break, so a span with none is answered without the scan —
     // the element fallback asks it of every element, the formatter's hot path.
     if !inner.iter().any(|t| t.kind == TokenKind::Newline) {
@@ -653,21 +647,11 @@ fn joined_pair_respaced(inner: &[Token], top_only: bool, canonical_joins: bool) 
     let mut parens = 0i32;
     for (j, t) in inner.iter().enumerate() {
         // Read before the depth update: `[` and `(` open a level themselves, so their joins read at
-        // the level they join from. A `[` whose join the subscript rule tightens — `0\n[]` joined to
-        // `0 []` respaces to `0[]` — and a `(` whose join the call-head rule tightens — `A\n(` joined
-        // to `A (` respaces to `A(` — are both the same class (#121's search). A `*` whose break to a
-        // following operator is joined — `*\n<` joined to `* <` respaces to `*<` when the star reads
-        // as a declarator's — the same class, one star over. The element callers' group and call
-        // arms join the subscript and call-head shapes to the canonical tight form, so those two
-        // arms are not theirs.
+        // the level they join from. The subscript and call-head joins write the canonical tight form
+        // the element arms themselves join to — not refused here (#121's search). A `*` whose break
+        // to a following operator is joined — `*\n<` joined to `* <` respaces to `*<` when the star
+        // reads as a declarator's — the same class, one star over.
         if (!top_only || brackets == 0) && broken_before(j) && star_gap_respaced(inner, j) {
-            return true;
-        }
-        if !canonical_joins
-            && (!top_only || brackets == 0)
-            && broken_before(j)
-            && (is_subscript(inner, j) || is_call_head_pair(inner, j))
-        {
             return true;
         }
         // `space_bit_fields` reads at any depth, so a colon whose join it would tighten is refused at

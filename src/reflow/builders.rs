@@ -10,13 +10,12 @@
 //! breaks. Depends on [`super::tokens`] for depth-aware splitting and balance checks.
 
 use super::tokens::{
-    closes_literal_type, element_join_respaced, has_middle_newline, has_non_trivia, has_top_level,
-    has_top_level_question, holds_directive, holds_head_split, is_balanced, is_bit_field_colon,
-    is_call_head_pair, is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace,
-    match_bracket, next_nontrivia, opens_with_separator, operand_span, prev_nontrivia,
-    respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines, split_chain,
-    split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
-    star_gap_respaced,
+    closes_literal_type, has_middle_newline, has_non_trivia, has_top_level, has_top_level_question,
+    holds_directive, holds_head_split, is_balanced, is_bit_field_colon, is_call_head_pair,
+    is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket,
+    next_nontrivia, opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
+    respaced_when_joined_top, segments_at, spans_lines, split_chain, split_designators,
+    split_on_commas, split_top_level, split_top_level_with_cuts, star_gap_respaced,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -176,7 +175,7 @@ fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
     // tight form take no refusal here. The edges are trimmed to the non-trivia core: a container's
     // own separator owns those gaps, and the previous pass's indentation is trivia this pass would
     // otherwise double.
-    if element_join_respaced(toks) {
+    if respaced_when_joined_top(toks) {
         let first = toks.iter().position(|t| !is_trivia(t)).unwrap_or(0);
         let last = toks
             .iter()
@@ -796,7 +795,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         // The first segment has no cut before it and nothing a re-read would add.
         let mut offset = 0usize;
         for segment in &segments {
-            if element_join_respaced(segment) {
+            if respaced_when_joined_top(segment) {
                 let refused = if offset == 0 {
                     // The first segment's span-initial reading loses the head's last token — a
                     // star after `? =` reads declarator-possible where the `=` proves the operand
@@ -809,11 +808,11 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
                             && toks[tail..start]
                                 .iter()
                                 .all(|t| !matches!(t.text, "(" | "[" | "{" | ")" | "]" | "}"))
-                            && !element_join_respaced(&toks[tail..start + segment.len()]))
+                            && !respaced_when_joined_top(&toks[tail..start + segment.len()]))
                     })
                 } else {
                     let from = prev_nontrivia(operands, offset).unwrap_or(0);
-                    element_join_respaced(&operands[from..offset + segment.len()])
+                    respaced_when_joined_top(&operands[from..offset + segment.len()])
                 };
                 if refused {
                     return None;
@@ -893,12 +892,12 @@ fn ternary_arms<'a, 'src>(inner: &'a [Token<'src>]) -> Option<Vec<&'a [Token<'sr
     // stands only when the context confirms it (#153).
     let mut offset = 0usize;
     for arm in &arms {
-        if element_join_respaced(arm) {
+        if respaced_when_joined_top(arm) {
             if offset == 0 {
                 return None;
             }
             let from = prev_nontrivia(inner, offset).unwrap_or(0);
-            if element_join_respaced(&inner[from..offset + arm.len()]) {
+            if respaced_when_joined_top(&inner[from..offset + arm.len()]) {
                 return None;
             }
         }
@@ -946,7 +945,7 @@ fn comparison_conjunct(segments: &[&[Token]], ops: &[&str]) -> Option<Doc> {
         return None;
     }
     let close = match_bracket(left, open)?;
-    if prev_nontrivia(left, left.len()) != Some(close) || element_join_respaced(right) {
+    if prev_nontrivia(left, left.len()) != Some(close) || respaced_when_joined_top(right) {
         return None;
     }
     Some(Doc::concat([
@@ -998,7 +997,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         // The gate the other segment consumers have, the canonical reading: a segment whose
         // collapse would join a respaced pair is refused, and the caller's own fallback keeps the
         // break (#121's search).
-        if segments.iter().any(|s| element_join_respaced(s)) {
+        if segments.iter().any(|s| respaced_when_joined_top(s)) {
             return None;
         }
         return Some(build_container(

@@ -13,11 +13,11 @@ use super::builders::{
 use super::scope::scoped;
 use super::tokens::{
     assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
-    directive_end, element_join_respaced, enum_body_brace, has_middle_newline, has_non_trivia,
-    holds_hash_fragment, holds_unsafe_hash, is_backslash, is_balanced, is_call_head,
-    is_call_head_pair, is_chain_break, is_comment, is_control_keyword, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, operand_span,
-    prev_nontrivia, prev_significant, spans_lines, split_brace_line_comment, statement_end,
+    directive_end, enum_body_brace, has_middle_newline, has_non_trivia, holds_hash_fragment,
+    holds_unsafe_hash, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
+    is_comment, is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia,
+    next_nontrivia_in, next_paren, opens_stmt_expr, operand_span, prev_nontrivia, prev_significant,
+    respaced_when_joined_top, spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind};
@@ -767,7 +767,7 @@ fn emit_brace(
         || inner
             .iter()
             .any(|t| t.kind == TokenKind::Punct && t.text == "#");
-    if has_comment_or_directive || !is_balanced(inner) || element_join_respaced(inner) {
+    if has_comment_or_directive || !is_balanced(inner) || respaced_when_joined_top(inner) {
         for tok in &toks[open..=close] {
             emit_str(out, col, tok.text);
         }

@@ -31,18 +31,38 @@ fn pieced() -> impl Strategy<Value = String> {
         .prop_map(|pieces| pieces.concat())
 }
 
-/// The #146 class shape: a braced element, its label tail, and a call head the walk attaches across
-/// a newline. The character-level generator cannot spell the shape in any realistic draw, and the
-/// pieced one reaches it only when a dozen pieces line up; this assembles it constantly, so a
-/// two-pass flip of that mechanism is found, not hoped for.
+/// The #146 and #172 class shapes: a braced element, its label tail, and a call head the walk
+/// attaches across a newline; and a declarator head holding a nested group with a break, whose
+/// join refusal flips between the canonical and verbatim readings. The character-level generator
+/// cannot spell either shape in any realistic draw, and the pieced one reaches them only when a
+/// dozen pieces line up; this assembles them constantly, so a two-pass flip of either mechanism
+/// is found, not hoped for.
 const BIASED_PIECES: &[&str] = &[
     "A", "a", "{", "}", "*=", "?", ":", ",", "=", ")", "(", "()", "(aa() /)", "\n", "\t", " ",
-    "\\", "\"", "x", ";", "&", "|", "/",
+    "\\", "\"", "x", ";", "&", "|", "/", "int", "(*", "*\n(", "\n(", ") = ",
 ];
 
-fn biased_bracket() -> impl Strategy<Value = String> {
-    proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
-        .prop_map(|pieces| pieces.concat())
+/// The #172 class shape: a declarator head holding a nested group with a break — the head's
+/// join refusal flipped between the canonical and verbatim readings. Assembled constantly, like
+/// [`biased_shapes`], so a regression of that mechanism fails here rather than depending on one
+/// conformance pin.
+fn declarator_head() -> impl Strategy<Value = String> {
+    (
+        proptest::sample::select(&["int (*f", "int (*f\n", "int (*"][..]),
+        proptest::sample::select(&["(int)", "\n(int)", "(int\n)", "(aa() /)", "\n[int]"][..]),
+    )
+        .prop_map(|(head, inner)| format!("{head}{inner}) = a | b;"))
+}
+
+/// The #146 and #172 classes share this generator: the piece pool assembles the braced-element
+/// and call-head shapes, [`declarator_head`] the declarator-head-with-a-break ones, each at
+/// enough draws for its class.
+fn biased_shapes() -> impl Strategy<Value = String> {
+    prop_oneof![
+        proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
+            .prop_map(|pieces| pieces.concat()),
+        declarator_head(),
+    ]
 }
 
 /// Whichever of `before`'s characters the output holds fewer of, if any.
@@ -110,7 +130,7 @@ proptest! {
     /// pieced generators almost never spell it; [`biased_bracket`] assembles it constantly, so a
     /// regression of that mechanism fails here rather than depending on one conformance pin.
     #[test]
-    fn biased_bracket_input_is_idempotent_across_widths(s in biased_bracket(), width in 1usize..=32) {
+    fn biased_shape_input_is_idempotent_across_widths(s in biased_shapes(), width in 1usize..=32) {
         let once = format_with_width(&s, width);
         prop_assert_eq!(format_with_width(&once, width), once);
     }

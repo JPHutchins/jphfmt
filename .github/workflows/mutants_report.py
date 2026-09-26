@@ -34,8 +34,8 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
     r"structure\.rs:269:42: replace \+ with \* in emit_tokens": (
         "src/reflow/structure.rs:269:42: replace + with * in emit_tokens",
     ),
-    r"tokens\.rs:644:37: replace == with != in joined_pair_respaced": (
-        "src/reflow/tokens.rs:644:37: replace == with != in joined_pair_respaced",
+    r"tokens\.rs:638:37: replace == with != in joined_pair_respaced": (
+        "src/reflow/tokens.rs:638:37: replace == with != in joined_pair_respaced",
     ),
 }
 

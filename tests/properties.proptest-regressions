@@ -21,3 +21,4 @@ cc 6ec1e000175b51d87268a4f6a8053cda731b00225f69f78fbd451656feb4c395 # shrinks to
 cc 8650d67f909c917cb8cb5b77f0dc1ed9322cf4e316c0a69237343d3252a8c983 # shrinks to s = "=\"\"\"\"{\"\":*\n0\"\"?}"
 cc 40f97c4b8b307fc5ab5d9eda5d9f47aa008460e93156351e155bf57589dbd26b # shrinks to s = "=.{_/aAA|a 'A.a.0A_Aa00a0\ta\"\"A(A(\"'/\"a_\t&\t0a.A0#&a&\n00\nA0aA0&__&\na\taa\"}A_A=0a&a;"
 cc dfb938ed6ff954ef912e007b027f95c055d73125268241703324b06a5af7000d # shrinks to s = "=\"\"{?=*\n0&\"\"}", width = 1
+cc fbf6e2eda62fb3b4f4c8b7ddd0a510c827b841afb879474f458e24b57fc29e7b # shrinks to s = "*=A\n()*=()&();", width = 1

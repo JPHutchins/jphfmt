@@ -3354,6 +3354,17 @@ fn a_call_head_before_a_brace_is_a_definition_body() {
 }
 
 #[test]
+fn a_chain_head_whose_nested_group_breaks_explodes_it_on_the_first_pass() {
+    // #172's witness: the head's nested group refusal once wrote the author's newline verbatim
+    // into the collapsed head, so the next pass laid the same tokens out differently — the two
+    // passes flipped. The nested reading is canonical now, so the first pass writes the form
+    // every pass keeps.
+    let once = format_with_width("int (*f\n(int)) = a | b;\n", 1);
+    assert_eq!(once, "int (*f(\n\tint\n)) = (\n\ta |\n\tb\n);\n");
+    assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
+}
+
+#[test]
 fn an_index_map_whose_ternary_chain_explodes_stays_exploded() {
     // #65's survivor: the bracketed-group arm's is_balanced span — its + with * mutant includes
     // the bracket itself in the balance check, refuses the group, and the fallback leaves the
