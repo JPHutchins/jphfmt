@@ -1,4 +1,8 @@
-# Mutation scoring runs the deterministic suite only. The proptest target
-# (tests/properties.rs) is randomized, so including it makes the mutation score
-# vary run to run; it still runs in the normal `test` gate as a fuzz harness.
-additional_cargo_test_args = ["--lib", "--test", "conformance"]
+# The sweep's excluded mutants: proven equivalent, with the proofs in the triage commits.
+# The exclude-check gate (mutants_report.py) asserts each pattern matches exactly its
+# recorded mutant names against the current source, so a drifted pattern fails loudly.
+exclude_re = [
+    'structure\.rs:311:60: replace / with [%*] in emit_tokens',
+    'structure\.rs:269:42: replace \+ with \* in emit_tokens',
+    'tokens\.rs:644:37: replace == with != in joined_pair_respaced',
+]

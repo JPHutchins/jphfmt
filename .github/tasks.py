@@ -15,8 +15,9 @@ py_types = Task(
 py_doctest = Task(f'uv run --python 3.14 --script {REPORT} --self-test', when=REPORT)
 # Not `camas --check` (JPHutchins/camas#277).
 types = Task("uv run tasks.py --check", when="tasks.py")
+exclude_check = Task(f"uv run --python 3.14 --script {REPORT} exclude-check")
 
-check = Parallel(py_types, py_doctest, types)
+check = Parallel(py_types, py_doctest, types, exclude_check)
 
 _ = Config(default_task=check, github_task=check)
 

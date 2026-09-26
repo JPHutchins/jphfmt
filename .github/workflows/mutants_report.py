@@ -23,6 +23,20 @@ import msgspec
 # sit at the tail; what does not fit here is counted in the report and kept in the run's artifact.
 BODY_LIMIT = 60000
 
+EXCLUDED: dict[str, tuple[str, ...]] = {
+    r"structure\.rs:311:60: replace / with [%*] in emit_tokens": (
+        "src/reflow/structure.rs:311:60: replace / with % in emit_tokens",
+        "src/reflow/structure.rs:311:60: replace / with * in emit_tokens",
+    ),
+    r"structure\.rs:269:42: replace \+ with \* in emit_tokens": (
+        "src/reflow/structure.rs:269:42: replace + with * in emit_tokens",
+    ),
+    r"tokens\.rs:644:37: replace == with != in joined_pair_respaced": (
+        "src/reflow/tokens.rs:644:37: replace == with != in joined_pair_respaced",
+    ),
+}
+
+
 
 class Position(msgspec.Struct):
     """One end of a span; cargo-mutants nests both ends, and the report reads the start."""
@@ -676,6 +690,41 @@ def tested(path: Path) -> tuple[MergedDoc, Counts]:
     return data, tally
 
 
+
+
+def exclude_check() -> int:
+    """The exclusion registry gate: `.cargo/mutants.toml` carries the patterns the sweep applies,
+    this dict carries the names each must match, and the live `cargo mutants --list --no-config`
+    proves the patterns match exactly those mutants in the current source — a drifted line:col
+    or a moved operator fails loudly instead of silently excluding a real mutant.
+    """
+    import subprocess
+    import tomllib
+
+    config = tomllib.loads(Path(".cargo/mutants.toml").read_text(encoding="utf-8"))
+    toml_patterns = config.get("exclude_re", [])
+    if toml_patterns != list(EXCLUDED):
+        print("::error::.cargo/mutants.toml exclude_re drifted from the registry:")
+        print(f"  toml: {toml_patterns}")
+        print(f"  registry: {list(EXCLUDED)}")
+        return 1
+    listed = subprocess.run(
+        ["cargo", "mutants", "--list", "--no-config"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        print(f"::error::cargo mutants --list failed: {listed.stderr.strip()}")
+        return 1
+    names = listed.stdout.splitlines()
+    for pattern, expected in EXCLUDED.items():
+        matched = [name for name in names if re.search(pattern, name)]
+        if matched != list(expected):
+            print(f"::error::the pattern {pattern!r} matches {matched}, expected {list(expected)}")
+            return 1
+    return 0
+
 def main(argv: tuple[str, ...]) -> int:
     """The merge mode's stdout is the workflow's output contract, pinned here — the yaml gates
     read these lines, and a desynced `key=value` shape or title would garble the rolling issue.
@@ -774,6 +823,8 @@ def main(argv: tuple[str, ...]) -> int:
             print(msgspec.json.encode(plan(files, 4)).decode())
         case ("sweep-marked", outcomes_dir, log):
             return 0 if sweep_marked(Path(outcomes_dir), Path(log)) else 1
+        case ("exclude-check",):
+            return exclude_check()
         case ("--self-test",):
             import doctest
 
@@ -791,7 +842,7 @@ def main(argv: tuple[str, ...]) -> int:
             print("       mutants_report.py report OUTCOMES REPO SHA RUN_URL OUT_FILE SHARDS_JSON")
             print("       mutants_report.py plan < FILES_LIST")
             print("       mutants_report.py sweep-marked OUTCOMES_DIR SWEEP_LOG")
-            print("       mutants_report.py --self-test | --self-check FILES...")
+            print("       mutants_report.py exclude-check | --self-test | --self-check FILES...")
             return 2
     return 0
 

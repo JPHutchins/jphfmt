@@ -21,6 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          # The gate's --list needs the same tool the shards sweep with.
+          tool: cargo-mutants@27.1.0
+      - name: The exclusion registry matches the mutants it excludes
+        run: |
+          uv run .github/workflows/mutants_report.py exclude-check
       - id: list
         env:
           GH_TOKEN: ${{ github.token }}
@@ -102,16 +110,10 @@ jobs:
           # (builders.rs advances are saturating_add, which cargo-mutants cannot invert), so
           # the bound is defense in depth for any hang that remains — and 4x keeps ~2x CPU
           # headroom under --jobs 8 contention, where 3x misclassifies slow-but-finite mutants.
-          # Proven-equivalent mutants are excluded rather than pinned: the chain branch's
-          # base_level division cancels inside the refusal's own comparison, the
-          # contains_comment span's + with * gains only the bracket, which cannot be a comment,
-          # and joined_pair_respaced's newline check only diverges on newline-only interiors,
-          # where none of its refusal checks can fire.
-          cargo mutants --jobs 8 --timeout-multiplier 4 \
-            --exclude-re 'structure\.rs:311:60: replace / with [%*] in emit_tokens' \
-            --exclude-re 'structure\.rs:269:42: replace \+ with \* in emit_tokens' \
-            --exclude-re 'tokens\.rs:644:37: replace == with != in joined_pair_respaced' \
-            --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
+          # The proven-equivalent exclusions live in .cargo/mutants.toml, which cargo-mutants
+          # reads by default; the exclude-check gate in the plan job proves they still match
+          # exactly their recorded mutants on the current source.
+          cargo mutants --jobs 8 --timeout-multiplier 4 --file "$FILE" "${args[@]}" 2>&1 | tee mutants.sweep.log || true
           if uv run .github/workflows/mutants_report.py sweep-marked mutants.out mutants.sweep.log; then
             cp mutants.sweep.log mutants.out/sweep.log
             touch mutants.out/complete
