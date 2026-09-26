@@ -617,7 +617,7 @@ fn broken_after(toks: &[Token], j: usize) -> bool {
 }
 
 pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
-    joined_pair_respaced(inner, false, false)
+    joined_pair_respaced(inner, false, true)
 }
 
 /// The depth-zero reading of [`respaced_when_joined`]: a nested break is the nested group's own to
