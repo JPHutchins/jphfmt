@@ -647,13 +647,10 @@ fn joined_pair_respaced(inner: &[Token], top_only: bool) -> bool {
     let mut parens = 0i32;
     for (j, t) in inner.iter().enumerate() {
         // Read before the depth update: `[` and `(` open a level themselves, so their joins read at
-        // the level they join from. A `[` whose join the subscript rule tightens — `0\n[]` joined to
-        // `0 []` respaces to `0[]` — and a `(` whose join the call-head rule tightens — `A\n(` joined
-        // to `A (` respaces to `A(` — are both the same class (#121's search). A `*` whose break to a
-        // following operator is joined — `*\n<` joined to `* <` respaces to `*<` when the star reads
-        // as a declarator's — the same class, one star over. The element callers' group and call
-        // arms join the subscript and call-head shapes to the canonical tight form, so those two
-        // arms are not theirs.
+        // the level they join from. The subscript and call-head joins write the canonical tight form
+        // the element arms themselves join to — not refused here (#121's search). A `*` whose break
+        // to a following operator is joined — `*\n<` joined to `* <` respaces to `*<` when the star
+        // reads as a declarator's — the same class, one star over.
         if (!top_only || brackets == 0) && broken_before(j) && star_gap_respaced(inner, j) {
             return true;
         }

@@ -11,7 +11,7 @@ additional_cargo_test_args = ["--lib", "--test", "conformance"]
 #   and is_comment is token-kind-based, so a bracket can never trip the check.
 # - tokens.rs:638:37: the newline early-return's == with != flips which spans skip the scan,
 #   and the only spans whose skip status changes are newline-only interiors, where none of
-#   the scan's refusal checks (star gaps, subscripts, call heads, bit-field colons) can fire.
+#   the scan's refusal checks (star gaps, bit-field colons) can fire.
 # The exclude-check gate (mutants_report.py) asserts each pattern matches exactly its
 # recorded mutant names against the current source, so a drifted pattern fails loudly.
 exclude_re = [

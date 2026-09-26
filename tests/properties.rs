@@ -54,8 +54,9 @@ fn declarator_head() -> impl Strategy<Value = String> {
         .prop_map(|(head, inner)| format!("{head}{inner}) = a | b;"))
 }
 
-/// The #146 and #172 classes share this generator: the piece pool and the declarator-head
-/// strategy split the draws, each at enough cases for its class.
+/// The #146 and #172 classes share this generator: the piece pool assembles the braced-element
+/// and call-head shapes, [`declarator_head`] the declarator-head-with-a-break ones, each at
+/// enough draws for its class.
 fn biased_shapes() -> impl Strategy<Value = String> {
     prop_oneof![
         proptest::collection::vec(proptest::sample::select(BIASED_PIECES), 1..12)
