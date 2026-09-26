@@ -3352,3 +3352,13 @@ fn a_call_head_before_a_brace_is_a_definition_body() {
     assert_eq!(once, "int f(int x) {\n\treturn x;\n}\n");
     assert_eq!(format(&once), once, "and it is a fixpoint");
 }
+
+#[test]
+fn an_index_map_whose_ternary_chain_explodes_stays_exploded() {
+    // #65's survivor: the bracketed-group arm's is_balanced span — its + with * mutant includes
+    // the bracket itself in the balance check, refuses the group, and the fallback leaves the
+    // nested ternary flat where the group arm explodes it.
+    let once = format("int j = arr[a ? b : c ? d : e];\n");
+    assert_eq!(once, "int j = arr[\n\ta ? b :\n\tc ? d :\n\te\n];\n");
+    assert_eq!(format(&once), once, "and it is a fixpoint");
+}
