@@ -725,7 +725,7 @@ def exclude_check() -> int:
     names = [re.sub(r"\x1b\[[0-9;]*m", "", name) for name in listed.stdout.splitlines()]
     for pattern, expected in EXCLUDED.items():
         matched = [name for name in names if re.search(pattern, name)]
-        if matched != list(expected):
+        if set(matched) != set(expected):
             print(f"::error::the pattern {pattern!r} matches {matched}, expected {list(expected)}")
             print(f"::notice::the unfiltered list holds {len(names)} mutants; first lines:")
             for name in names[:5]:
