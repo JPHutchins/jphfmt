@@ -724,6 +724,9 @@ def exclude_check() -> int:
         matched = [name for name in names if re.search(pattern, name)]
         if matched != list(expected):
             print(f"::error::the pattern {pattern!r} matches {matched}, expected {list(expected)}")
+            print(f"::notice::the unfiltered list holds {len(names)} mutants; first lines:")
+            for name in names[:5]:
+                print(f"  {name}")
             return 1
     return 0
 
