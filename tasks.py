@@ -43,6 +43,12 @@ def nix_files(changed: tuple[str, ...]) -> bool:
 vscode = Project("editors/vscode")
 github = Project(".github")
 
+MUTANTS_SCRIPT = ".github/workflows/mutants_report.py"
+mutants_gate = Task(
+	f"uv run --python 3.14 --script {MUTANTS_SCRIPT} exclude-check",
+	when=RUST + (MUTANTS_SCRIPT,),
+)
+
 # The crane apps pin the toolchain and the +stable/+MSRV matrix in the flake, so there is no rustup.
 rust_fmt_check = Task("nix run .#fmt", when=RUST)
 clippy = Task("nix run .#lint", when=RUST)

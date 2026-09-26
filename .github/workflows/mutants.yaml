@@ -21,14 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
-        with:
-          # The gate's --list needs the same tool the shards sweep with.
-          tool: cargo-mutants@27.1.0
-      - name: The exclusion registry matches the mutants it excludes
-        run: |
-          uv run .github/workflows/mutants_report.py exclude-check
       - id: list
         env:
           GH_TOKEN: ${{ github.token }}
