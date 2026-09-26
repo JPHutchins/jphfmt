@@ -620,12 +620,12 @@ pub(super) fn respaced_when_joined(inner: &[Token]) -> bool {
     joined_pair_respaced(inner, false, true)
 }
 
-/// The depth-zero reading of [`respaced_when_joined`]: a nested break is the nested group's own to
-/// refuse — its handler writes the canonical tight form — so a hit below depth zero would freeze the
-/// enclosing container for nothing. Callers whose collapse joins only the span's own breaks ask this
-/// one; a caller that joins every break, nested included, asks [`respaced_when_joined`].
+/// The depth-zero reading of [`respaced_when_joined`], canonical joins included: a nested break
+/// below depth zero is the nested group's own to refuse, so a hit there would freeze the enclosing
+/// container for nothing. Callers whose collapse joins only the span's own breaks ask this one; a
+/// caller that joins every break, nested included, asks [`respaced_when_joined`].
 pub(super) fn respaced_when_joined_top(inner: &[Token]) -> bool {
-    joined_pair_respaced(inner, true, false)
+    joined_pair_respaced(inner, true, true)
 }
 
 /// The joins the element fallback's collapse writes wrong — a space a later pass respaces — where
