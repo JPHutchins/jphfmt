@@ -719,7 +719,10 @@ def exclude_check() -> int:
     if listed.returncode != 0:
         print(f"::error::cargo mutants --list failed: {listed.stderr.strip()}")
         return 1
-    names = listed.stdout.splitlines()
+    # The list is colored on some runners even through a pipe; the escapes sit inside the
+    # names and would break the patterns' match. The sweep's own exclusion matches against
+    # the uncolored name, so stripping here reads the same names cargo-mutants excludes by.
+    names = [re.sub(r"\x1b\[[0-9;]*m", "", name) for name in listed.stdout.splitlines()]
     for pattern, expected in EXCLUDED.items():
         matched = [name for name in names if re.search(pattern, name)]
         if matched != list(expected):
