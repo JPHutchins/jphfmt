@@ -41,13 +41,13 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
         "src/reflow/structure.rs:120:60: replace / with % in emit_tokens",
         "src/reflow/structure.rs:120:60: replace / with * in emit_tokens",
     ),
-    r"structure\.rs:752:28: replace \+ with [*-] in format_stmt_expr": (
-        "src/reflow/structure.rs:752:28: replace + with - in format_stmt_expr",
-        "src/reflow/structure.rs:752:28: replace + with * in format_stmt_expr",
+    r"structure\.rs:751:28: replace \+ with [*-] in format_stmt_expr": (
+        "src/reflow/structure.rs:751:28: replace + with - in format_stmt_expr",
+        "src/reflow/structure.rs:751:28: replace + with * in format_stmt_expr",
     ),
-    r"structure\.rs:785:28: replace \+ with [*-] in format_stmt_expr": (
-        "src/reflow/structure.rs:785:28: replace + with - in format_stmt_expr",
-        "src/reflow/structure.rs:785:28: replace + with * in format_stmt_expr",
+    r"structure\.rs:784:28: replace \+ with [*-] in format_stmt_expr": (
+        "src/reflow/structure.rs:784:28: replace + with - in format_stmt_expr",
+        "src/reflow/structure.rs:784:28: replace + with * in format_stmt_expr",
     ),
 }
 
