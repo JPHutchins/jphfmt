@@ -840,13 +840,39 @@ fn emit_brace(
         return close.saturating_add(1);
     }
     let doc = build_brace_doc(inner, padded);
-    emit_doc(
-        &doc,
-        trailing_reserved(toks, close + 1, in_define_body),
-        out,
-        col,
-        width,
-    );
+    let reserved = trailing_reserved(toks, close + 1, in_define_body);
+    // The element claim's bounds, once written, are the next pass's authored groups — the #174
+    // class this emitter reaches through the same element builder the for header and the stmt-expr
+    // body guard. The next pass's re-read either reproduces the brace or it does not; emit the
+    // re-read when it does not, so the passes agree.
+    let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+    let budget = width.saturating_sub(reserved);
+    let brace = render(&doc, budget, *col, base_level);
+    let post_processed = super::post_process(&brace);
+    let re_toks = tokenize(&post_processed);
+    let Some(re_inner) = re_toks
+        .iter()
+        .rposition(|t| t.text == "}")
+        .filter(|_| re_toks.first().is_some_and(|t| t.text == "{"))
+        .map(|close| &re_toks[1..close])
+    else {
+        emit_doc(&doc, reserved, out, col, width);
+        return close.saturating_add(1);
+    };
+    let refused = contains_comment(re_inner)
+        || re_inner
+            .iter()
+            .any(|t| t.kind == TokenKind::Punct && t.text == "#")
+        || !is_balanced(re_inner)
+        || respaced_when_joined_top(re_inner);
+    if !refused {
+        let re_render = render(&build_brace_doc(re_inner, padded), budget, *col, base_level);
+        if brace != re_render {
+            emit_str(out, col, &re_render);
+            return close.saturating_add(1);
+        }
+    }
+    emit_doc(&doc, reserved, out, col, width);
     close.saturating_add(1)
 }
 

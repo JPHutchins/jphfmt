@@ -1159,6 +1159,11 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
         "if (\n\ti = f(\n\t\ta\n\t) = x |\n\ty\n) {\n\tg();\n}\n"
     );
     assert_eq!(format_with_width(&cond, 16), cond, "and it is a fixpoint");
+    // The brace/enum/initializer emitters reach the same element builder, and their re-read guard
+    // is the same simulation — the round-3 witness, which the earlier seed spaces missed.
+    let brace = format_with_width("int a[] = {i = f\n(a) = x | y};\n", 18);
+    assert_eq!(brace, "int a[] = {\n\ti = f(\n\t\ta\n\t) = (x | y),\n};\n");
+    assert_eq!(format_with_width(&brace, 18), brace, "and it is a fixpoint");
 }
 
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause
