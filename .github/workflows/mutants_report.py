@@ -707,6 +707,8 @@ def exclude_check() -> int:
 
     root = Path(__file__).resolve().parents[2]
     config = tomllib.loads((root / ".cargo/mutants.toml").read_text(encoding="utf-8"))
+    # One spelling for the skip notice — the wording is the output contract, not a throwaway log.
+    SKIP_NOTICE = "::notice::cargo-mutants is not installed; the sweep-config gate is skipped"
 
     def list_mutants(*extra: str) -> tuple[int, list[str]]:
         try:
@@ -720,7 +722,7 @@ def exclude_check() -> int:
         except FileNotFoundError:
             # A machine without the tool has no sweep to gate; the plan job and the dev shell
             # both install it, and a missing tool is not this check's failure.
-            print("::notice::cargo-mutants is not installed; the sweep-config gate is skipped")
+            print(SKIP_NOTICE)
             return 0, []
         if listed.returncode != 0:
             cause = listed.stderr.strip() or "no stderr"
@@ -729,6 +731,20 @@ def exclude_check() -> int:
             return 1, []
         return 0, [m["name"] for m in msgspec.json.decode(listed.stdout)]
 
+    # The registry comparisons need no tool at all — they run before the version probe, so a
+    # .cargo drift reds the gate even where cargo-mutants is absent (the raw-cargo fast loop).
+    toml_patterns = config.get("exclude_re", [])
+    if toml_patterns != list(EXCLUDED):
+        print("::error::.cargo/mutants.toml exclude_re drifted from the registry:")
+        print(f"  toml: {toml_patterns}")
+        print(f"  registry: {list(EXCLUDED)}")
+        return 1
+    pinned_args = config.get("additional_cargo_test_args")
+    if pinned_args != PINNED_TEST_ARGS:
+        print("::error::.cargo/mutants.toml additional_cargo_test_args drifted:")
+        print(f"  toml: {pinned_args}")
+        print(f"  pinned: {PINNED_TEST_ARGS}")
+        return 1
     try:
         version = subprocess.run(
             ["cargo", "mutants", "--version"],
@@ -746,26 +762,18 @@ def exclude_check() -> int:
         print("::error::cargo-mutants is not on PATH (cargo is): the sweep-config gate cannot run")
         return 1
     if version.returncode != 0 or not version.stdout.strip():
-        # Cargo present but cargo-mutants missing (the raw-cargo fast loop) reads as exit 101 with
-        # empty stdout — the same environment skip the FileNotFoundError branch documents, not a
-        # version mismatch.
-        print("::notice::cargo-mutants is not installed; the sweep-config gate is skipped")
-        return 0
+        # Only cargo's missing-command signal is an absence — the raw-cargo fast loop's probe reads
+        # as exit 101, empty stdout, "no such command" on stderr. Any other nonzero exit is a
+        # present-but-broken tool, and that reds the gate like a wrong version does.
+        if "no such command" in version.stderr:
+            print(SKIP_NOTICE)
+            return 0
+        cause = version.stderr.strip() or "no stderr"
+        print(f"::error::cargo mutants --version failed (exit {version.returncode}): {cause}")
+        return 1
     if version.stdout.strip() != PINNED_TOOL:
         print(f"::error::cargo-mutants {version.stdout.strip()!r} runs here; "
               f"the registry is validated against {PINNED_TOOL!r}")
-        return 1
-    toml_patterns = config.get("exclude_re", [])
-    if toml_patterns != list(EXCLUDED):
-        print("::error::.cargo/mutants.toml exclude_re drifted from the registry:")
-        print(f"  toml: {toml_patterns}")
-        print(f"  registry: {list(EXCLUDED)}")
-        return 1
-    pinned_args = config.get("additional_cargo_test_args")
-    if pinned_args != PINNED_TEST_ARGS:
-        print("::error::.cargo/mutants.toml additional_cargo_test_args drifted:")
-        print(f"  toml: {pinned_args}")
-        print(f"  pinned: {PINNED_TEST_ARGS}")
         return 1
     code, names = list_mutants("--no-config")
     if code:

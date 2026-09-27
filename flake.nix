@@ -72,6 +72,10 @@
           };
           cargoHash = "sha256-zKbw73lnOhgjSiCiXezo71S/9DaNfe7HII0QwUADrFA=";
           doCheck = false;
+          # Byte-identical to the nixpkgs build this mirrors (its NIX_MAIN_PROGRAM env), so
+          # cache.nixos.org substitutes it while nixpkgs carries 27.1.0; the pin still guards a
+          # future bump.
+          meta.mainProgram = "cargo-mutants";
         };
 
         # Keep tests/: the conformance suite reads .c fixtures (include_str! and a
