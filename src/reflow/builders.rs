@@ -24,7 +24,12 @@ use crate::lexer::{Token, TokenKind};
 /// A call's argument list, brackets included: the elements are `,`-separated and the flat form is
 /// tight (§2.5). `fit` is the caller's, because a `#define` whose body overflows has already decided
 /// to break its parameters before this is built.
-pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
+pub(super) fn build_call_body(
+    inner: &[Token],
+    fit: Fit,
+    prev: Option<&Token>,
+    after: Option<&Token>,
+) -> Doc {
     if !is_balanced(inner) {
         return render_passthrough("(", inner, ")");
     }
@@ -39,7 +44,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     // forced break has no fits decision to flip, so the laid form is the one every pass reaches.
     // A `#` fragment keeps the verbatim — its lines are not the layout's to own, the guard every
     // laid path carries.
-    let laid = laid_call_body(inner, fit);
+    let laid = laid_call_body(inner, fit, prev, after);
     let holds_hash = inner.iter().any(|t| matches!(t.text, "#" | "##"));
     if has_middle_newline(inner) && (!holds_forced_break(&laid) || holds_hash) {
         return render_passthrough("(", inner, ")");
@@ -47,7 +52,7 @@ pub(super) fn build_call_body(inner: &[Token], fit: Fit) -> Doc {
     laid
 }
 
-fn laid_call_body(inner: &[Token], fit: Fit) -> Doc {
+fn laid_call_body(inner: &[Token], fit: Fit, prev: Option<&Token>, after: Option<&Token>) -> Doc {
     let args = split_on_commas(inner);
     // An empty element is a hole a macro invocation spells with a bare comma — `PICK(x, , y)`, valid C99
     // and later. There is no element to lay out for it, and dropping it drops the comma that spells it,
@@ -83,7 +88,7 @@ fn laid_call_body(inner: &[Token], fit: Fit) -> Doc {
         .map(|a| build_element_doc(a, bound))
         .collect();
     build_container(
-        pad_for(inner, &PARENS),
+        pad_for(inner, &PARENS, prev, after),
         elements,
         Seps::Every(","),
         None,
@@ -122,6 +127,8 @@ pub(super) fn build_brace_doc(inner: &[Token], padded: bool) -> Doc {
             open_pad: if padded { Pad::Spaced } else { Pad::Tight },
             close_pad: if padded { Pad::Spaced } else { Pad::Tight },
         },
+        None,
+        None,
     );
     let docs = elements.iter().map(|e| build_juxtaposed_doc(e)).collect();
     let fit = if magic { Fit::Forced } else { Fit::Measured };
@@ -255,7 +262,7 @@ fn tight_after_paren_open(toks: &[Token], j: usize, prev: Option<&Token>) -> boo
         && prev_nontrivia(toks, j).is_some_and(|k| {
             toks[k].text == "("
                 && toks[k + 1..j].iter().any(|t| t.kind == TokenKind::Newline)
-                && !padded_after_paren_open(toks, k, prev)
+                && !padded_after_paren_open(toks, k, prev, None)
         })
 }
 
@@ -322,13 +329,23 @@ pub(super) fn build_expr_doc(toks: &[Token], prev: Option<&Token>) -> Doc {
             // than collapsed to a space, so this matches `space_call_heads`'s tight-call spacing
             // and stays a fixpoint across passes (§2.5).
             flush_pending(&mut text, &mut parts, &mut pending_space, false);
-            parts.push(build_call_body(&toks[j + 1..close], Fit::Measured));
+            parts.push(build_call_body(
+                &toks[j + 1..close],
+                Fit::Measured,
+                prev_nontrivia(toks, j).map(|k| &toks[k]),
+                next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+            ));
             j = close.saturating_add(1);
         } else if t.kind == TokenKind::Punct
             && let Some(bracketing) = group_bracketing(&t)
             && let Some(close) = match_bracket(toks, j)
         {
-            if let Some(group) = build_bracketed_group(&toks[j + 1..close], bracketing) {
+            if let Some(group) = build_bracketed_group(
+                &toks[j + 1..close],
+                bracketing,
+                prev_nontrivia(toks, j).map(|k| &toks[k]),
+                next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+            ) {
                 flush_pending(
                     &mut text,
                     &mut parts,
@@ -629,7 +646,18 @@ pub(super) fn holds_forced_break(doc: &Doc) -> bool {
 }
 
 /// `bracketing`'s spelling, with the pads the edge tokens decide.
-fn pad_for(inner: &[Token], bracketing: &Bracketing) -> Bracketing {
+///
+/// A written `(` whose interior opens on a `*`-run the qualifier follows consults the shared
+/// after-paren pad verdict ([`padded_after_paren_open`]) — the one spelling `space_pointers` pads
+/// by, so the layout's own open pad is the gap the feed writes (#186). `prev` and `after` are the
+/// tokens the construct's slice was cut between; a call's callee and a control keyword make the
+/// cast override inert, but a group's real prev and follower can flip it, so both thread through.
+fn pad_for(
+    inner: &[Token],
+    bracketing: &Bracketing,
+    prev: Option<&Token>,
+    after: Option<&Token>,
+) -> Bracketing {
     let Bracketing::Written {
         open,
         close,
@@ -639,10 +667,11 @@ fn pad_for(inner: &[Token], bracketing: &Bracketing) -> Bracketing {
     else {
         return bracketing.clone();
     };
+    let padded_after_open = open == &"(" && pad_after_paren_open(inner, prev, after);
     Bracketing::Written {
         open,
         close,
-        open_pad: if edge_needs_pad(inner, next_nontrivia(inner, 0)) {
+        open_pad: if edge_needs_pad(inner, next_nontrivia(inner, 0)) || padded_after_open {
             Pad::Spaced
         } else {
             *open_pad
@@ -653,6 +682,30 @@ fn pad_for(inner: &[Token], bracketing: &Bracketing) -> Bracketing {
             *close_pad
         },
     }
+}
+
+/// The written-`(` pad verdict: whether `inner`'s opening token is a `*`-run the feed pads. The
+/// cheap star gate runs before the span is synthesized, so a container whose interior opens on
+/// anything else pays no allocation — the one helper every interior-only site spells the verdict
+/// through (#186's review).
+fn pad_after_paren_open(inner: &[Token], prev: Option<&Token>, after: Option<&Token>) -> bool {
+    next_nontrivia(inner, 0).is_some_and(|k| inner[k].text == "*")
+        && padded_after_paren_open(&paren_span(inner), 0, prev, after)
+}
+
+/// `inner` re-bracketed with the `(`/`)` its Written open names — the span
+/// [`padded_after_paren_open`] reads, whose open sits at index zero.
+fn paren_span<'src>(inner: &[Token<'src>]) -> Vec<Token<'src>> {
+    std::iter::once(Token {
+        kind: TokenKind::Punct,
+        text: "(",
+    })
+    .chain(inner.iter().copied())
+    .chain(std::iter::once(Token {
+        kind: TokenKind::Punct,
+        text: ")",
+    }))
+    .collect()
 }
 
 /// `open`/`close` around `inner`'s collapsed text, with the pads the edge tokens decide — the
@@ -1067,7 +1120,12 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
 /// refuses a comment-bearing or unbalanced construct before any of this module runs, so a span that
 /// reaches here has neither. That matters because flattening a `//` comment would put whatever
 /// followed it on the comment's line and swallow it — the layout must never see one.
-pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
+pub(super) fn build_bracketed_group(
+    inner: &[Token],
+    bracketing: &Bracketing,
+    prev: Option<&Token>,
+    after: Option<&Token>,
+) -> Option<Doc> {
     // A `(`-group whose interior opens with `{` is the statement expression — its body is a
     // statement list, `;`-terminated and never a comma list, so the magic comma has nothing to
     // trail (#179's magic-comma half). The check sits above the spans_lines refusal, which an
@@ -1086,7 +1144,7 @@ pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) ->
     if spans_lines(inner) || holds_directive(inner) {
         return None;
     }
-    build_clause_contents(inner, &pad_for(inner, bracketing))
+    build_clause_contents(inner, &pad_for(inner, bracketing, prev, after))
 }
 
 /// A statement-expression body's `{ ... }` — the statements it holds, each with its own `;`, and
@@ -1135,6 +1193,8 @@ fn build_stmt_expr_body(inner: &[Token]) -> Doc {
                 open_pad: Pad::Tight,
                 close_pad: Pad::Tight,
             },
+            None,
+            None,
         ),
         statements,
         Seps::Every(""),
@@ -1149,14 +1209,14 @@ fn build_stmt_expr_body(inner: &[Token]) -> Doc {
 /// one is bounded when it breaks (#77). Unbounded, its arms would sit at the clause indent and read as
 /// further clauses — the same reason a call's arguments bound theirs (#59) — and a ternary chain
 /// forces the break, so `for (i = a ? b : c ? d : e; …)` reads as the map it is.
-pub(super) fn build_for_doc(inner: &[Token]) -> Doc {
+pub(super) fn build_for_doc(inner: &[Token], prev: Option<&Token>, after: Option<&Token>) -> Doc {
     if !is_balanced(inner) {
         return render_passthrough("(", inner, ")");
     }
     let clauses = statement_segments(inner);
     let docs = clauses.iter().map(|c| build_statement_element(c)).collect();
     build_container(
-        pad_for(inner, &PARENS),
+        pad_for(inner, &PARENS, prev, after),
         docs,
         Seps::Every(";"),
         None,
@@ -1186,11 +1246,12 @@ pub(super) fn build_statement_element(toks: &[Token]) -> Doc {
 /// A ternary condition is the same span in the same parentheses [`build_bracketed_group`] would lay
 /// out, so it splits at its arms here too — otherwise `while (a ? b : c ? d : e)` and
 /// `x = (a ? b : c ? d : e)` would disagree about a construct that is bracket-for-bracket identical.
-pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
+pub(super) fn build_cond_doc(inner: &[Token], prev: Option<&Token>, after: Option<&Token>) -> Doc {
     if !is_balanced(inner) {
         return render_passthrough("(", inner, ")");
     }
-    build_clause_contents(inner, &pad_for(inner, &PARENS)).unwrap_or_else(|| {
+    let bracketing = pad_for(inner, &PARENS, prev, after);
+    build_clause_contents(inner, &bracketing).unwrap_or_else(|| {
         // No depth-zero operator to split at, so the whole condition is one element: an overlong one
         // still breaks away from the `if (` and the `) {` rather than overrunning them. A condition is
         // not a list, so it names no separator — where a call's sole argument still writes
@@ -1200,7 +1261,7 @@ pub(super) fn build_cond_doc(inner: &[Token]) -> Doc {
         // where that holds: a second element would be juxtaposed against the first with nothing
         // between them, since the pairing runs out. Any element added here needs a separator named.
         build_container(
-            pad_for(inner, &PARENS),
+            bracketing,
             vec![build_element_doc(inner, Bound::Enclosing)],
             Seps::Each(Vec::new()),
             None,
@@ -1320,7 +1381,7 @@ mod tests {
         let toks = tokenize(
             "io_detect_pin() && bllllaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)",
         );
-        let doc = build_cond_doc(&toks);
+        let doc = build_cond_doc(&toks, None, None);
         let rendered = crate::doc::render(&doc, 40, 0, 0);
         assert_eq!(
             rendered,
@@ -1359,7 +1420,7 @@ mod tests {
         let toks = tokenize(
             "first_argument, inner_function_with_a_very_long_name(nested_argument_one, nested_argument_two, nested_argument_three)",
         );
-        let doc = build_call_body(&toks, Fit::Measured);
+        let doc = build_call_body(&toks, Fit::Measured, None, None);
         let rendered = crate::doc::render(&doc, 40, 0, 0);
         assert_eq!(
             rendered,
