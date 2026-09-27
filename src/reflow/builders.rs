@@ -12,8 +12,8 @@
 use super::tokens::{
     closes_literal_type, has_middle_newline, has_non_trivia, has_top_level, has_top_level_question,
     holds_directive, holds_head_split, is_balanced, is_bit_field_colon, is_call_head_pair,
-    is_comparison, is_qualifier, is_subscript, is_ternary_chain, is_trivia, match_brace,
-    match_bracket, next_nontrivia, opens_with_separator, operand_span, prev_nontrivia,
+    is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket,
+    next_nontrivia, opens_with_separator, operand_span, padded_after_paren_open, prev_nontrivia,
     respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines, split_chain,
     split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
     star_gap_respaced,
@@ -232,27 +232,6 @@ fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, sp
 ///
 /// The mirror of [`call_head_before`], and load-bearing for the same reason — see its doc. The `[`
 /// arm is the shared predicate, the one spelling of what `space_subscripts` tightens.
-/// A token directly after a `(` joins tight when the collapse dropped a break — the paren group's
-/// own canonical pad — except an `=` edge, and except a `*` run whose follower is a qualifier,
-/// which `space_pointers` respaces to the padded form. An authored space gap keeps the author's
-/// spacing, and a `[`-interior keeps its gap: the attribute and nested-subscript forms are the
-/// author's own (`space_subscripts` reads a trivia-stripped list).
-fn tight_after_paren_open(toks: &[Token], j: usize) -> bool {
-    let mut run = j;
-    while toks.get(run).is_some_and(|t| t.text == "*")
-        && toks.get(run + 1).is_some_and(|t| t.text == "*")
-    {
-        run += 1;
-    }
-    let respaced_star = toks[j].text == "*"
-        && next_nontrivia(toks, run + 1).is_some_and(|k| is_qualifier(toks[k].text));
-    toks[j].text != "="
-        && !respaced_star
-        && prev_nontrivia(toks, j).is_some_and(|k| {
-            toks[k].text == "(" && toks[k + 1..j].iter().any(|t| t.kind == TokenKind::Newline)
-        })
-}
-
 fn tight_against_previous(toks: &[Token], open: usize) -> bool {
     let previous = prev_nontrivia(toks, open);
     match toks.get(open).map(|t| t.text) {
@@ -266,6 +245,18 @@ fn tight_against_previous(toks: &[Token], open: usize) -> bool {
         }),
         _ => false,
     }
+}
+
+/// A token directly after a `(` joins tight when the collapse dropped a break — the paren group's
+/// own canonical pad — except an `=` edge, and except where the spacing passes pad it (the
+/// [`padded_after_paren_open`] verdict). An authored space gap keeps the author's spacing.
+fn tight_after_paren_open(toks: &[Token], j: usize) -> bool {
+    toks[j].text != "="
+        && prev_nontrivia(toks, j).is_some_and(|k| {
+            toks[k].text == "("
+                && toks[k + 1..j].iter().any(|t| t.kind == TokenKind::Newline)
+                && !padded_after_paren_open(toks, k)
+        })
 }
 
 pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {

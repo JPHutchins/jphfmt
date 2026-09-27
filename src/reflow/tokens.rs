@@ -44,6 +44,31 @@ pub(super) fn heads_body(t: &Token) -> bool {
     is_callee_ident(t) || is_control_keyword(t.text)
 }
 
+/// Whether the spacing passes pad the token after the `(` at `open` — `space_pointers`' star-run
+/// rule, whose follower is a qualifier, except where `space_casts` tightens instead. The collapse's
+/// one spelling of both verdicts: a type-only group in a non-value position whose `)` an operand
+/// follows is a cast, and its interior joins tight whatever the star rules say. A group that ends
+/// its statement sees no operand here, and `space_casts` leaves it alone. The follower's line is not
+/// part of the verdict: the collapse joins the break after `)` itself, so the spacing pass always
+/// sees the operand on the group's line.
+pub(super) fn padded_after_paren_open(toks: &[Token], open: usize) -> bool {
+    let Some(mut k) = next_nontrivia(toks, open + 1).filter(|&k| toks[k].text == "*") else {
+        return false;
+    };
+    while next_nontrivia(toks, k + 1).is_some_and(|next| toks[next].text == "*") {
+        k = next_nontrivia(toks, k + 1).unwrap();
+    }
+    let qualifier_run = next_nontrivia(toks, k + 1).is_some_and(|f| is_qualifier(toks[f].text));
+    qualifier_run
+        && !match_bracket(toks, open).is_some_and(|close| {
+            let prev_is_value =
+                prev_nontrivia(toks, open).is_some_and(|before| !can_precede_cast(&toks[before]));
+            let followed_by_operand =
+                next_nontrivia(toks, close + 1).is_some_and(|after| is_value_start(&toks[after]));
+            is_type_group(&toks[open + 1..close]) && !prev_is_value && followed_by_operand
+        })
+}
+
 /// Whether `inner` spells a type and nothing else — the parenthesized `(struct s)` of a cast or of a
 /// compound literal. A type keyword or tag must appear, so a grouped expression `(x)`, an attribute's
 /// `(noreturn)`, or a parameter list is never mistaken for one.

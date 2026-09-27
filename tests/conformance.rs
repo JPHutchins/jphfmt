@@ -3402,3 +3402,28 @@ fn an_authored_paren_gap_survives_the_collapse() {
         assert_eq!(format(&once), once, "and it is a fixpoint");
     }
 }
+
+#[test]
+fn a_cast_interior_joins_tight_but_a_padded_run_keeps_its_pad() {
+    // #175's round-2 witness: a qualifier-followed `*` run after a paren open joins tight when
+    // `space_casts` reads the group as a cast, and keeps `space_pointers`' pad otherwise. The
+    // follower's own break does not rescue the pad — the collapse joins it, and the next pass
+    // sees the operand on the group's line.
+    let cast = format_with_width("({(\n* const p)f})", 1);
+    assert_eq!(cast, "({\n\t(* const p) f;\n})\n");
+    assert_eq!(format_with_width(&cast, 1), cast, "and it is a fixpoint");
+    let spaced_run = format_with_width("({(\n* * const p)})", 1);
+    assert_eq!(spaced_run, "({\n\t( * * const p);\n})\n");
+    assert_eq!(
+        format_with_width(&spaced_run, 1),
+        spaced_run,
+        "and it is a fixpoint"
+    );
+    let follower_break = format_with_width("({(\n* const p)\nf})", 1);
+    assert_eq!(follower_break, "({\n\t(* const p) f;\n})\n");
+    assert_eq!(
+        format_with_width(&follower_break, 1),
+        follower_break,
+        "and it is a fixpoint"
+    );
+}
