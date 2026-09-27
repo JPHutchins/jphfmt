@@ -20,7 +20,7 @@ use super::tokens::{
     respaced_when_joined_top, spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{Token, TokenKind, tokenize};
 
 /// Run the structuring pass over `toks`, with the cursor starting at `start_col` (non-zero when
 /// formatting a fragment such as a macro body that follows a prefix).
@@ -296,7 +296,11 @@ fn emit_tokens(
             && !contains_comment(&toks[i..semi])
             && is_balanced(&toks[i..semi])
             && !toks[i..semi].iter().any(|s| s.text == "{")
-            && let Some(doc) = build_chain_doc(&toks[i..semi], Bound::Parens)
+            && let Some(doc) = build_chain_doc(
+                &toks[i..semi],
+                Bound::Parens,
+                prev_nontrivia(toks, i).map(|k| &toks[k]),
+            )
         {
             // The claim renders a head group against the statement's own reserve — only the `;` —
             // while the next pass's group arm renders the same group against the group's own
@@ -329,11 +333,34 @@ fn emit_tokens(
                 if group_budget == budget {
                     return true;
                 }
-                let head_doc = build_expr_doc(&toks[i..i + head_end]);
+                let head_doc = build_expr_doc(
+                    &toks[i..i + head_end],
+                    prev_nontrivia(toks, i).map(|k| &toks[k]),
+                );
                 render(&head_doc, budget, *col, base_level)
                     == render(&head_doc, group_budget, *col, base_level)
             });
             if shape_agrees {
+                // The claim's operand bound, once written, is the next pass's authored group: a
+                // construct the bound wraps then reads a `(` where this pass reads the statement's
+                // own prev, and the two passes disagree on its shape (#175's round-3 major — the
+                // element paths' guard reads the same class, #174). The next pass's re-read either
+                // reproduces the statement or it does not; emit the re-read when it does not, so
+                // the passes agree.
+                let statement = render(&doc, budget, *col, base_level);
+                let re_toks = tokenize(&statement);
+                // The re-read's tokens are complete — its own bound parens, when the render wrote
+                // them, are the prev its groups read on the next pass. No threaded prev: that is
+                // for the original claim's slices, which the bound does not exist in yet.
+                let re_read = build_chain_doc(&re_toks, Bound::Parens, None);
+                if let Some(re_doc) = re_read {
+                    let re_render = render(&re_doc, budget, *col, base_level);
+                    if statement != re_render {
+                        emit_str(out, col, &re_render);
+                        i = semi;
+                        continue;
+                    }
+                }
                 emit_doc(&doc, 1, out, col, width);
                 i = semi;
                 continue;

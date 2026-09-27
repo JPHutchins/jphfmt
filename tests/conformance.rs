@@ -3426,4 +3426,40 @@ fn a_cast_interior_joins_tight_but_a_padded_run_keeps_its_pad() {
         follower_break,
         "and it is a fixpoint"
     );
+    // The cast verdicts are width-driven — the collapse joins only where the group fits its line —
+    // so the witnesses are also checked at a width where the groups stay flat.
+    assert_eq!(format_with_width(&cast, 80), cast, "and width 80 agrees");
+    assert_eq!(
+        format_with_width(&spaced_run, 80),
+        spaced_run,
+        "and width 80 agrees"
+    );
+    // The `=` edge keeps its gap: `=` against a bracket is pre-spaced by `space_equals`, and the
+    // collapse preserves it.
+    let eq_edge = format_with_width("({(\n= x)})", 1);
+    assert_eq!(eq_edge, "({\n\t( = x);\n})\n");
+    assert_eq!(
+        format_with_width(&eq_edge, 1),
+        eq_edge,
+        "and it is a fixpoint"
+    );
+    // A single star with no qualifier follower joins tight — no pad rule fires.
+    let single_star = format_with_width("({(\n* p)})", 1);
+    assert_eq!(single_star, "({\n\t(* p);\n})\n");
+    assert_eq!(
+        format_with_width(&single_star, 1),
+        single_star,
+        "and it is a fixpoint"
+    );
+}
+
+#[test]
+fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
+    // #175's round-3 witness: the collapse's cast verdict reads the slice the layout walks, so the
+    // statement's own prev — the header's `)` — must be threaded in; `space_casts` skips a
+    // `)`-preceded group and `space_pointers`' pad survives. The follower-line invariant: the
+    // collapse joins the break after `)` itself.
+    let once = format("if (x) (\n* const p) y + 1;\n");
+    assert_eq!(once, "if (x) ( * const p) y + 1;\n");
+    assert_eq!(format(&once), once, "and it is a fixpoint");
 }
