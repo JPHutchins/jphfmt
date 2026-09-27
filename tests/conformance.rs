@@ -1150,6 +1150,15 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
         stmt_expr,
         "and it is a fixpoint"
     );
+    // The cond-header sibling of the same class needs no guard: its element docs carry no claim
+    // whose bound the next pass re-reads, so the shape is a fixpoint as-is — the review's probes
+    // and this pin both say so.
+    let cond = format_with_width("if (i = f\n(a) = x | y) {\n\tg();\n}\n", 16);
+    assert_eq!(
+        cond,
+        "if (\n\ti = f(\n\t\ta\n\t) = x |\n\ty\n) {\n\tg();\n}\n"
+    );
+    assert_eq!(format_with_width(&cond, 16), cond, "and it is a fixpoint");
 }
 
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause

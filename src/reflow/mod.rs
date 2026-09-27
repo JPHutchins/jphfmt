@@ -54,8 +54,14 @@ pub fn format_with_width(src: &str, width: usize) -> String {
     // the next pass, breaking idempotency.
     let spaced = spacing::space_tokens(src);
     let structured = structure::structure(&tokenize(&spaced), 0, width, false);
-    let scoped = scope::scope_directives(&structured);
-    normalize_endings(&collapse_blank_lines(&trim_comment_lines(&retab(&scoped))))
+    post_process(&scope::scope_directives(&structured))
+}
+
+/// The trivia-only rewrites between the layout's output and what the next pass re-lexes — the same
+/// spelling `format_with_width` runs and the emit-side guards' re-read simulations apply, so the
+/// compared strings are the strings the next pass reads (#174's review).
+pub(super) fn post_process(s: &str) -> String {
+    normalize_endings(&collapse_blank_lines(&trim_comment_lines(&retab(s))))
 }
 
 /// Strip trailing whitespace from every line of a comment (§2.1). Everywhere else it is already gone:

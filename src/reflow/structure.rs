@@ -39,7 +39,10 @@ pub(super) fn structure(
 
 /// Render `doc` for the line it is landing on and emit it. `reserved` is the width of what must still
 /// fit after it: the tokens the construct does not own but shares its last line with. Every handler
-/// that lays a construct out goes through here, so none of them can drift apart on how they measure.
+/// that lays a construct out goes through here, so none of them can drift apart on how they measure
+/// — except the for header's re-read guard (#174), which measures its two spellings itself: the
+/// comparison must render the header both ways at the same budget, which this single-render choke
+/// point cannot express.
 fn emit_doc(doc: &Doc, reserved: usize, out: &mut String, col: &mut usize, width: usize) {
     let base_level = current_line_indent_cols(out) / TAB_WIDTH;
     let rendered = render(doc, width.saturating_sub(reserved), *col, base_level);
@@ -111,7 +114,8 @@ fn emit_tokens(
                 let budget = width.saturating_sub(reserved);
                 let header = render(&build_for_doc(inner), budget, *col, base_level);
                 let header_with_keyword = format!("for {header}");
-                let re_toks = tokenize(&header_with_keyword);
+                let post_processed = super::post_process(&header_with_keyword);
+                let re_toks = tokenize(&post_processed);
                 if let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) {
                     let re_read = render(
                         &build_for_doc(&re_toks[open + 1..close]),
@@ -777,7 +781,7 @@ fn format_stmt_expr(
                 base_level + 1,
             );
             let re_read = render(
-                &build_statement_element(&tokenize(&statement)),
+                &build_statement_element(&tokenize(&super::post_process(&statement))),
                 budget,
                 stmt_col,
                 base_level + 1,
