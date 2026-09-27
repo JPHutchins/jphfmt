@@ -63,8 +63,15 @@ pub(super) fn cast_tightens(inner: &[Token], prev: Option<&Token>, after: Option
 /// `prev` is the token before the slice this `toks` was cut from, for the slice that begins at the
 /// `(` itself — the layout walks construct slices while `space_casts` walks the whole file, and a
 /// control body's `(` at slice start would otherwise read prev-less where the real prev is the
-/// header's `)`.
-pub(super) fn padded_after_paren_open(toks: &[Token], open: usize, prev: Option<&Token>) -> bool {
+/// header's `)`. `after` is the same for the slice that ends at the `)` — the layout's construct
+/// slices end there, and a cast verdict without the real follower would pad a group the feed
+/// tightens.
+pub(super) fn padded_after_paren_open(
+    toks: &[Token],
+    open: usize,
+    prev: Option<&Token>,
+    after: Option<&Token>,
+) -> bool {
     let Some(mut k) = next_nontrivia(toks, open + 1).filter(|&k| toks[k].text == "*") else {
         return false;
     };
@@ -78,7 +85,7 @@ pub(super) fn padded_after_paren_open(toks: &[Token], open: usize, prev: Option<
             cast_tightens(
                 &toks[open + 1..close],
                 prev,
-                next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+                next_nontrivia(toks, close + 1).map(|k| &toks[k]).or(after),
             )
         })
 }

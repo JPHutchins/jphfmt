@@ -3539,6 +3539,38 @@ fn a_cast_interior_joins_tight_but_a_padded_run_keeps_its_pad() {
 }
 
 #[test]
+fn a_par_opens_its_pad_on_the_feeds_verdict() {
+    // #186's witness, the review's probe: the call arm rendered its argument list tight after `(`
+    // where the feed's `space_pointers` pads a qualifier-followed `*` run — the #178 class one
+    // emit path over. The PARENS open pad now consults the shared after-paren verdict, so the
+    // layout writes the pad the feed would, on every arm that owns a written `(`.
+    let once = format_with_width("struct(*const)struct+*})a\\\n", 24);
+    assert_eq!(once, "struct( * const)struct+*})a\\\n");
+    assert_eq!(format_with_width(&once, 24), once, "and it is a fixpoint");
+    let group = format("x = ( * const p | y) + 1;\n");
+    assert_eq!(group, "x = ( * const p | y) + 1;\n");
+    assert_eq!(format(&group), group, "and it is a fixpoint");
+    let cond = format("if ( * const p | y) g();\n");
+    assert_eq!(cond, "if ( * const p | y) g();\n");
+    assert_eq!(format(&cond), cond, "and it is a fixpoint");
+    // The corpus's first exercise of the verdict: a function-pointer member whose `(` opens on a
+    // qualifier-followed `*` run — the feed pads it, and the layout now writes the pad instead of
+    // a tight form the feed rewrote every pass.
+    let fn_ptr = format("Py_hash_t(* const hash)(const void *, Py_ssize_t);\n");
+    assert_eq!(
+        fn_ptr,
+        "Py_hash_t( * const hash)(const void *, Py_ssize_t);\n"
+    );
+    assert_eq!(format(&fn_ptr), fn_ptr, "and it is a fixpoint");
+    // The settle loop's fresh draw: a file-leading `=` whose gap the walk emitted — the spacing
+    // round's prefix must carry the span's own leading trivia, or the round oscillates against the
+    // feed's `=` pad.
+    let eq = format_with_width("=\"\"/&;\n", 10);
+    assert_eq!(eq, " = \"\" / &;\n");
+    assert_eq!(format_with_width(&eq, 10), eq, "and it is a fixpoint");
+}
+
+#[test]
 fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
     // #175's round-3 witness: the collapse's cast verdict reads the slice the layout walks, so the
     // statement's own prev — the header's `)` — must be threaded in; `space_casts` skips a

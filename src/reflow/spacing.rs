@@ -77,7 +77,7 @@ fn reassemble(pieces: &[Piece], trailing: &str) -> String {
 type Pass = for<'src> fn(&mut [Piece<'src>]);
 
 /// The §2.5 passes, in the order [`space_tokens`] runs them. The verify helper runs each one alone
-/// over the layout's output, so the order matters only to [`space_tokens`] itself.
+/// over the layout's output, so the order matters only to [`space_pieces`] itself.
 const PASSES: [(&str, Pass); 9] = [
     ("collapse_runs", collapse_runs),
     ("space_pointers", space_pointers),
@@ -90,13 +90,19 @@ const PASSES: [(&str, Pass); 9] = [
     ("space_subscripts", space_subscripts),
 ];
 
+/// Apply every pass in order to `pieces` — [`space_tokens`]'s body, shared with the verify helper
+/// so the combined check and the feed are one spelling.
+fn space_pieces(pieces: &mut [Piece]) {
+    for (_, pass) in PASSES {
+        pass(pieces);
+    }
+}
+
 /// Apply the §2.5 token-spacing rules. Whitespace is semantically inert, so this never changes
 /// meaning. [`collapse_runs`] goes first so every later rule sees a canonical one-space gap.
 pub(super) fn space_tokens(s: &str) -> String {
     let (mut pieces, trailing) = pieces_of(s);
-    for (_, pass) in PASSES {
-        pass(&mut pieces);
-    }
+    space_pieces(&mut pieces);
     reassemble(&pieces, &trailing)
 }
 
@@ -109,11 +115,13 @@ pub(super) fn space_tokens(s: &str) -> String {
 /// spacing round all read the same spelling of the contract.
 #[doc(hidden)]
 pub fn first_respacing_pass(s: &str) -> Option<(&'static str, String)> {
-    let combined = space_tokens(s);
-    if combined != s {
-        return Some(("space_tokens", combined));
-    }
     let (pieces, trailing) = pieces_of(s);
+    let mut combined = pieces.clone();
+    space_pieces(&mut combined);
+    let after = reassemble(&combined, &trailing);
+    if after != s {
+        return Some(("space_tokens", after));
+    }
     for (name, pass) in PASSES {
         let mut run = pieces.clone();
         pass(&mut run);
@@ -368,7 +376,7 @@ fn space_pointers(pieces: &mut [Piece]) {
         // spelling: [`space_casts`] tightens what a bare pad writes, and a lone pass that pads a
         // cast is the disagreement the layout's output must not hold (#178).
         let qualifier_pad = if j >= 1 && pieces[j - 1].1.text == "(" {
-            padded_after_paren_open(&toks, j - 1, None)
+            padded_after_paren_open(&toks, j - 1, None, None)
         } else {
             next_is_qualifier
         };

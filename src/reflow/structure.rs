@@ -104,11 +104,16 @@ fn emit_tokens(
             emit_str(out, col, " ");
             let inner = &toks[open + 1..close];
             let reserved = trailing_reserved(toks, close + 1, in_define_body);
-            let build: fn(&[Token]) -> Doc = if t.text == "for" {
+            let build: fn(&[Token], Option<&Token>, Option<&Token>) -> Doc = if t.text == "for" {
                 build_for_doc
             } else {
                 build_cond_doc
             };
+            // A control keyword can precede no cast, and a claimed header interior is never a pure
+            // type group, so the after-paren pad verdict is the qualifier-run term alone — the
+            // threading still reads the real prev and follower, the one spelling of the verdict.
+            let prev = Some(&toks[i]);
+            let after = next_nontrivia(toks, close + 1).map(|k| &toks[k]);
             // The claim's operand bound, once written, is the next pass's authored group: a
             // clause's or condition's nested constructs then measure against the group's own
             // reserve, not the header's, and the passes lay the construct out differently (#174,
@@ -119,7 +124,7 @@ fn emit_tokens(
             // second pass, so three rounds bound it.
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             let budget = width.saturating_sub(reserved);
-            let mut current = render(&build(inner), budget, *col, base_level);
+            let mut current = render(&build(inner, prev, after), budget, *col, base_level);
             for _ in 0..3 {
                 let with_keyword = format!("{} {current}", t.text);
                 let post_processed = super::post_process(&with_keyword);
@@ -127,7 +132,12 @@ fn emit_tokens(
                 let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) else {
                     break;
                 };
-                let next = render(&build(&re_toks[open + 1..close]), budget, *col, base_level);
+                let next = render(
+                    &build(&re_toks[open + 1..close], Some(&re_toks[0]), None),
+                    budget,
+                    *col,
+                    base_level,
+                );
                 if next == current {
                     break;
                 }
@@ -159,7 +169,12 @@ fn emit_tokens(
                 // join `build_expr_doc`'s call arm makes for nested calls.
                 let inner = &toks[open + 1..close];
                 emit_str(out, col, t.text);
-                let doc = build_call_body(inner, Fit::Measured);
+                let doc = build_call_body(
+                    inner,
+                    Fit::Measured,
+                    Some(&toks[i]),
+                    next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+                );
                 emit_doc(
                     &doc,
                     trailing_reserved(toks, close + 1, in_define_body),
@@ -180,7 +195,12 @@ fn emit_tokens(
                 // decision to flip, so the re-laid form is the one every pass reaches.
                 let inner = &toks[open + 1..close];
                 emit_str(out, col, t.text);
-                let doc = build_call_body(inner, Fit::Measured);
+                let doc = build_call_body(
+                    inner,
+                    Fit::Measured,
+                    Some(&toks[i]),
+                    next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+                );
                 emit_doc(
                     &doc,
                     trailing_reserved(toks, close + 1, in_define_body),
@@ -291,7 +311,12 @@ fn emit_tokens(
             && !contains_comment(&toks[i + 1..close])
             && is_balanced(&toks[i + 1..close])
             && !holds_unsafe_hash(&toks[i + 1..close], in_define_body)
-            && let Some(doc) = build_bracketed_group(&toks[i + 1..close], bracketing)
+            && let Some(doc) = build_bracketed_group(
+                &toks[i + 1..close],
+                bracketing,
+                prev_nontrivia(toks, i).map(|k| &toks[k]),
+                next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+            )
         {
             emit_doc(
                 &doc,
@@ -381,13 +406,7 @@ fn emit_tokens(
                 // what the feed would write, and the round that follows re-reads it the way every
                 // other settle round does.
                 let mut current = render(&doc, budget, *col, base_level);
-                let prefix = prev_nontrivia(toks, i).map_or(String::new(), |k| {
-                    format!(
-                        "{}{}",
-                        toks[k].text,
-                        toks[k + 1..i].iter().map(|t| t.text).collect::<String>()
-                    )
-                });
+                let mut settled = false;
                 for _ in 0..4 {
                     let post_processed = super::post_process(&current);
                     let re_toks = tokenize(&post_processed);
@@ -402,27 +421,53 @@ fn emit_tokens(
                         .filter(|_| re_toks.first().is_some_and(|t| t.text == "("))
                         .and_then(|last| match_bracket(&re_toks, 0).filter(|&close| close == last))
                     {
-                        Some(close) => build_bracketed_group(&re_toks[1..close], &PARENS)
-                            .map(|doc| render(&doc, budget, *col, base_level)),
+                        Some(close) => {
+                            build_bracketed_group(&re_toks[1..close], &PARENS, None, None)
+                                .map(|doc| render(&doc, budget, *col, base_level))
+                        }
                         None => build_chain_doc(&re_toks, Bound::Parens, None)
                             .map(|doc| render(&doc, budget, *col, base_level)),
                     };
                     let Some(next) = re_read else {
+                        settled = true;
                         break;
                     };
                     if next != current {
                         current = next;
                         continue;
                     }
+                    // The prefix is built lazily — only a settled round reads it — as one collect
+                    // over the tokens the walk already emitted before the span: the prev token and
+                    // the gap after it, or the span's own leading trivia when no prev precedes it.
+                    // The gap is load-bearing — the feed reads the span's first piece with it, and
+                    // a file-leading `=` whose gap the walk emitted is a space the sim must see
+                    // (#186's fresh draw).
+                    let prefix: String = match prev_nontrivia(toks, i) {
+                        Some(k) => toks[k..i].iter().map(|t| t.text).collect::<String>(),
+                        None => toks[..i].iter().map(|t| t.text).collect::<String>(),
+                    };
                     let respaced =
                         super::spacing::space_tokens(&format!("{prefix}{post_processed}"));
-                    let respaced = respaced.strip_prefix(prefix.as_str()).unwrap_or(&respaced);
+                    // The feed rewrites inter-token gaps only, so the prefix's token text is its own
+                    // verbatim prefix of the rewrite; `post_process` guarantees exactly one trailing
+                    // newline, and trailing trivia is no pass's.
+                    let respaced = respaced.strip_prefix(prefix.as_str()).expect(
+                        "the feed rewrites gaps, never the prev token the walk emitted before the span",
+                    );
                     if respaced != post_processed {
-                        current = respaced.strip_suffix('\n').unwrap_or(respaced).to_owned();
+                        current = respaced
+                            .strip_suffix('\n')
+                            .expect("post_process appends exactly one trailing newline")
+                            .to_owned();
                         continue;
                     }
+                    settled = true;
                     break;
                 }
+                // The known class settles within three rounds and the spacing round costs one more;
+                // an unsettled emission is a form the next pass re-lays, so debug builds say so
+                // loudly while the property suites stand as the release backstop.
+                debug_assert!(settled, "the claim's settle loop exhausted its rounds");
                 emit_str(out, col, &current);
                 i = semi;
                 continue;
@@ -553,7 +598,7 @@ fn explode_params(def: &Define, flat: &str, scoped_col: usize, width: usize) -> 
         return None;
     }
     let params = render(
-        &build_call_body(params, Fit::Forced),
+        &build_call_body(params, Fit::Forced, Some(&def.name), None),
         continued,
         scoped_col + display_width(&def.head),
         0,
@@ -595,6 +640,7 @@ struct Define<'src> {
     head: String,
     params: Option<Vec<Token<'src>>>,
     body: Vec<Token<'src>>,
+    name: Token<'src>,
 }
 
 /// Drop the continuation `\`s from `toks` — they belong to the input's line breaks, not to the
@@ -659,6 +705,7 @@ fn split_define<'src>(toks: &[Token<'src>], start: usize, end: usize) -> Option<
         prefix: from_hash(prefix_end) + " ",
         head: from_hash(name + 1),
         params: close.map(|close| without_continuations(&toks[name + 2..close])),
+        name: toks[name],
         body,
     })
 }
@@ -732,7 +779,7 @@ fn define_body_layout(body: &[Token], prefix_col: usize, width: usize) -> Option
         && is_balanced(body)
         && !body.iter().any(|t| t.text == "{")
         && !has_nested_question(body)
-        && build_bracketed_group(&body[1..last], bracketing).is_some()
+        && build_bracketed_group(&body[1..last], bracketing, None, None).is_some()
     {
         return Some(structure(body, prefix_col, width, true));
     }
@@ -1089,7 +1136,7 @@ fn forced_call_pair(toks: &[Token], open: usize) -> Option<(usize, usize)> {
         && is_balanced(inner)
         && has_middle_newline(inner)
         && !holds_hash_fragment(inner)
-        && holds_forced_break(&build_call_body(inner, Fit::Measured)))
+        && holds_forced_break(&build_call_body(inner, Fit::Measured, None, None)))
     .then_some((open, close))
 }
 
