@@ -3373,3 +3373,21 @@ fn an_index_map_whose_ternary_chain_explodes_stays_exploded() {
     assert_eq!(once, "int j = arr[\n\ta ? b :\n\tc ? d :\n\te\n];\n");
     assert_eq!(format(&once), once, "and it is a fixpoint");
 }
+
+#[test]
+fn a_paren_group_whose_interior_breaks_joins_tight() {
+    // #173's witness: the collapse padded the token after a paren open's break — the next pass
+    // tightened what this one wrote. The join after a `(` is the group's own canonical pad.
+    let once = format_with_width("({(\nint)f})", 1);
+    assert_eq!(once, "({\n\t(int) f;\n})\n");
+    assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
+}
+
+#[test]
+fn a_nested_paren_group_joins_tight_across_the_collapse() {
+    // The fresh draw's witness: the `((`-join — a `(` after a break inside a collapse joins
+    // tight, the same canonical form the spacing pass writes.
+    let once = format_with_width("A&*\n(\n()int)A;", 1);
+    assert_eq!(once, "(\n\tA &\n\t* (()int) A\n);\n");
+    assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
+}

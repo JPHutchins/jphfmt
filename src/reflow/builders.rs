@@ -231,11 +231,19 @@ fn flush_pending(text: &mut String, parts: &mut Vec<Doc>, pending: &mut bool, sp
 ///
 /// The mirror of [`call_head_before`], and load-bearing for the same reason — see its doc. The `[`
 /// arm is the shared predicate, the one spelling of what `space_subscripts` tightens.
+/// A token directly after a `(` joins tight — the paren group's own canonical pad — except an `=`
+/// edge, which `pad_for` pads. A `[`-interior keeps its gap: the attribute and nested-subscript
+/// forms are the author's own (`space_subscripts` reads a trivia-stripped list).
+fn tight_after_paren_open(toks: &[Token], j: usize) -> bool {
+    toks[j].text != "=" && prev_nontrivia(toks, j).is_some_and(|k| toks[k].text == "(")
+}
+
 fn tight_against_previous(toks: &[Token], open: usize) -> bool {
     let previous = prev_nontrivia(toks, open);
     match toks.get(open).map(|t| t.text) {
         Some("[") => is_subscript(toks, open),
         Some("{") => previous.is_some_and(|k| toks[k].text == ")" && closes_literal_type(toks, k)),
+        Some("(") => previous.is_some_and(|k| toks[k].text == "("),
         _ => false,
     }
 }
@@ -332,7 +340,10 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
                 // collapse it, as before. A same-line `=` against a bracket needs no pad of its own:
                 // `space_equals` runs first and pre-spaces every same-line `=`, and the collapse
                 // preserves that trivia, so this pass cannot write the tight form (#121's search).
-                if pending_space && !tight_against_previous(toks, j) {
+                if pending_space
+                    && !tight_against_previous(toks, j)
+                    && !tight_after_paren_open(toks, j)
+                {
                     text.push(' ');
                 }
                 pending_space = false;
@@ -344,7 +355,8 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
         } else {
             // A bracket the author left a gap before is still tight (§2.5), even when it has nothing to
             // lay out and falls through to here: a space would be tightened on the next pass.
-            if pending_space && !tight_against_previous(toks, j) {
+            if pending_space && !tight_against_previous(toks, j) && !tight_after_paren_open(toks, j)
+            {
                 text.push(' ');
             }
             pending_space = false;
