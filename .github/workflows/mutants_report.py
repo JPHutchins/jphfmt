@@ -27,9 +27,9 @@ PINNED_TOOL = "cargo-mutants 27.1.0"
 PINNED_TEST_ARGS = ["--lib", "--test", "conformance"]
 
 EXCLUDED: dict[str, tuple[str, ...]] = {
-    r"structure\.rs:311:60: replace / with [%*] in emit_tokens": (
-        "src/reflow/structure.rs:311:60: replace / with % in emit_tokens",
-        "src/reflow/structure.rs:311:60: replace / with * in emit_tokens",
+    r"structure\.rs:315:60: replace / with [%*] in emit_tokens": (
+        "src/reflow/structure.rs:315:60: replace / with % in emit_tokens",
+        "src/reflow/structure.rs:315:60: replace / with * in emit_tokens",
     ),
     r"structure\.rs:269:42: replace \+ with \* in emit_tokens": (
         "src/reflow/structure.rs:269:42: replace + with * in emit_tokens",
