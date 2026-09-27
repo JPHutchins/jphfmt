@@ -39,7 +39,10 @@ pub(super) fn structure(
 
 /// Render `doc` for the line it is landing on and emit it. `reserved` is the width of what must still
 /// fit after it: the tokens the construct does not own but shares its last line with. Every handler
-/// that lays a construct out goes through here, so none of them can drift apart on how they measure.
+/// that lays a construct out goes through here, so none of them can drift apart on how they measure
+/// — except the for header's re-read guard (#174), which measures its two spellings itself: the
+/// comparison must render the header both ways at the same budget, which this single-render choke
+/// point cannot express.
 fn emit_doc(doc: &Doc, reserved: usize, out: &mut String, col: &mut usize, width: usize) {
     let base_level = current_line_indent_cols(out) / TAB_WIDTH;
     let rendered = render(doc, width.saturating_sub(reserved), *col, base_level);
@@ -100,18 +103,35 @@ fn emit_tokens(
             emit_str(out, col, t.text);
             emit_str(out, col, " ");
             let inner = &toks[open + 1..close];
-            let doc = if t.text == "for" {
-                build_for_doc(inner)
+            let reserved = trailing_reserved(toks, close + 1, in_define_body);
+            let build: fn(&[Token]) -> Doc = if t.text == "for" {
+                build_for_doc
             } else {
-                build_cond_doc(inner)
+                build_cond_doc
             };
-            emit_doc(
-                &doc,
-                trailing_reserved(toks, close + 1, in_define_body),
-                out,
-                col,
-                width,
-            );
+            // The claim's operand bound, once written, is the next pass's authored group: a
+            // clause's or condition's nested constructs then measure against the group's own
+            // reserve, not the header's, and the passes lay the construct out differently (#174,
+            // the #154 class on the element path — the condition path reaches it through a
+            // statement expression). The next pass's re-read either reproduces the header or it
+            // does not — emit the re-read when it does not, so the passes agree.
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+            let budget = width.saturating_sub(reserved);
+            let header = render(&build(inner), budget, *col, base_level);
+            let header_with_keyword = format!("{} {header}", t.text);
+            let post_processed = super::post_process(&header_with_keyword);
+            let re_toks = tokenize(&post_processed);
+            let doc = if let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) {
+                let re_read = render(&build(&re_toks[open + 1..close]), budget, *col, base_level);
+                if header == re_read {
+                    build(inner)
+                } else {
+                    build(&re_toks[open + 1..close])
+                }
+            } else {
+                build(inner)
+            };
+            emit_doc(&doc, reserved, out, col, width);
             i = advance(i, close.saturating_add(1));
             continue;
         }
@@ -746,12 +766,28 @@ fn format_stmt_expr(
         .iter()
         .chain(has_non_trivia(trailing).then_some(trailing))
         .map(|s| {
-            render(
+            // The element claim's operand bound, written once, is the next pass's authored group
+            // — the same two-budget disagreement as the for header (#174). The next pass's
+            // re-read either reproduces the statement or it does not; emit the re-read when it
+            // does not, so the passes agree.
+            let budget = width.saturating_sub(1);
+            let statement = render(
                 &build_statement_element(s),
-                width.saturating_sub(1),
+                budget,
                 stmt_col,
                 base_level + 1,
-            )
+            );
+            let re_read = render(
+                &build_statement_element(&tokenize(&super::post_process(&statement))),
+                budget,
+                stmt_col,
+                base_level + 1,
+            );
+            if statement == re_read {
+                statement
+            } else {
+                re_read
+            }
         })
         .collect();
     if statements.is_empty() {
@@ -801,13 +837,39 @@ fn emit_brace(
         return close.saturating_add(1);
     }
     let doc = build_brace_doc(inner, padded);
-    emit_doc(
-        &doc,
-        trailing_reserved(toks, close + 1, in_define_body),
-        out,
-        col,
-        width,
-    );
+    let reserved = trailing_reserved(toks, close + 1, in_define_body);
+    // The element claim's bounds, once written, are the next pass's authored groups — the #174
+    // class this emitter reaches through the same element builder the for header and the stmt-expr
+    // body guard. The next pass's re-read either reproduces the brace or it does not; emit the
+    // re-read when it does not, so the passes agree.
+    let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+    let budget = width.saturating_sub(reserved);
+    let brace = render(&doc, budget, *col, base_level);
+    let post_processed = super::post_process(&brace);
+    let re_toks = tokenize(&post_processed);
+    let Some(re_inner) = re_toks
+        .iter()
+        .rposition(|t| t.text == "}")
+        .filter(|_| re_toks.first().is_some_and(|t| t.text == "{"))
+        .map(|close| &re_toks[1..close])
+    else {
+        emit_doc(&doc, reserved, out, col, width);
+        return close.saturating_add(1);
+    };
+    let refused = contains_comment(re_inner)
+        || re_inner
+            .iter()
+            .any(|t| t.kind == TokenKind::Punct && t.text == "#")
+        || !is_balanced(re_inner)
+        || respaced_when_joined_top(re_inner);
+    if !refused {
+        let re_render = render(&build_brace_doc(re_inner, padded), budget, *col, base_level);
+        if brace != re_render {
+            emit_str(out, col, &re_render);
+            return close.saturating_add(1);
+        }
+    }
+    emit_doc(&doc, reserved, out, col, width);
     close.saturating_add(1)
 }
 

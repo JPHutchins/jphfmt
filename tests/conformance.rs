@@ -1131,6 +1131,52 @@ fn a_for_clause_is_an_element_of_its_header() {
     );
 }
 
+#[test]
+fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
+    // #174's witness: the claim's operand bound, written once, is the next pass's authored group —
+    // the clause's nested call then measures against the group's own reserve, not the header's, and
+    // the passes flipped the clause (widths 15-20). The emit-side guard re-reads its own render and
+    // writes the form the next pass reproduces.
+    let once = format_with_width("for (i = f\n(a) = x | y; i; i--)", 15);
+    assert_eq!(
+        once,
+        "for (\n\ti = f(\n\t\ta\n\t) = (\n\t\tx |\n\t\ty\n\t);\n\ti;\n\ti--\n)\n"
+    );
+    assert_eq!(format_with_width(&once, 15), once, "and it is a fixpoint");
+    let stmt_expr = format_with_width("({i = f\n(a) = x | y;})", 16);
+    assert_eq!(stmt_expr, "({\n\ti = f(\n\t\ta\n\t) = (x | y);\n})\n");
+    assert_eq!(
+        format_with_width(&stmt_expr, 16),
+        stmt_expr,
+        "and it is a fixpoint"
+    );
+    // The plain cond-header sibling of the same class is a fixpoint, guarded or not.
+    let cond = format_with_width("if (i = f\n(a) = x | y) {\n\tg();\n}\n", 16);
+    assert_eq!(
+        cond,
+        "if (\n\ti = f(\n\t\ta\n\t) = x |\n\ty\n) {\n\tg();\n}\n"
+    );
+    assert_eq!(format_with_width(&cond, 16), cond, "and it is a fixpoint");
+    // The brace/enum/initializer emitters reach the same element builder, and their re-read guard
+    // is the same simulation — the round-3 witness, which the earlier seed spaces missed.
+    let brace = format_with_width("int a[] = {i = f\n(a) = x | y};\n", 18);
+    assert_eq!(brace, "int a[] = {\n\ti = f(\n\t\ta\n\t) = (x | y),\n};\n");
+    assert_eq!(format_with_width(&brace, 18), brace, "and it is a fixpoint");
+    // The round-4 witness: the claim inside a statement expression inside a cond header — the cond
+    // path's own re-read guard now covers it. (The `(x | y;)` the claim writes here — its bound
+    // swallows the statement's `;` — is a pre-existing invalid-C writing, tracked separately.)
+    let cond_stmt_expr = format_with_width("while (({i = f\n(a) = x | y;})) g();", 24);
+    assert_eq!(
+        cond_stmt_expr,
+        "while (\n\t({\n\t\ti = f(\n\t\t\ta\n\t\t) = (x | y;),\n\t})\n) g();\n"
+    );
+    assert_eq!(
+        format_with_width(&cond_stmt_expr, 24),
+        cond_stmt_expr,
+        "and it is a fixpoint"
+    );
+}
+
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause
 /// holding a depth-zero `,` is a list rather than one expression, so nothing bounds it
 /// (`is_boundable`).
