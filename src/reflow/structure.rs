@@ -113,25 +113,27 @@ fn emit_tokens(
             // clause's or condition's nested constructs then measure against the group's own
             // reserve, not the header's, and the passes lay the construct out differently (#174,
             // the #154 class on the element path — the condition path reaches it through a
-            // statement expression). The next pass's re-read either reproduces the header or it
-            // does not — emit the re-read when it does not, so the passes agree.
+            // statement expression). The re-read iterates to a fixpoint: one level misses the
+            // claim a nested construct's own element path writes, whose form surfaces at a
+            // different walk level on the next pass (#180). The known class settles on the
+            // second pass, so three rounds bound it.
             let base_level = current_line_indent_cols(out) / TAB_WIDTH;
             let budget = width.saturating_sub(reserved);
-            let header = render(&build(inner), budget, *col, base_level);
-            let header_with_keyword = format!("{} {header}", t.text);
-            let post_processed = super::post_process(&header_with_keyword);
-            let re_toks = tokenize(&post_processed);
-            let doc = if let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) {
-                let re_read = render(&build(&re_toks[open + 1..close]), budget, *col, base_level);
-                if header == re_read {
-                    build(inner)
-                } else {
-                    build(&re_toks[open + 1..close])
+            let mut current = render(&build(inner), budget, *col, base_level);
+            for _ in 0..3 {
+                let with_keyword = format!("{} {current}", t.text);
+                let post_processed = super::post_process(&with_keyword);
+                let re_toks = tokenize(&post_processed);
+                let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) else {
+                    break;
+                };
+                let next = render(&build(&re_toks[open + 1..close]), budget, *col, base_level);
+                if next == current {
+                    break;
                 }
-            } else {
-                build(inner)
-            };
-            emit_doc(&doc, reserved, out, col, width);
+                current = next;
+            }
+            emit_str(out, col, &current);
             i = advance(i, close.saturating_add(1));
             continue;
         }
@@ -364,24 +366,28 @@ fn emit_tokens(
                 // The claim's operand bound, once written, is the next pass's authored group: a
                 // construct the bound wraps then reads a `(` where this pass reads the statement's
                 // own prev, and the two passes disagree on its shape (#175's round-3 major — the
-                // element paths' guard reads the same class, #174). The next pass's re-read either
-                // reproduces the statement or it does not; emit the re-read when it does not, so
-                // the passes agree.
-                let statement = render(&doc, budget, *col, base_level);
-                let re_toks = tokenize(&statement);
-                // The re-read's tokens are complete — its own bound parens, when the render wrote
-                // them, are the prev its groups read on the next pass. No threaded prev: that is
-                // for the original claim's slices, which the bound does not exist in yet.
-                let re_read = build_chain_doc(&re_toks, Bound::Parens, None);
-                if let Some(re_doc) = re_read {
-                    let re_render = render(&re_doc, budget, *col, base_level);
-                    if statement != re_render {
-                        emit_str(out, col, &re_render);
-                        i = semi;
-                        continue;
+                // element paths' guard reads the same class, #174). The re-read iterates to a
+                // fixpoint: one level misses the claim a nested construct's own element path
+                // writes, whose form surfaces at a different walk level on the next pass (#180).
+                // The known class settles on the second pass, so three rounds bound it.
+                let mut current = render(&doc, budget, *col, base_level);
+                for _ in 0..3 {
+                    let post_processed = super::post_process(&current);
+                    let re_toks = tokenize(&post_processed);
+                    // The re-read's tokens are complete — its own bound parens, when the render
+                    // wrote them, are the prev its groups read on the next pass. No threaded prev:
+                    // that is for the original claim's slices, which the bound does not exist in
+                    // yet.
+                    let Some(re_doc) = build_chain_doc(&re_toks, Bound::Parens, None) else {
+                        break;
+                    };
+                    let next = render(&re_doc, budget, *col, base_level);
+                    if next == current {
+                        break;
                     }
+                    current = next;
                 }
-                emit_doc(&doc, 1, out, col, width);
+                emit_str(out, col, &current);
                 i = semi;
                 continue;
             }
@@ -407,6 +413,7 @@ fn emit_tokens(
             i = i.saturating_add(1);
             continue;
         }
+        eprintln!("FALLTHROUGH: {}", t.text);
         emit_str(out, col, t.text);
         i = i.saturating_add(1);
     }
@@ -771,23 +778,26 @@ fn format_stmt_expr(
             // re-read either reproduces the statement or it does not; emit the re-read when it
             // does not, so the passes agree.
             let budget = width.saturating_sub(1);
-            let statement = render(
+            let mut current = render(
                 &build_statement_element(s),
                 budget,
                 stmt_col,
                 base_level + 1,
             );
-            let re_read = render(
-                &build_statement_element(&tokenize(&super::post_process(&statement))),
-                budget,
-                stmt_col,
-                base_level + 1,
-            );
-            if statement == re_read {
-                statement
-            } else {
-                re_read
+            for _ in 0..3 {
+                let post_processed = super::post_process(&current);
+                let re_read = render(
+                    &build_statement_element(&tokenize(&post_processed)),
+                    budget,
+                    stmt_col,
+                    base_level + 1,
+                );
+                if re_read == current {
+                    break;
+                }
+                current = re_read;
             }
+            current
         })
         .collect();
     if statements.is_empty() {

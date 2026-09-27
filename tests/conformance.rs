@@ -1194,6 +1194,19 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
     // A nested block inside the body is not `;`-terminated — the comma-list builder's magic comma
     // would trail its last statement. The body passes through, the same refusal the emit-side
     // statement-expression makes.
+    // The #180 witness: a claim nested inside an outer group's element path — the emit-side
+    // re-reads now iterate to a fixpoint, so the statement's form the outer claim writes is the
+    // one the next pass reproduces (the w=23-25 window is the whole-file-spacing residual, #178).
+    let nested_reach = format_with_width("(x | y; a ? b : c; ({i = f\n(a) = x | y;}))]", 26);
+    assert_eq!(
+        nested_reach,
+        "(\n\tx | y; a ? b :\n\tc; ({\n\t\ti = f(a) = x | y;\n\t})\n)]\n"
+    );
+    assert_eq!(
+        format_with_width(&nested_reach, 26),
+        nested_reach,
+        "and it is a fixpoint"
+    );
     let nested_block = format_with_width("while (({ {a;} b; })) g();", 24);
     assert_eq!(nested_block, "while (({{a;} b;})) g();\n");
     assert_eq!(
