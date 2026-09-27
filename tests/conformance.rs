@@ -3391,3 +3391,14 @@ fn a_nested_paren_group_joins_tight_across_the_collapse() {
     assert_eq!(once, "(\n\tA &\n\t* (()int) A\n);\n");
     assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
 }
+
+#[test]
+fn an_authored_paren_gap_survives_the_collapse() {
+    // #175's round-1 shapes: the tight join applies to break-collapses only — an authored space
+    // gap, and the `*`-run a qualifier follows, keep what the author wrote.
+    for src in ["0 + ( * const p);\n", "a & ( b );\n"] {
+        let once = format(src);
+        assert_eq!(once, src);
+        assert_eq!(format(&once), once, "and it is a fixpoint");
+    }
+}
