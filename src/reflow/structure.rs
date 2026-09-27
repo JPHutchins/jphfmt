@@ -414,7 +414,9 @@ fn emit_tokens(
                     // closes the span is the bound the render wrote and the group arm's claim, a
                     // bare span is the chain claim's, and neither passes the span through verbatim
                     // — the settled form. No threaded prev: the re-read's tokens are complete, and
-                    // its own bound parens are the prev its groups read on the next pass.
+                    // its own bound parens are the prev its groups read on the next pass. Its pad
+                    // verdict reads the same tokens contextlessly: a claimed interior is never a
+                    // pure type group, so the cast override cannot fire either way.
                     let re_read = match re_toks
                         .iter()
                         .rposition(|t| !is_trivia(t))
@@ -442,23 +444,29 @@ fn emit_tokens(
                     // The gap is load-bearing — the feed reads the span's first piece with it, and
                     // a file-leading `=` whose gap the walk emitted is a space the sim must see
                     // (#186's fresh draw).
-                    let prefix: String = match prev_nontrivia(toks, i) {
-                        Some(k) => toks[k..i].iter().map(|t| t.text).collect::<String>(),
-                        None => toks[..i].iter().map(|t| t.text).collect::<String>(),
-                    };
+                    let prefix: String = toks[prev_nontrivia(toks, i).unwrap_or(0)..i]
+                        .iter()
+                        .map(|t| t.text)
+                        .collect::<String>();
                     let respaced =
                         super::spacing::space_tokens(&format!("{prefix}{post_processed}"));
                     // The feed rewrites inter-token gaps only, so the prefix's token text is its own
                     // verbatim prefix of the rewrite; `post_process` guarantees exactly one trailing
-                    // newline, and trailing trivia is no pass's.
-                    let respaced = respaced.strip_prefix(prefix.as_str()).expect(
-                        "the feed rewrites gaps, never the prev token the walk emitted before the span",
+                    // newline, and trailing trivia is no pass's. Both invariants are asserted in
+                    // debug, and a release falls back to the settled form rather than adopt a
+                    // string the strips cannot parse — the module's one policy: loud in debug,
+                    // degrading in release.
+                    debug_assert!(
+                        respaced.starts_with(prefix.as_str()),
+                        "the feed rewrote the prev token the walk emitted before the span"
                     );
+                    let respaced = respaced.strip_prefix(prefix.as_str()).unwrap_or(&respaced);
                     if respaced != post_processed {
-                        current = respaced
-                            .strip_suffix('\n')
-                            .expect("post_process appends exactly one trailing newline")
-                            .to_owned();
+                        debug_assert!(
+                            respaced.ends_with('\n'),
+                            "post_process appends exactly one trailing newline"
+                        );
+                        current = respaced.strip_suffix('\n').unwrap_or(respaced).to_owned();
                         continue;
                     }
                     settled = true;
@@ -597,6 +605,8 @@ fn explode_params(def: &Define, flat: &str, scoped_col: usize, width: usize) -> 
     if body.contains('\n') {
         return None;
     }
+    // The macro name is a callee ident, which no cast can follow, so the pad verdict is the
+    // qualifier-run term alone — the threaded `after` is provably unread.
     let params = render(
         &build_call_body(params, Fit::Forced, Some(&def.name), None),
         continued,

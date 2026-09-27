@@ -667,8 +667,7 @@ fn pad_for(
     else {
         return bracketing.clone();
     };
-    let padded_after_open =
-        open == &"(" && padded_after_paren_open(&paren_span(inner), 0, prev, after);
+    let padded_after_open = open == &"(" && pad_after_paren_open(inner, prev, after);
     Bracketing::Written {
         open,
         close,
@@ -683,6 +682,15 @@ fn pad_for(
             *close_pad
         },
     }
+}
+
+/// The written-`(` pad verdict: whether `inner`'s opening token is a `*`-run the feed pads. The
+/// cheap star gate runs before the span is synthesized, so a container whose interior opens on
+/// anything else pays no allocation — the one helper every interior-only site spells the verdict
+/// through (#186's review).
+fn pad_after_paren_open(inner: &[Token], prev: Option<&Token>, after: Option<&Token>) -> bool {
+    next_nontrivia(inner, 0).is_some_and(|k| inner[k].text == "*")
+        && padded_after_paren_open(&paren_span(inner), 0, prev, after)
 }
 
 /// `inner` re-bracketed with the `(`/`)` its Written open names — the span
@@ -1067,12 +1075,7 @@ fn render_segment(toks: &[Token]) -> String {
 /// A ternary belongs here as much as a chain does: [`build_chain_doc`] bounds a bare one with
 /// parentheses, and this is the same content on the next pass, so both must reach the same layout or
 /// neither is a fixpoint.
-fn build_clause_contents(
-    inner: &[Token],
-    bracketing: &Bracketing,
-    _prev: Option<&Token>,
-    _after: Option<&Token>,
-) -> Option<Doc> {
+fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
     if let Some((segments, ops)) = split_chain(inner) {
         // The same conjunct, wrapped in the author's own parens — the form a previous pass's
         // layout re-reads, so it must lay out to the same shape.
@@ -1141,7 +1144,7 @@ pub(super) fn build_bracketed_group(
     if spans_lines(inner) || holds_directive(inner) {
         return None;
     }
-    build_clause_contents(inner, &pad_for(inner, bracketing, prev, after), prev, after)
+    build_clause_contents(inner, &pad_for(inner, bracketing, prev, after))
 }
 
 /// A statement-expression body's `{ ... }` — the statements it holds, each with its own `;`, and
@@ -1247,25 +1250,24 @@ pub(super) fn build_cond_doc(inner: &[Token], prev: Option<&Token>, after: Optio
     if !is_balanced(inner) {
         return render_passthrough("(", inner, ")");
     }
-    build_clause_contents(inner, &pad_for(inner, &PARENS, prev, after), prev, after).unwrap_or_else(
-        || {
-            // No depth-zero operator to split at, so the whole condition is one element: an overlong one
-            // still breaks away from the `if (` and the `) {` rather than overrunning them. A condition is
-            // not a list, so it names no separator — where a call's sole argument still writes
-            // [`Seps::Every`] because a comma list of one is still a comma list.
-            //
-            // The empty [`Seps::Each`] says that for *this* element and no others, and the `vec!` below is
-            // where that holds: a second element would be juxtaposed against the first with nothing
-            // between them, since the pairing runs out. Any element added here needs a separator named.
-            build_container(
-                pad_for(inner, &PARENS, prev, after),
-                vec![build_element_doc(inner, Bound::Enclosing)],
-                Seps::Each(Vec::new()),
-                None,
-                Fit::Measured,
-            )
-        },
-    )
+    let bracketing = pad_for(inner, &PARENS, prev, after);
+    build_clause_contents(inner, &bracketing).unwrap_or_else(|| {
+        // No depth-zero operator to split at, so the whole condition is one element: an overlong one
+        // still breaks away from the `if (` and the `) {` rather than overrunning them. A condition is
+        // not a list, so it names no separator — where a call's sole argument still writes
+        // [`Seps::Every`] because a comma list of one is still a comma list.
+        //
+        // The empty [`Seps::Each`] says that for *this* element and no others, and the `vec!` below is
+        // where that holds: a second element would be juxtaposed against the first with nothing
+        // between them, since the pairing runs out. Any element added here needs a separator named.
+        build_container(
+            bracketing,
+            vec![build_element_doc(inner, Bound::Enclosing)],
+            Seps::Each(Vec::new()),
+            None,
+            Fit::Measured,
+        )
+    })
 }
 
 #[cfg(test)]
