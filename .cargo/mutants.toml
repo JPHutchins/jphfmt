@@ -4,16 +4,18 @@
 additional_cargo_test_args = ["--lib", "--test", "conformance"]
 
 # The sweep's excluded mutants, proven equivalent:
-# - structure.rs:291:42: the contains_comment span's + with * gains only the bracket token,
-#   and is_comment is token-kind-based, so a bracket can never trip the check.
-# - tokens.rs:677:37: the newline early-return's == with != flips which spans skip the scan,
-#   and the only spans whose skip status changes are newline-only interiors, where none of
-#   the scan's refusal checks (star gaps, bit-field colons) can fire.
+# - the contains_comment span's + with * gains only the bracket token, and is_comment is
+#   token-kind-based, so a bracket can never trip the check.
+# - the newline early-return's == with != flips which spans skip the scan, and the only
+#   spans whose skip status changes are newline-only interiors, where none of the scan's
+#   refusal checks (star gaps, bit-field colons) can fire.
 # The fixpoint re-reads (#180) emit the rendered string, so the base_level divisions and the
 # stmt-expr render levels flow into the output — their mutants kill the conformance suite and
 # the sweep kills them; no exclusion, no rationale.
-# The exclude-check gate (mutants_report.py) asserts each pattern matches exactly its
-# recorded mutant names against the current source, so a drifted pattern fails loudly.
+# The positions are not recorded here by hand: the exclude-check gate resolves each anchor
+# from the live --list — the Nth occurrence of the mutation in the function, whose source
+# line must still hold the recorded fragment — and reports the exact patterns to write when
+# a line shift moves them (#183).
 exclude_re = [
     'structure\.rs:291:42: replace \+ with \* in emit_tokens',
     'tokens\.rs:677:37: replace == with != in joined_pair_respaced',
