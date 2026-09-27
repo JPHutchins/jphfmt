@@ -44,6 +44,45 @@ pub(super) fn heads_body(t: &Token) -> bool {
     is_callee_ident(t) || is_control_keyword(t.text)
 }
 
+/// The cast verdict `space_casts` writes and [`padded_after_paren_open`] mirrors — one spelling, so
+/// the two cannot drift (#64's class). `prev` is the non-trivia token before the `(` and `after` the
+/// non-trivia token after the `)`, both read by the caller from whichever stream it walks; the
+/// follower's line is the caller's own term.
+pub(super) fn cast_tightens(inner: &[Token], prev: Option<&Token>, after: Option<&Token>) -> bool {
+    let prev_is_value = prev.is_some_and(|before| !can_precede_cast(before));
+    let followed_by_operand = after.is_some_and(is_value_start);
+    is_type_group(inner) && !prev_is_value && followed_by_operand
+}
+
+/// Whether the spacing passes pad the token after the `(` at `open` — `space_pointers`' star-run
+/// rule, whose follower is a qualifier, except where [`cast_tightens`] says `space_casts` tightens
+/// instead. A group that ends its statement sees no operand here, and `space_casts` leaves it
+/// alone. The follower's line is not part of the verdict: the collapse joins the break after `)`
+/// itself, so the spacing pass always sees the operand on the group's line.
+///
+/// `prev` is the token before the slice this `toks` was cut from, for the slice that begins at the
+/// `(` itself — the layout walks construct slices while `space_casts` walks the whole file, and a
+/// control body's `(` at slice start would otherwise read prev-less where the real prev is the
+/// header's `)`.
+pub(super) fn padded_after_paren_open(toks: &[Token], open: usize, prev: Option<&Token>) -> bool {
+    let Some(mut k) = next_nontrivia(toks, open + 1).filter(|&k| toks[k].text == "*") else {
+        return false;
+    };
+    while next_nontrivia(toks, k + 1).is_some_and(|next| toks[next].text == "*") {
+        k = next_nontrivia(toks, k + 1).unwrap();
+    }
+    let qualifier_run = next_nontrivia(toks, k + 1).is_some_and(|f| is_qualifier(toks[f].text));
+    qualifier_run
+        && !match_bracket(toks, open).is_some_and(|close| {
+            let prev = prev_nontrivia(toks, open).map(|k| &toks[k]).or(prev);
+            cast_tightens(
+                &toks[open + 1..close],
+                prev,
+                next_nontrivia(toks, close + 1).map(|k| &toks[k]),
+            )
+        })
+}
+
 /// Whether `inner` spells a type and nothing else — the parenthesized `(struct s)` of a cast or of a
 /// compound literal. A type keyword or tag must appear, so a grouped expression `(x)`, an attribute's
 /// `(noreturn)`, or a parameter list is never mistaken for one.

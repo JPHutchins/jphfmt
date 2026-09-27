@@ -3373,3 +3373,93 @@ fn an_index_map_whose_ternary_chain_explodes_stays_exploded() {
     assert_eq!(once, "int j = arr[\n\ta ? b :\n\tc ? d :\n\te\n];\n");
     assert_eq!(format(&once), once, "and it is a fixpoint");
 }
+
+#[test]
+fn a_paren_group_whose_interior_breaks_joins_tight() {
+    // #173's witness: the collapse padded the token after a paren open's break — the next pass
+    // tightened what this one wrote. The join after a `(` is the group's own canonical pad.
+    let once = format_with_width("({(\nint)f})", 1);
+    assert_eq!(once, "({\n\t(int) f;\n})\n");
+    assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
+}
+
+#[test]
+fn a_nested_paren_group_joins_tight_across_the_collapse() {
+    // The fresh draw's witness: the `((`-join — a `(` after a break inside a collapse joins
+    // tight, the same canonical form the spacing pass writes.
+    let once = format_with_width("A&*\n(\n()int)A;", 1);
+    assert_eq!(once, "(\n\tA &\n\t* (()int) A\n);\n");
+    assert_eq!(format_with_width(&once, 1), once, "and it is a fixpoint");
+}
+
+#[test]
+fn an_authored_paren_gap_survives_the_collapse() {
+    // #175's round-1 shapes: the tight join applies to break-collapses only — an authored space
+    // gap, and the `*`-run a qualifier follows, keep what the author wrote.
+    for src in ["0 + ( * const p);\n", "a & ( b );\n"] {
+        let once = format(src);
+        assert_eq!(once, src);
+        assert_eq!(format(&once), once, "and it is a fixpoint");
+    }
+}
+
+#[test]
+fn a_cast_interior_joins_tight_but_a_padded_run_keeps_its_pad() {
+    // #175's round-2 witness: a qualifier-followed `*` run after a paren open joins tight when
+    // `space_casts` reads the group as a cast, and keeps `space_pointers`' pad otherwise. The
+    // follower's own break does not rescue the pad — the collapse joins it, and the next pass
+    // sees the operand on the group's line.
+    let cast = format_with_width("({(\n* const p)f})", 1);
+    assert_eq!(cast, "({\n\t(* const p) f;\n})\n");
+    assert_eq!(format_with_width(&cast, 1), cast, "and it is a fixpoint");
+    let spaced_run = format_with_width("({(\n* * const p)})", 1);
+    assert_eq!(spaced_run, "({\n\t( * * const p);\n})\n");
+    assert_eq!(
+        format_with_width(&spaced_run, 1),
+        spaced_run,
+        "and it is a fixpoint"
+    );
+    let follower_break = format_with_width("({(\n* const p)\nf})", 1);
+    assert_eq!(follower_break, "({\n\t(* const p) f;\n})\n");
+    assert_eq!(
+        format_with_width(&follower_break, 1),
+        follower_break,
+        "and it is a fixpoint"
+    );
+    // The cast verdicts are width-driven — the collapse joins only where the group fits its line —
+    // so the witnesses are also checked at a width where the groups stay flat.
+    assert_eq!(format_with_width(&cast, 80), cast, "and width 80 agrees");
+    assert_eq!(
+        format_with_width(&spaced_run, 80),
+        spaced_run,
+        "and width 80 agrees"
+    );
+    // The `=` edge keeps its gap: `=` against a bracket is pre-spaced by `space_equals`, and the
+    // collapse preserves it.
+    let eq_edge = format_with_width("({(\n= x)})", 1);
+    assert_eq!(eq_edge, "({\n\t( = x);\n})\n");
+    assert_eq!(
+        format_with_width(&eq_edge, 1),
+        eq_edge,
+        "and it is a fixpoint"
+    );
+    // A single star with no qualifier follower joins tight — no pad rule fires.
+    let single_star = format_with_width("({(\n* p)})", 1);
+    assert_eq!(single_star, "({\n\t(* p);\n})\n");
+    assert_eq!(
+        format_with_width(&single_star, 1),
+        single_star,
+        "and it is a fixpoint"
+    );
+}
+
+#[test]
+fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
+    // #175's round-3 witness: the collapse's cast verdict reads the slice the layout walks, so the
+    // statement's own prev — the header's `)` — must be threaded in; `space_casts` skips a
+    // `)`-preceded group and `space_pointers`' pad survives. The follower-line invariant: the
+    // collapse joins the break after `)` itself.
+    let once = format("if (x) (\n* const p) y + 1;\n");
+    assert_eq!(once, "if (x) ( * const p) y + 1;\n");
+    assert_eq!(format(&once), once, "and it is a fixpoint");
+}

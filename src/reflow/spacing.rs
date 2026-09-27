@@ -11,9 +11,9 @@
 //! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
-    can_precede_cast, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
+    cast_tightens, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
     is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
-    is_subscript, is_tag_keyword, is_trivia, is_type_context, is_type_group, is_value_start,
+    is_subscript, is_tag_keyword, is_trivia, is_type_context,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -356,17 +356,16 @@ fn space_casts(pieces: &mut [Piece]) {
             continue;
         };
         let inner: Vec<Token> = pieces[open + 1..close].iter().map(|p| p.1).collect();
-        // `can_precede_cast` is the same rule `closes_type_paren` reads, negated. Sharing it is the
-        // point: #64 was the two drifting apart, and without the `return` carve-out a cast is spaced
-        // only once the layout's own bounding parenthesis has replaced `return` as the token before
-        // it — a verdict that changes between runs.
-        let prev_is_value = open
-            .checked_sub(1)
-            .is_some_and(|before| !can_precede_cast(&pieces[before].1));
+        // The verdict itself is [`cast_tightens`], shared with the collapse's pad mirror — #64 was
+        // the two drifting apart, and without the `return` carve-out a cast is spaced only once the
+        // layout's own bounding parenthesis has replaced `return` as the token before it — a verdict
+        // that changes between runs. The follower's line stays this pass's own term.
+        let prev = open.checked_sub(1).map(|before| &pieces[before].1);
+        let after = pieces.get(close + 1).map(|a| &a.1);
         let followed_by_operand = pieces
             .get(close + 1)
-            .is_some_and(|after| same_line(&after.0) && is_value_start(&after.1));
-        if is_type_group(&inner) && !prev_is_value && followed_by_operand {
+            .is_some_and(|after| same_line(&after.0));
+        if cast_tightens(&inner, prev, after) && followed_by_operand {
             // Tighten the `(`: strip a same-line gap after `(` so `( int)` -> `(int)`. No-op on
             // canonical `(int)`. (Stripping the gap before `)` was tried but broke idempotency on
             // barely-cast proptest input — the cast detector's verdict shifts across passes once

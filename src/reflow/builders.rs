@@ -13,9 +13,10 @@ use super::tokens::{
     closes_literal_type, has_middle_newline, has_non_trivia, has_top_level, has_top_level_question,
     holds_directive, holds_head_split, is_balanced, is_bit_field_colon, is_call_head_pair,
     is_comparison, is_subscript, is_ternary_chain, is_trivia, match_brace, match_bracket,
-    next_nontrivia, opens_with_separator, operand_span, prev_nontrivia, respaced_when_joined,
-    respaced_when_joined_top, segments_at, spans_lines, split_chain, split_designators,
-    split_on_commas, split_top_level, split_top_level_with_cuts, star_gap_respaced,
+    next_nontrivia, opens_with_separator, operand_span, padded_after_paren_open, prev_nontrivia,
+    respaced_when_joined, respaced_when_joined_top, segments_at, spans_lines, split_chain,
+    split_designators, split_on_commas, split_top_level, split_top_level_with_cuts,
+    star_gap_respaced,
 };
 use crate::doc::Doc;
 use crate::lexer::{Token, TokenKind};
@@ -189,11 +190,11 @@ fn build_element_doc(toks: &[Token], headless: Bound) -> Doc {
         );
     }
     if is_balanced(toks)
-        && let Some(bounded) = build_chain_doc(toks, headless)
+        && let Some(bounded) = build_chain_doc(toks, headless, None)
     {
         return bounded;
     }
-    build_expr_doc(toks)
+    build_expr_doc(toks, None)
 }
 
 /// The bracketing a `(` or `[` opens when it is a *group* this pass lays out. A call's `(` is matched
@@ -236,11 +237,29 @@ fn tight_against_previous(toks: &[Token], open: usize) -> bool {
     match toks.get(open).map(|t| t.text) {
         Some("[") => is_subscript(toks, open),
         Some("{") => previous.is_some_and(|k| toks[k].text == ")" && closes_literal_type(toks, k)),
+        // The `(`-against-`(` join is the same rule [`tight_after_paren_open`] spells — one
+        // predicate, one guard set. The bracket token itself is never a `*` or an `=`, so the
+        // pad veto reads the prev `(`'s own after-paren — the bracket — and stays inert.
+        Some("(") => tight_after_paren_open(toks, open, None),
         _ => false,
     }
 }
 
-pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
+/// A token directly after a `(` joins tight when the collapse dropped a break — the paren group's
+/// own canonical pad — except an `=` edge, and except where the spacing passes pad it (the
+/// [`padded_after_paren_open`] verdict). An authored space gap keeps the author's spacing.
+/// `prev` is the token before the slice `toks` was cut from, for the slice that begins at the
+/// `(` itself.
+fn tight_after_paren_open(toks: &[Token], j: usize, prev: Option<&Token>) -> bool {
+    toks[j].text != "="
+        && prev_nontrivia(toks, j).is_some_and(|k| {
+            toks[k].text == "("
+                && toks[k + 1..j].iter().any(|t| t.kind == TokenKind::Newline)
+                && !padded_after_paren_open(toks, k, prev)
+        })
+}
+
+pub(super) fn build_expr_doc(toks: &[Token], prev: Option<&Token>) -> Doc {
     if is_balanced(toks)
         && let Some((segments, ops)) = split_chain(toks)
     {
@@ -263,7 +282,7 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
         }
         return build_container(
             Bracketing::Hanging,
-            segment_docs(&segments),
+            segment_docs(&segments, prev),
             chain_seps(&ops),
             None,
             Fit::Measured,
@@ -332,7 +351,10 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
                 // collapse it, as before. A same-line `=` against a bracket needs no pad of its own:
                 // `space_equals` runs first and pre-spaces every same-line `=`, and the collapse
                 // preserves that trivia, so this pass cannot write the tight form (#121's search).
-                if pending_space && !tight_against_previous(toks, j) {
+                if pending_space
+                    && !tight_against_previous(toks, j)
+                    && !tight_after_paren_open(toks, j, prev)
+                {
                     text.push(' ');
                 }
                 pending_space = false;
@@ -344,7 +366,10 @@ pub(super) fn build_expr_doc(toks: &[Token]) -> Doc {
         } else {
             // A bracket the author left a gap before is still tight (§2.5), even when it has nothing to
             // lay out and falls through to here: a space would be tightened on the next pass.
-            if pending_space && !tight_against_previous(toks, j) {
+            if pending_space
+                && !tight_against_previous(toks, j)
+                && !tight_after_paren_open(toks, j, prev)
+            {
                 text.push(' ');
             }
             pending_space = false;
@@ -754,7 +779,11 @@ fn build_bounded_doc(head: Doc, segments: Vec<Doc>, seps: Seps, fit: Fit, bound:
 /// one comparison whose left operand is one whole call — is the exception: it reads as a single term,
 /// so it breaks inside its call's arguments and the operator stays with its right operand on the
 /// call's close line, the single element of a one-element [`build_bounded_doc`].
-pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
+pub(super) fn build_chain_doc(
+    toks: &[Token],
+    headless: Bound,
+    prev: Option<&Token>,
+) -> Option<Doc> {
     let start = operand_span(toks);
     let operands = &toks[start..];
     if !is_boundable(toks, operands) {
@@ -775,7 +804,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
     }
     // Through the same builder the operands go through, not [`render_segment`]: whatever is in the
     // head is a construct with its own width, and rendering it flat measured none of them (#108).
-    let head = build_expr_doc(&toks[..start]);
+    let head = build_expr_doc(&toks[..start], prev);
     // A head means these operands are only part of their container's span, so they are bounded
     // whatever they are; with no head it is the position that decides, and it decides the same for a
     // ternary and for a binary chain — unbounded operands read as elements of whatever list encloses
@@ -834,7 +863,7 @@ pub(super) fn build_chain_doc(toks: &[Token], headless: Bound) -> Option<Doc> {
         }
         return Some(build_bounded_doc(
             head,
-            segment_docs(&segments),
+            segment_docs(&segments, prev),
             chain_seps(&ops),
             Fit::Measured,
             bound,
@@ -856,7 +885,7 @@ fn chain_seps(ops: &[&str]) -> Seps {
 fn ternary_layout(inner: &[Token]) -> Option<(Vec<Doc>, Seps, Fit)> {
     let arms = ternary_arms(inner)?;
     Some((
-        segment_docs(&arms),
+        segment_docs(&arms, None),
         Seps::Every(" :"),
         Fit::of_ternary(inner),
     ))
@@ -910,8 +939,15 @@ fn ternary_arms<'a, 'src>(inner: &'a [Token<'src>]) -> Option<Vec<&'a [Token<'sr
 }
 
 /// Each segment as its own expression, paired with the separators that trail them.
-fn segment_docs(segments: &[&[Token]]) -> Vec<Doc> {
-    segments.iter().map(|s| build_expr_doc(s)).collect()
+/// The chain's segment docs. The first segment's real prev is the token before the whole span —
+/// a statement's `)` in the control-body position — and the later segments' prev is the chain's own
+/// operator, which reads like none. So the first segment inherits `first_prev`, the rest pass none.
+fn segment_docs(segments: &[&[Token]], first_prev: Option<&Token>) -> Vec<Doc> {
+    let mut docs: Vec<Doc> = Vec::with_capacity(segments.len());
+    for (i, s) in segments.iter().enumerate() {
+        docs.push(build_expr_doc(s, (i == 0).then_some(first_prev).flatten()));
+    }
+    docs
 }
 
 /// #52's conjunct: [`split_chain`]'s shape where the chain is one comparison and the left operand
@@ -949,9 +985,9 @@ fn comparison_conjunct(segments: &[&[Token]], ops: &[&str]) -> Option<Doc> {
         return None;
     }
     Some(Doc::concat([
-        build_expr_doc(left),
+        build_expr_doc(left, None),
         Doc::text(format!(" {op} ")),
-        build_expr_doc(right),
+        build_expr_doc(right, None),
     ]))
 }
 
@@ -1002,7 +1038,7 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
         }
         return Some(build_container(
             bracketing.clone(),
-            segment_docs(&segments),
+            segment_docs(&segments, None),
             chain_seps(&ops),
             None,
             Fit::Measured,
@@ -1195,7 +1231,7 @@ mod tests {
         // too narrow for it flat, its args explode one per line.
         use crate::lexer::tokenize;
         let toks = tokenize("bllll(aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)");
-        let doc = build_expr_doc(&toks);
+        let doc = build_expr_doc(&toks, None);
         assert_eq!(
             crate::doc::render(&doc, 10, 0, 0),
             "bllll(\n\taaaaaaaaaaaaaaaaaaaaaa,\n\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n)"
@@ -1227,7 +1263,7 @@ mod tests {
         // adding the cond-nested-call-explode fixture).
         use crate::lexer::tokenize;
         let toks = tokenize("io_detect_pin\n( )");
-        let doc = build_expr_doc(&toks);
+        let doc = build_expr_doc(&toks, None);
         assert_eq!(crate::doc::render(&doc, 80, 0, 0), "io_detect_pin()");
     }
 
@@ -1238,7 +1274,7 @@ mod tests {
         // it as one either.
         use crate::lexer::tokenize;
         let toks = tokenize("int (*cb)(void)");
-        let doc = build_expr_doc(&toks);
+        let doc = build_expr_doc(&toks, None);
         assert_eq!(crate::doc::render(&doc, 80, 0, 0), "int (*cb)(void)");
     }
 
@@ -1262,7 +1298,7 @@ mod tests {
         use crate::doc::render;
         use crate::lexer::tokenize;
         let toks = tokenize("x&return\"\"x+f;");
-        let doc = build_chain_doc(&toks, Bound::Parens);
+        let doc = build_chain_doc(&toks, Bound::Parens, None);
         eprintln!("DOC {doc:#?}");
         eprintln!("RENDER {:?}", doc.as_ref().map(|d| render(d, 1, 0, 0)));
     }
