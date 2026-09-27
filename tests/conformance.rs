@@ -1163,12 +1163,14 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
     assert_eq!(brace, "int a[] = {\n\ti = f(\n\t\ta\n\t) = (x | y),\n};\n");
     assert_eq!(format_with_width(&brace, 18), brace, "and it is a fixpoint");
     // The round-4 witness: the claim inside a statement expression inside a cond header — the cond
-    // path's own re-read guard now covers it. (The `(x | y;)` the claim writes here — its bound
-    // swallows the statement's `;` — is a pre-existing invalid-C writing, tracked separately.)
+    // path's own re-read guard now covers it. The claim also refuses a depth-zero `;` in its
+    // operand span, so the statement's terminator stays with the statement instead of inside the
+    // bound's parens (#179). (The stray `,` the fall-through chain's magic comma writes before
+    // the `;` is the follow-up tracked on #179.)
     let cond_stmt_expr = format_with_width("while (({i = f\n(a) = x | y;})) g();", 24);
     assert_eq!(
         cond_stmt_expr,
-        "while (\n\t({\n\t\ti = f(\n\t\t\ta\n\t\t) = (x | y;),\n\t})\n) g();\n"
+        "while (\n\t({\n\t\ti = f(\n\t\t\t\ta\n\t\t\t) = x |\n\t\t\ty;,\n\t})\n) g();\n"
     );
     assert_eq!(
         format_with_width(&cond_stmt_expr, 24),

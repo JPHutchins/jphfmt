@@ -789,6 +789,13 @@ pub(super) fn build_chain_doc(
     if !is_boundable(toks, operands) {
         return None;
     }
+    // A depth-zero `;` in the operand span is a statement terminator the claim's bound would
+    // swallow — `({i = f(a) = x | y;})` came out `(x | y;)`, which does not compile (#179). The
+    // claim refuses and the element's own builder lays the statement out with its `;` outside
+    // any parens the bound would have written.
+    if has_top_level(operands, ";") {
+        return None;
+    }
     // The head renders as collapsed text. Collapsing a newline that separates an `Ident : Number` (or
     // a `;` from its predecessor) hands the spacing pass a shape it rewrites — the same refusal
     // `emit_brace` makes for a `{}` list, on the one path that lacked it (#121).
