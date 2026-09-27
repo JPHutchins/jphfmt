@@ -1150,9 +1150,7 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
         stmt_expr,
         "and it is a fixpoint"
     );
-    // The cond-header sibling of the same class needs no guard: its element docs carry no claim
-    // whose bound the next pass re-reads, so the shape is a fixpoint as-is — the review's probes
-    // and this pin both say so.
+    // The plain cond-header sibling of the same class is a fixpoint, guarded or not.
     let cond = format_with_width("if (i = f\n(a) = x | y) {\n\tg();\n}\n", 16);
     assert_eq!(
         cond,
@@ -1164,6 +1162,19 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
     let brace = format_with_width("int a[] = {i = f\n(a) = x | y};\n", 18);
     assert_eq!(brace, "int a[] = {\n\ti = f(\n\t\ta\n\t) = (x | y),\n};\n");
     assert_eq!(format_with_width(&brace, 18), brace, "and it is a fixpoint");
+    // The round-4 witness: the claim inside a statement expression inside a cond header — the cond
+    // path's own re-read guard now covers it. (The `(x | y;)` the claim writes here — its bound
+    // swallows the statement's `;` — is a pre-existing invalid-C writing, tracked separately.)
+    let cond_stmt_expr = format_with_width("while (({i = f\n(a) = x | y;})) g();", 24);
+    assert_eq!(
+        cond_stmt_expr,
+        "while (\n\t({\n\t\ti = f(\n\t\t\ta\n\t\t) = (x | y;),\n\t})\n) g();\n"
+    );
+    assert_eq!(
+        format_with_width(&cond_stmt_expr, 24),
+        cond_stmt_expr,
+        "and it is a fixpoint"
+    );
 }
 
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause

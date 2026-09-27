@@ -104,35 +104,32 @@ fn emit_tokens(
             emit_str(out, col, " ");
             let inner = &toks[open + 1..close];
             let reserved = trailing_reserved(toks, close + 1, in_define_body);
-            let doc = if t.text == "for" {
-                // The claim's operand bound, once written, is the next pass's authored group: a
-                // clause's nested constructs then measure against the group's own reserve, not
-                // the header's, and the passes lay the clause out differently (#174, the #154
-                // class on the element path). The next pass's re-read either reproduces the
-                // header or it does not — emit the re-read when it does not, so the passes agree.
-                let base_level = current_line_indent_cols(out) / TAB_WIDTH;
-                let budget = width.saturating_sub(reserved);
-                let header = render(&build_for_doc(inner), budget, *col, base_level);
-                let header_with_keyword = format!("for {header}");
-                let post_processed = super::post_process(&header_with_keyword);
-                let re_toks = tokenize(&post_processed);
-                if let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) {
-                    let re_read = render(
-                        &build_for_doc(&re_toks[open + 1..close]),
-                        budget,
-                        *col,
-                        base_level,
-                    );
-                    if header == re_read {
-                        build_for_doc(inner)
-                    } else {
-                        build_for_doc(&re_toks[open + 1..close])
-                    }
+            let build: fn(&[Token]) -> Doc = if t.text == "for" {
+                build_for_doc
+            } else {
+                build_cond_doc
+            };
+            // The claim's operand bound, once written, is the next pass's authored group: a
+            // clause's or condition's nested constructs then measure against the group's own
+            // reserve, not the header's, and the passes lay the construct out differently (#174,
+            // the #154 class on the element path — the condition path reaches it through a
+            // statement expression). The next pass's re-read either reproduces the header or it
+            // does not — emit the re-read when it does not, so the passes agree.
+            let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+            let budget = width.saturating_sub(reserved);
+            let header = render(&build(inner), budget, *col, base_level);
+            let header_with_keyword = format!("{} {header}", t.text);
+            let post_processed = super::post_process(&header_with_keyword);
+            let re_toks = tokenize(&post_processed);
+            let doc = if let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) {
+                let re_read = render(&build(&re_toks[open + 1..close]), budget, *col, base_level);
+                if header == re_read {
+                    build(inner)
                 } else {
-                    build_for_doc(inner)
+                    build(&re_toks[open + 1..close])
                 }
             } else {
-                build_cond_doc(inner)
+                build(inner)
             };
             emit_doc(&doc, reserved, out, col, width);
             i = advance(i, close.saturating_add(1));
