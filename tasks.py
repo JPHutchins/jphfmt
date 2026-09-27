@@ -46,7 +46,10 @@ github = Project(".github")
 MUTANTS_SCRIPT = ".github/workflows/mutants_report.py"
 mutants_gate = Task(
 	f"uv run --python 3.14 --script {MUTANTS_SCRIPT} exclude-check",
-	when=RUST + (MUTANTS_SCRIPT,),
+	# The anchors live in src and the registries in .cargo and the script — only those edits can
+	# drift them. A src edit that shifts the anchors reds the gate by design: the re-record is the
+	# change's own lockstep update (the #175/#177 re-records), not a separate remedy.
+	when=("src", ".cargo") + (MUTANTS_SCRIPT,),
 )
 
 # The crane apps pin the toolchain and the +stable/+MSRV matrix in the flake, so there is no rustup.
