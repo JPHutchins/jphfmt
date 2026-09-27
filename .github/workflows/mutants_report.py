@@ -26,12 +26,21 @@ BODY_LIMIT = 60000
 PINNED_TOOL = "cargo-mutants 27.1.0"
 PINNED_TEST_ARGS = ["--lib", "--test", "conformance"]
 
-EXCLUDED: dict[str, tuple[str, ...]] = {
-    r"structure\.rs:291:42: replace \+ with \* in emit_tokens": (
-        "src/reflow/structure.rs:291:42: replace + with * in emit_tokens",
+EXCLUDED: dict[str, tuple[int, str, tuple[str, ...]]] = {
+    # The position is a \d+ placeholder, not a recorded number: the gate resolves each anchor
+    # from the live --list at check time — the Nth occurrence of the mutation in the function,
+    # whose source line must still hold the recorded fragment — so a line shift is a derived
+    # value, and an insertion before the anchor fails loudly instead of re-anchoring silently
+    # (#183).
+    r"structure\.rs:\d+:\d+: replace \+ with \* in emit_tokens": (
+        15,
+        "contains_comment(&toks[i + 1..close])",
+        ("replace + with * in emit_tokens",),
     ),
-    r"tokens\.rs:677:37: replace == with != in joined_pair_respaced": (
-        "src/reflow/tokens.rs:677:37: replace == with != in joined_pair_respaced",
+    r"tokens\.rs:\d+:\d+: replace == with != in joined_pair_respaced": (
+        0,
+        "if !inner.iter().any(|t| t.kind == TokenKind::Newline)",
+        ("replace == with != in joined_pair_respaced",),
     ),
 }
 
@@ -727,14 +736,10 @@ def exclude_check() -> int:
             return 1, []
         return 0, [m["name"] for m in msgspec.json.decode(listed.stdout)]
 
-    # The registry comparisons need no tool at all — they run before the version probe, so a
+    # The test-arg comparison needs no tool at all — it runs before the version probe, so a
     # .cargo drift reds the gate even where cargo-mutants is absent (the raw-cargo fast loop).
-    toml_patterns = config.get("exclude_re", [])
-    if toml_patterns != list(EXCLUDED):
-        print("::error::.cargo/mutants.toml exclude_re drifted from the registry:")
-        print(f"  toml: {toml_patterns}")
-        print(f"  registry: {list(EXCLUDED)}")
-        return 1
+    # The exclude_re check is tool-dependent by design now: the anchors resolve from the live
+    # --list (#183), and the gate prints the exact patterns the toml must hold.
     pinned_args = config.get("additional_cargo_test_args")
     if pinned_args != PINNED_TEST_ARGS:
         print("::error::.cargo/mutants.toml additional_cargo_test_args drifted:")
@@ -774,21 +779,42 @@ def exclude_check() -> int:
     code, names = list_mutants("--no-config")
     if code:
         return code
-    for pattern, expected in EXCLUDED.items():
-        matched = [name for name in names if re.search(pattern, name)]
-        if set(matched) != set(expected):
-            print(f"::error::the pattern {pattern!r} matches {matched}, expected {list(expected)}")
-            file_prefix = expected[0].split(":", 1)[0] + ":"
-            nearby = [name for name in names if name.startswith(file_prefix)]
-            print("::notice::nearby mutants at that file:")
-            for name in nearby[:8]:
-                print(f"  {name}")
+    expected_toml: list[str] = []
+    expected_all: set[str] = set()
+    for pattern, (occurrence, fragment, expected) in EXCLUDED.items():
+        matched = sorted(
+            (name for name in names if re.search(pattern, name)),
+            key=lambda name: tuple(map(int, re.findall(r":(\d+):(\d+): ", name)[0])),
+        )
+        if occurrence >= len(matched):
+            print(f"::error::the exclusion {pattern!r} has no {occurrence}-th match")
             return 1
+        position = re.findall(r":(\d+:\d+): ", matched[occurrence])[0]
+        line = int(position.split(":")[0])
+        source_file = root / "src/reflow" / f"{pattern.split(chr(92))[0]}.rs"
+        source_line = source_file.read_text(encoding="utf-8").splitlines()[line - 1]
+        if fragment not in source_line:
+            print(f"::error::the exclusion {pattern!r} anchored at {position}, whose source line "
+                  f"no longer holds {fragment!r} — an insertion shifted the occurrence; re-derive "
+                  f"the exclusion instead of re-anchoring it")
+            return 1
+        anchored = [name for name in matched if f":{position}: " in name]
+        suffixes = [re.sub(r"^.*?:\d+:\d+: ", "", name) for name in anchored]
+        if set(suffixes) != set(expected):
+            print(f"::error::the exclusion {pattern!r} at {position} matches {suffixes}, "
+                  f"expected {list(expected)}")
+            return 1
+        expected_toml.append(pattern.replace(r"\d+:\d+", position))
+        expected_all.update(anchored)
+    if config.get("exclude_re", []) != expected_toml:
+        print("::error::.cargo/mutants.toml exclude_re drifted — the anchors resolve to:")
+        for pattern in expected_toml:
+            print(f"  '{pattern}',")
+        return 1
     code, configured = list_mutants()
     if code:
         return code
     removed = set(names) - set(configured)
-    expected_all = {name for expected in EXCLUDED.values() for name in expected}
     if removed != expected_all or set(configured) | removed != set(names):
         print(f"::error::the sweep's config excludes {sorted(removed)}, expected {sorted(expected_all)}")
         return 1
