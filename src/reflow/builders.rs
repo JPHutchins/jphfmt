@@ -266,7 +266,9 @@ pub(super) fn build_expr_doc(toks: &[Token], prev: Option<&Token>) -> Doc {
         // The same refusals the chain path makes in `is_boundable`: a span whose width the model
         // cannot describe (an unterminated literal spanning lines) or whose `#` a later pass
         // rewrites gets no conjunct parens either (#134's review).
-        let unboundable = span_unmeasurable(toks);
+        // The chain path's own boundability gate — the one spelling every bound-writer shares,
+        // the `;` refusal included (#179's review).
+        let unboundable = !is_boundable(toks, &toks[operand_span(toks)..]);
         // #52's conjunct: a single comparison whose left operand is one whole call reads as one
         // term — its flat form is the call's, and its break belongs inside the call's arguments,
         // not at the operator, which stays with its right operand on the call's close line. The
@@ -712,8 +714,10 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
     // `d` where `x = a ? b : c, d` assigns the ternary. `split_chain` refuses one too, but the
-    // ternary arm below it does not, and this is the gate both pass through.
-    !has_top_level(operands, ",")
+    // ternary arm below it does not, and this is the gate both pass through. A depth-zero `;` is a
+    // statement terminator the bound would swallow — `(x | y;)` does not compile (#179) — and the
+    // same gate closes it for every bound-writer, the #52 conjunct arm included.
+    !has_top_level(operands, ",") && !has_top_level(operands, ";")
 }
 
 /// Whether a construct's layout is still the width's to decide.
@@ -789,13 +793,7 @@ pub(super) fn build_chain_doc(
     if !is_boundable(toks, operands) {
         return None;
     }
-    // A depth-zero `;` in the operand span is a statement terminator the claim's bound would
-    // swallow — `({i = f(a) = x | y;})` came out `(x | y;)`, which does not compile (#179). The
-    // claim refuses and the element's own builder lays the statement out with its `;` outside
-    // any parens the bound would have written.
-    if has_top_level(operands, ";") {
-        return None;
-    }
+
     // The head renders as collapsed text. Collapsing a newline that separates an `Ident : Number` (or
     // a `;` from its predecessor) hands the spacing pass a shape it rewrites — the same refusal
     // `emit_brace` makes for a `{}` list, on the one path that lacked it (#121).

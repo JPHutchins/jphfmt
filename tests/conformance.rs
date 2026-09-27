@@ -1177,6 +1177,21 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
         cond_stmt_expr,
         "and it is a fixpoint"
     );
+    // The conjunct arm is the second bound-writer; the `;` refusal lives in is_boundable, the one
+    // gate every bound-writer shares, so the #52 route keeps the terminator outside the parens too.
+    let conjunct = format_with_width(
+        "while (({f(aaaaaaaaaaaaaaaaaaaaaaaaaa) < bbbbbbbbbbbbbbbbbbbbbbbbbbbb;})) g();",
+        24,
+    );
+    assert_eq!(
+        conjunct,
+        "while (\n\t({\n\t\tf(\n\t\t\t\taaaaaaaaaaaaaaaaaaaaaaaaaa\n\t\t\t) <\n\t\t\tbbbbbbbbbbbbbbbbbbbbbbbbbbbb;,\n\t})\n) g();\n"
+    );
+    assert_eq!(
+        format_with_width(&conjunct, 24),
+        conjunct,
+        "and it is a fixpoint"
+    );
 }
 
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause
