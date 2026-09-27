@@ -9,4 +9,4 @@ pub mod doc;
 pub mod lexer;
 mod reflow;
 
-pub use reflow::{DEFAULT_WIDTH, PROPTEST_C_ISH, format, format_with_width};
+pub use reflow::{DEFAULT_WIDTH, PROPTEST_C_ISH, first_respacing_pass, format, format_with_width};

@@ -24,6 +24,8 @@ use self::tokens::is_comment;
 use crate::doc::{TAB_WIDTH, display_width};
 use crate::lexer::{TokenKind, tokenize};
 
+pub use self::spacing::first_respacing_pass;
+
 /// Default column limit (§8.5).
 pub const DEFAULT_WIDTH: usize = 100;
 
@@ -167,7 +169,7 @@ fn retab(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_WIDTH, PROPTEST_C_ISH, format_with_width, spacing::space_tokens};
+    use super::{DEFAULT_WIDTH, PROPTEST_C_ISH, first_respacing_pass, format_with_width};
     use proptest::prelude::*;
 
     /// The formatter's output must be a fixpoint of the spacing pass *alone*.
@@ -188,17 +190,16 @@ mod tests {
     /// input, which is what stood between this class and a standing search before #43 was fixed.
     fn is_a_spacing_fixpoint(src: &str, width: usize) -> Result<(), String> {
         let out = format_with_width(src, width);
-        let respaced = space_tokens(&out);
-        if respaced == out {
+        let Some((name, after)) = first_respacing_pass(&out) else {
             return Ok(());
-        }
+        };
         // Whole strings when no line disagrees: `str::lines` drops a trailing newline and stops at the
         // shorter side, so a difference in either is a difference this zip cannot show.
-        match out.lines().zip(respaced.lines()).find(|(a, b)| a != b) {
-            Some((a, b)) => Err(format!("layout wrote {a:?}, the spacing pass writes {b:?}")),
-            None => Err(format!(
-                "layout wrote {out:?}, the spacing pass writes {respaced:?}"
+        match out.lines().zip(after.lines()).find(|(a, b)| a != b) {
+            Some((a, b)) => Err(format!(
+                "{name} would rewrite the output: layout wrote {a:?}, the pass writes {b:?}"
             )),
+            None => Err(format!("{name} would rewrite {out:?} to {after:?}")),
         }
     }
 

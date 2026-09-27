@@ -13,7 +13,7 @@
 use super::tokens::{
     cast_tightens, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
     is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
-    is_subscript, is_tag_keyword, is_trivia, is_type_context,
+    is_subscript, is_tag_keyword, is_trivia, is_type_context, padded_after_paren_open,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -42,9 +42,9 @@ fn piece_close_paren(pieces: &[Piece], open: usize) -> Option<usize> {
     None
 }
 
-/// Apply the §2.5 token-spacing rules. Whitespace is semantically inert, so this never changes
-/// meaning. [`collapse_runs`] goes first so every later rule sees a canonical one-space gap.
-pub(super) fn space_tokens(s: &str) -> String {
+/// The significant tokens of `s`, each paired with the trivia run that preceded it, and the trivia
+/// run after the last one (the `trailing` half — line-ending whitespace, which no rule owns).
+fn pieces_of(s: &str) -> (Vec<Piece<'_>>, String) {
     let mut pieces: Vec<Piece> = Vec::new();
     let mut gap = String::new();
     for t in tokenize(s) {
@@ -54,25 +54,75 @@ pub(super) fn space_tokens(s: &str) -> String {
             pieces.push((std::mem::take(&mut gap), t));
         }
     }
-    let trailing = gap;
+    (pieces, gap)
+}
 
-    collapse_runs(&mut pieces);
-    space_pointers(&mut pieces);
-    space_casts(&mut pieces);
-    space_braces(&mut pieces);
-    space_bit_fields(&mut pieces);
-    space_equals(&mut pieces);
-    space_semicolons(&mut pieces);
-    space_call_heads(&mut pieces);
-    space_subscripts(&mut pieces);
-
-    let mut out = String::with_capacity(s.len());
-    for (g, t) in &pieces {
+fn reassemble(pieces: &[Piece], trailing: &str) -> String {
+    let mut out = String::with_capacity(
+        pieces
+            .iter()
+            .map(|(g, t)| g.len() + t.text.len())
+            .sum::<usize>()
+            + trailing.len(),
+    );
+    for (g, t) in pieces {
         out.push_str(g);
         out.push_str(t.text);
     }
-    out.push_str(&trailing);
+    out.push_str(trailing);
     out
+}
+
+/// A §2.5 pass, rewriting the gaps of a piece list in place.
+type Pass = for<'src> fn(&mut [Piece<'src>]);
+
+/// The §2.5 passes, in the order [`space_tokens`] runs them. The verify helper runs each one alone
+/// over the layout's output, so the order matters only to [`space_tokens`] itself.
+const PASSES: [(&str, Pass); 9] = [
+    ("collapse_runs", collapse_runs),
+    ("space_pointers", space_pointers),
+    ("space_casts", space_casts),
+    ("space_braces", space_braces),
+    ("space_bit_fields", space_bit_fields),
+    ("space_equals", space_equals),
+    ("space_semicolons", space_semicolons),
+    ("space_call_heads", space_call_heads),
+    ("space_subscripts", space_subscripts),
+];
+
+/// Apply the §2.5 token-spacing rules. Whitespace is semantically inert, so this never changes
+/// meaning. [`collapse_runs`] goes first so every later rule sees a canonical one-space gap.
+pub(super) fn space_tokens(s: &str) -> String {
+    let (mut pieces, trailing) = pieces_of(s);
+    for (_, pass) in PASSES {
+        pass(&mut pieces);
+    }
+    reassemble(&pieces, &trailing)
+}
+
+/// Which §2.5 pass would rewrite `s`'s gaps, if any, as `(name, its rewrite)`. The combined
+/// [`space_tokens`] is checked first — the property the layout's output must hold, that the spacing
+/// passes stop rewriting what it wrote — then each pass alone, since two passes canceling hides a
+/// drift the combined form cannot see. `None` when `s` is a fixpoint of every pass.
+///
+/// Test support: the reflow module's fixture sweep, the property suites, and the emit-side guards'
+/// spacing round all read the same spelling of the contract.
+#[doc(hidden)]
+pub fn first_respacing_pass(s: &str) -> Option<(&'static str, String)> {
+    let combined = space_tokens(s);
+    if combined != s {
+        return Some(("space_tokens", combined));
+    }
+    let (pieces, trailing) = pieces_of(s);
+    for (name, pass) in PASSES {
+        let mut run = pieces.clone();
+        pass(&mut run);
+        let after = reassemble(&run, &trailing);
+        if after != s {
+            return Some((name, after));
+        }
+    }
+    None
 }
 
 fn is_comment(t: &Token) -> bool {
@@ -313,7 +363,16 @@ fn space_pointers(pieces: &mut [Piece]) {
             && !is_excluded_callee(pieces[j - 1].1.text)
             && next_names_declarator
             && declares_pointer(pieces, &toks, j - 1);
-        if prev_is_type || next_is_qualifier || typedef_declarator || continues_declarator {
+        // A run right after a `(` consults the shared after-paren pad verdict — the qualifier-run
+        // pad with the cast override — instead of the bare qualifier term. The two must be one
+        // spelling: [`space_casts`] tightens what a bare pad writes, and a lone pass that pads a
+        // cast is the disagreement the layout's output must not hold (#178).
+        let qualifier_pad = if j >= 1 && pieces[j - 1].1.text == "(" {
+            padded_after_paren_open(&toks, j - 1, None)
+        } else {
+            next_is_qualifier
+        };
+        if prev_is_type || qualifier_pad || typedef_declarator || continues_declarator {
             for piece in pieces[j..=k].iter_mut().filter(|p| same_line(&p.0)) {
                 piece.0 = " ".to_owned();
             }

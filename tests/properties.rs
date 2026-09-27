@@ -113,6 +113,26 @@ proptest! {
         prop_assert_eq!(format(&once), once);
     }
 
+    /// The layout's output must be a fixpoint of every §2.5 spacing pass — each pass alone, not
+    /// only the combined form, so a pair of passes canceling each other's rewrite still fails. The
+    /// #178 class: the claim's bound flips the cast verdicts the slice-local threading cannot see,
+    /// and the feed respaces what the layout wrote. The pieced generator spells the cast-deref
+    /// witness (`if (c) (int)*a | b`), which the character-level charset almost never assembles.
+    #[test]
+    fn formatted_output_is_a_spacing_fixpoint(
+        s in prop_oneof![c_ish(), pieced()],
+        width in 1usize..=120,
+    ) {
+        let out = format_with_width(&s, width);
+        match jphfmt::first_respacing_pass(&out) {
+            None => {}
+            Some((name, after)) => prop_assert!(
+                false,
+                "{name} respaces the output at width {width}: {s:?} -> {out:?} -> {after:?}"
+            ),
+        }
+    }
+
     /// The pieced generator can spell `#define`, which the width-sweeping test's generator cannot —
     /// so a width-specific two-cycle in a claimed shape (the define-body group's at width 40) fails
     /// here rather than depending on one conformance pin.
