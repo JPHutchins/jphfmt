@@ -6,7 +6,7 @@
 //! reservation live alongside.
 
 use super::builders::{
-    Bound, Fit, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
+    Bound, Fit, PARENS, build_brace_doc, build_bracketed_group, build_call_body, build_chain_doc,
     build_cond_doc, build_expr_doc, build_for_doc, build_statement_element, group_bracketing,
     holds_forced_break, statement_segments,
 };
@@ -369,23 +369,59 @@ fn emit_tokens(
                 // element paths' guard reads the same class, #174). The re-read iterates to a
                 // fixpoint: one level misses the claim a nested construct's own element path
                 // writes, whose form surfaces at a different walk level on the next pass (#180).
-                // The known class settles on the second pass, so three rounds bound it.
+                // The known class settles on the second pass, and the spacing round below costs
+                // one more, so four rounds bound the whole.
+                //
+                // The spacing round runs the whole-file feed over the settled form, prefixed with
+                // what the next pass reads before the span — the prev token and the gap the walk
+                // already emitted (its same-line-ness is all a verdict reads of a gap). The bound
+                // `(` the render wrote flips the cast verdicts of the groups inside it: the feed
+                // reads a cast where the slice-local threading read the header's `)`, and respaces
+                // what this pass wrote (#178). Adopting the respaced form is the layout writing
+                // what the feed would write, and the round that follows re-reads it the way every
+                // other settle round does.
                 let mut current = render(&doc, budget, *col, base_level);
-                for _ in 0..3 {
+                let prefix = prev_nontrivia(toks, i).map_or(String::new(), |k| {
+                    format!(
+                        "{}{}",
+                        toks[k].text,
+                        toks[k + 1..i].iter().map(|t| t.text).collect::<String>()
+                    )
+                });
+                for _ in 0..4 {
                     let post_processed = super::post_process(&current);
                     let re_toks = tokenize(&post_processed);
-                    // The re-read's tokens are complete — its own bound parens, when the render
-                    // wrote them, are the prev its groups read on the next pass. No threaded prev:
-                    // that is for the original claim's slices, which the bound does not exist in
-                    // yet.
-                    let Some(re_doc) = build_chain_doc(&re_toks, Bound::Parens, None) else {
+                    // The re-read simulates the next pass's walk in its own arm order: a `(` that
+                    // closes the span is the bound the render wrote and the group arm's claim, a
+                    // bare span is the chain claim's, and neither passes the span through verbatim
+                    // — the settled form. No threaded prev: the re-read's tokens are complete, and
+                    // its own bound parens are the prev its groups read on the next pass.
+                    let re_read = match re_toks
+                        .iter()
+                        .rposition(|t| !is_trivia(t))
+                        .filter(|_| re_toks.first().is_some_and(|t| t.text == "("))
+                        .and_then(|last| match_bracket(&re_toks, 0).filter(|&close| close == last))
+                    {
+                        Some(close) => build_bracketed_group(&re_toks[1..close], &PARENS)
+                            .map(|doc| render(&doc, budget, *col, base_level)),
+                        None => build_chain_doc(&re_toks, Bound::Parens, None)
+                            .map(|doc| render(&doc, budget, *col, base_level)),
+                    };
+                    let Some(next) = re_read else {
                         break;
                     };
-                    let next = render(&re_doc, budget, *col, base_level);
-                    if next == current {
-                        break;
+                    if next != current {
+                        current = next;
+                        continue;
                     }
-                    current = next;
+                    let respaced =
+                        super::spacing::space_tokens(&format!("{prefix}{post_processed}"));
+                    let respaced = respaced.strip_prefix(prefix.as_str()).unwrap_or(&respaced);
+                    if respaced != post_processed {
+                        current = respaced.strip_suffix('\n').unwrap_or(respaced).to_owned();
+                        continue;
+                    }
+                    break;
                 }
                 emit_str(out, col, &current);
                 i = semi;

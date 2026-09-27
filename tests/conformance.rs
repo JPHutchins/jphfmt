@@ -3547,4 +3547,24 @@ fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
     let once = format("if (x) (\n* const p) y + 1;\n");
     assert_eq!(once, "if (x) ( * const p) y + 1;\n");
     assert_eq!(format(&once), once, "and it is a fixpoint");
+    // The broken window, the #178 half of the same witness: the claim's bound `(` becomes the next
+    // pass's prev, the feed reads a cast where the flat case reads a value, and the layout must
+    // write the cast's tight form itself on the pass that wrote the bound.
+    let broken = format_with_width("if (x) (\n* const p) y + 1;\n", 10);
+    assert_eq!(broken, "if (x) (\n\t(* const p) y +\n\t1\n);\n");
+    assert_eq!(
+        format_with_width(&broken, 10),
+        broken,
+        "and it is a fixpoint"
+    );
+    // The cast-deref sibling: the same bound flips `(int)*a` into a cast whose follower the feed
+    // spaces, so the layout writes `(int) *a` itself instead of letting the feed rewrite the
+    // author's tight gap.
+    let cast_deref = format_with_width("if (c) (int)*a | b;\n", 10);
+    assert_eq!(cast_deref, "if (c) (\n\t(int) *a |\n\tb\n);\n");
+    assert_eq!(
+        format_with_width(&cast_deref, 10),
+        cast_deref,
+        "and it is a fixpoint"
+    );
 }
