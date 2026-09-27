@@ -1104,6 +1104,15 @@ fn build_stmt_expr_body(inner: &[Token]) -> Doc {
         return render_passthrough("{", inner, "}");
     };
     let body = &inner[open + 1..close];
+    if statement_segments(body)
+        .iter()
+        .any(|s| s.iter().any(|t| t.text == "{"))
+    {
+        // A nested block inside the body is not `;`-terminated — the comma-list brace builder
+        // would write its magic comma after the block's last statement (`a;,`). The emit-side
+        // format_stmt_expr refuses the same bodies outright; pass the tokens through.
+        return render_passthrough("({", body, "})");
+    }
     let statements: Vec<Doc> = statement_segments(body)
         .iter()
         .filter(|s| has_non_trivia(s))

@@ -1191,6 +1191,16 @@ fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
         conjunct,
         "and it is a fixpoint"
     );
+    // A nested block inside the body is not `;`-terminated — the comma-list builder's magic comma
+    // would trail its last statement. The body passes through, the same refusal the emit-side
+    // statement-expression makes.
+    let nested_block = format_with_width("while (({ {a;} b; })) g();", 24);
+    assert_eq!(nested_block, "while (({{a;} b;})) g();\n");
+    assert_eq!(
+        format_with_width(&nested_block, 24),
+        nested_block,
+        "and it is a fixpoint"
+    );
 }
 
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause
