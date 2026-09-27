@@ -266,7 +266,9 @@ pub(super) fn build_expr_doc(toks: &[Token], prev: Option<&Token>) -> Doc {
         // The same refusals the chain path makes in `is_boundable`: a span whose width the model
         // cannot describe (an unterminated literal spanning lines) or whose `#` a later pass
         // rewrites gets no conjunct parens either (#134's review).
-        let unboundable = span_unmeasurable(toks);
+        // The chain path's own boundability gate — the one spelling every bound-writer shares,
+        // the `;` refusal included (#179's review).
+        let unboundable = !is_boundable(toks, &toks[operand_span(toks)..]);
         // #52's conjunct: a single comparison whose left operand is one whole call reads as one
         // term — its flat form is the call's, and its break belongs inside the call's arguments,
         // not at the operator, which stays with its right operand on the call's close line. The
@@ -712,8 +714,10 @@ fn is_boundable(toks: &[Token], operands: &[Token]) -> bool {
     }
     // A depth-zero `,` makes the operands a list, not one expression: `x = (a ? b : c, d)` assigns
     // `d` where `x = a ? b : c, d` assigns the ternary. `split_chain` refuses one too, but the
-    // ternary arm below it does not, and this is the gate both pass through.
-    !has_top_level(operands, ",")
+    // ternary arm below it does not, and this is the gate both pass through. A depth-zero `;` is a
+    // statement terminator the bound would swallow — `(x | y;)` does not compile (#179) — and the
+    // same gate closes it for every bound-writer, the #52 conjunct arm included.
+    !has_top_level(operands, ",") && !has_top_level(operands, ";")
 }
 
 /// Whether a construct's layout is still the width's to decide.
@@ -789,6 +793,7 @@ pub(super) fn build_chain_doc(
     if !is_boundable(toks, operands) {
         return None;
     }
+
     // The head renders as collapsed text. Collapsing a newline that separates an `Ident : Number` (or
     // a `;` from its predecessor) hands the spacing pass a shape it rewrites — the same refusal
     // `emit_brace` makes for a `{}` list, on the one path that lacked it (#121).
@@ -1063,10 +1068,79 @@ fn build_clause_contents(inner: &[Token], bracketing: &Bracketing) -> Option<Doc
 /// reaches here has neither. That matters because flattening a `//` comment would put whatever
 /// followed it on the comment's line and swallow it — the layout must never see one.
 pub(super) fn build_bracketed_group(inner: &[Token], bracketing: &Bracketing) -> Option<Doc> {
+    // A `(`-group whose interior opens with `{` is the statement expression — its body is a
+    // statement list, `;`-terminated and never a comma list, so the magic comma has nothing to
+    // trail (#179's magic-comma half). The check sits above the spans_lines refusal, which an
+    // authored multi-line body would otherwise take to the comma-list brace builder.
+    if inner
+        .iter()
+        .find(|t| !is_trivia(t))
+        .is_some_and(|t| t.text == "{")
+        && inner
+            .iter()
+            .rfind(|t| !is_trivia(t))
+            .is_some_and(|t| t.text == "}")
+    {
+        return Some(build_stmt_expr_body(inner));
+    }
     if spans_lines(inner) || holds_directive(inner) {
         return None;
     }
     build_clause_contents(inner, &pad_for(inner, bracketing))
+}
+
+/// A statement-expression body's `{ ... }` — the statements it holds, each with its own `;`, and
+/// nothing between them. The flat form is the collapsed `{stmt; stmt;}`; the broken form is one
+/// statement per line, which is what the author's semicolons already say.
+fn build_stmt_expr_body(inner: &[Token]) -> Doc {
+    if !is_balanced(inner) {
+        return render_passthrough("{", inner, "}");
+    }
+    // The re-read hands the body with its container trivia attached; the braces are the core.
+    let Some(open) = inner.iter().position(|t| t.text == "{") else {
+        return render_passthrough("{", inner, "}");
+    };
+    let Some(close) = inner.iter().rposition(|t| t.text == "}") else {
+        return render_passthrough("{", inner, "}");
+    };
+    let body = &inner[open + 1..close];
+    if statement_segments(body)
+        .iter()
+        .any(|s| s.iter().any(|t| t.text == "{"))
+    {
+        // A nested block inside the body is not `;`-terminated — the comma-list brace builder
+        // would write its magic comma after the block's last statement (`a;,`). The emit-side
+        // format_stmt_expr refuses the same bodies outright; pass the tokens through.
+        return render_passthrough("({", body, "})");
+    }
+    let statements: Vec<Doc> = statement_segments(body)
+        .iter()
+        .filter(|s| has_non_trivia(s))
+        .map(|s| Doc::concat([build_statement_element(s), Doc::text(";")]))
+        .collect();
+    if statements.is_empty() {
+        return Doc::text("({})");
+    }
+    // The `({` and `})` are one construct's brackets, never split apart. Each statement carries
+    // its own `;`, so the separator between elements is empty — an `Every` for any count. The fit
+    // is forced: the emit-side statement-expression always explodes one statement per line, and a
+    // measured flat form flips against the define body's own budget boundary (the macro-stmt-expr
+    // corpus mutant).
+    build_container(
+        pad_for(
+            body,
+            &Bracketing::Written {
+                open: "({",
+                close: "})",
+                open_pad: Pad::Tight,
+                close_pad: Pad::Tight,
+            },
+        ),
+        statements,
+        Seps::Every(""),
+        None,
+        Fit::Forced,
+    )
 }
 
 /// `for (init; cond; step)` — one clause per line when broken (§2.4).
