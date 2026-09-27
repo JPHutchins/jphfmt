@@ -1131,6 +1131,27 @@ fn a_for_clause_is_an_element_of_its_header() {
     );
 }
 
+#[test]
+fn an_element_claim_whose_bound_changes_the_head_reads_back_as_the_next_pass() {
+    // #174's witness: the claim's operand bound, written once, is the next pass's authored group —
+    // the clause's nested call then measures against the group's own reserve, not the header's, and
+    // the passes flipped the clause (widths 15-20). The emit-side guard re-reads its own render and
+    // writes the form the next pass reproduces.
+    let once = format_with_width("for (i = f\n(a) = x | y; i; i--)", 15);
+    assert_eq!(
+        once,
+        "for (\n\ti = f(\n\t\ta\n\t) = (\n\t\tx |\n\t\ty\n\t);\n\ti;\n\ti--\n)\n"
+    );
+    assert_eq!(format_with_width(&once, 15), once, "and it is a fixpoint");
+    let stmt_expr = format_with_width("({i = f\n(a) = x | y;})", 16);
+    assert_eq!(stmt_expr, "({\n\ti = f(\n\t\ta\n\t) = (x | y);\n})\n");
+    assert_eq!(
+        format_with_width(&stmt_expr, 16),
+        stmt_expr,
+        "and it is a fixpoint"
+    );
+}
+
 /// The clauses that were already right stay right: a header that fits is untouched, and a clause
 /// holding a depth-zero `,` is a list rather than one expression, so nothing bounds it
 /// (`is_boundable`).

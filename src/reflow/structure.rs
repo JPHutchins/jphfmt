@@ -100,18 +100,37 @@ fn emit_tokens(
             emit_str(out, col, t.text);
             emit_str(out, col, " ");
             let inner = &toks[open + 1..close];
+            let reserved = trailing_reserved(toks, close + 1, in_define_body);
             let doc = if t.text == "for" {
-                build_for_doc(inner)
+                // The claim's operand bound, once written, is the next pass's authored group: a
+                // clause's nested constructs then measure against the group's own reserve, not
+                // the header's, and the passes lay the clause out differently (#174, the #154
+                // class on the element path). The next pass's re-read either reproduces the
+                // header or it does not — emit the re-read when it does not, so the passes agree.
+                let base_level = current_line_indent_cols(out) / TAB_WIDTH;
+                let budget = width.saturating_sub(reserved);
+                let header = render(&build_for_doc(inner), budget, *col, base_level);
+                let header_with_keyword = format!("for {header}");
+                let re_toks = tokenize(&header_with_keyword);
+                if let Some((open, close)) = control_pair(&re_toks, 0, in_define_body) {
+                    let re_read = render(
+                        &build_for_doc(&re_toks[open + 1..close]),
+                        budget,
+                        *col,
+                        base_level,
+                    );
+                    if header == re_read {
+                        build_for_doc(inner)
+                    } else {
+                        build_for_doc(&re_toks[open + 1..close])
+                    }
+                } else {
+                    build_for_doc(inner)
+                }
             } else {
                 build_cond_doc(inner)
             };
-            emit_doc(
-                &doc,
-                trailing_reserved(toks, close + 1, in_define_body),
-                out,
-                col,
-                width,
-            );
+            emit_doc(&doc, reserved, out, col, width);
             i = advance(i, close.saturating_add(1));
             continue;
         }
@@ -746,12 +765,28 @@ fn format_stmt_expr(
         .iter()
         .chain(has_non_trivia(trailing).then_some(trailing))
         .map(|s| {
-            render(
+            // The element claim's operand bound, written once, is the next pass's authored group
+            // — the same two-budget disagreement as the for header (#174). The next pass's
+            // re-read either reproduces the statement or it does not; emit the re-read when it
+            // does not, so the passes agree.
+            let budget = width.saturating_sub(1);
+            let statement = render(
                 &build_statement_element(s),
-                width.saturating_sub(1),
+                budget,
                 stmt_col,
                 base_level + 1,
-            )
+            );
+            let re_read = render(
+                &build_statement_element(&tokenize(&statement)),
+                budget,
+                stmt_col,
+                base_level + 1,
+            );
+            if statement == re_read {
+                statement
+            } else {
+                re_read
+            }
         })
         .collect();
     if statements.is_empty() {
