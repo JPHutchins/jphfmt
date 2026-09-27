@@ -413,7 +413,6 @@ fn emit_tokens(
             i = i.saturating_add(1);
             continue;
         }
-        eprintln!("FALLTHROUGH: {}", t.text);
         emit_str(out, col, t.text);
         i = i.saturating_add(1);
     }
