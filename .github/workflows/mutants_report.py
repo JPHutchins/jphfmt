@@ -27,27 +27,27 @@ PINNED_TOOL = "cargo-mutants 27.1.0"
 PINNED_TEST_ARGS = ["--lib", "--test", "conformance"]
 
 EXCLUDED: dict[str, tuple[str, ...]] = {
-    r"structure\.rs:334:60: replace / with [%*] in emit_tokens": (
-        "src/reflow/structure.rs:334:60: replace / with % in emit_tokens",
-        "src/reflow/structure.rs:334:60: replace / with * in emit_tokens",
+    r"structure\.rs:338:60: replace / with [%*] in emit_tokens": (
+        "src/reflow/structure.rs:338:60: replace / with % in emit_tokens",
+        "src/reflow/structure.rs:338:60: replace / with * in emit_tokens",
     ),
     r"structure\.rs:292:42: replace \+ with \* in emit_tokens": (
         "src/reflow/structure.rs:292:42: replace + with * in emit_tokens",
     ),
-    r"tokens\.rs:638:37: replace == with != in joined_pair_respaced": (
-        "src/reflow/tokens.rs:638:37: replace == with != in joined_pair_respaced",
+    r"tokens\.rs:677:37: replace == with != in joined_pair_respaced": (
+        "src/reflow/tokens.rs:677:37: replace == with != in joined_pair_respaced",
     ),
     r"structure\.rs:113:64: replace / with [%*] in emit_tokens": (
         "src/reflow/structure.rs:113:64: replace / with % in emit_tokens",
         "src/reflow/structure.rs:113:64: replace / with * in emit_tokens",
     ),
-    r"structure\.rs:754:28: replace \+ with [*-] in format_stmt_expr": (
-        "src/reflow/structure.rs:754:28: replace + with - in format_stmt_expr",
-        "src/reflow/structure.rs:754:28: replace + with * in format_stmt_expr",
+    r"structure\.rs:781:28: replace \+ with [*-] in format_stmt_expr": (
+        "src/reflow/structure.rs:781:28: replace + with - in format_stmt_expr",
+        "src/reflow/structure.rs:781:28: replace + with * in format_stmt_expr",
     ),
-    r"structure\.rs:760:28: replace \+ with [*-] in format_stmt_expr": (
-        "src/reflow/structure.rs:760:28: replace + with - in format_stmt_expr",
-        "src/reflow/structure.rs:760:28: replace + with * in format_stmt_expr",
+    r"structure\.rs:787:28: replace \+ with [*-] in format_stmt_expr": (
+        "src/reflow/structure.rs:787:28: replace + with - in format_stmt_expr",
+        "src/reflow/structure.rs:787:28: replace + with * in format_stmt_expr",
     ),
 }
 
