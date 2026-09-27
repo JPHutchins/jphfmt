@@ -58,6 +58,22 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustStable;
         craneLibMSRV = (crane.mkLib pkgs).overrideToolchain rustMSRV;
 
+        # Pinned to the sweep shards' cargo-mutants@27.1.0 (mutants.yaml): the sweep-config gate's
+        # version assertion runs against this shell, and a floating nixpkgs build of the tool can
+        # fail CI spuriously on an unrelated nixpkgs bump (#169).
+        cargo-mutants-pinned = pkgs.rustPlatform.buildRustPackage {
+          pname = "cargo-mutants";
+          version = "27.1.0";
+          src = pkgs.fetchFromGitHub {
+            owner = "sourcefrog";
+            repo = "cargo-mutants";
+            rev = "v27.1.0";
+            hash = "sha256-XPcxKBHTwLqHG67d/JNrCBC19DCnLyvLqj26v5MjHvM=";
+          };
+          cargoHash = "sha256-zKbw73lnOhgjSiCiXezo71S/9DaNfe7HII0QwUADrFA=";
+          doCheck = false;
+        };
+
         # Keep tests/: the conformance suite reads .c fixtures (include_str! and a
         # runtime tests/cases/ walk) that cleanCargoSource would drop.
         src = lib.fileset.toSource {
@@ -193,7 +209,7 @@
             nodejs
             pkgs.uv
             pkgs.cargo-audit
-            pkgs.cargo-mutants
+            cargo-mutants-pinned
             pkgs.cargo-nextest
             pkgs.nixfmt
           ];
