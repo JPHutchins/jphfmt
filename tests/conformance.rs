@@ -1633,6 +1633,51 @@ fn a_compound_literal_brace_is_tight_across_a_newline_too() {
         once.contains("(struct s){1, 2}.a"),
         "the literal's brace is tight: {once:?}"
     );
+    // The same pair outside a group the layout owns: the spacing pass tightens it itself, so a
+    // statement's literal reads as the header's does.
+    let statement = "struct s f(void) {\n\treturn (struct s)\n\t{1, 2};\n}\n";
+    assert_eq!(
+        format(statement),
+        "struct s f(void) {\n\treturn (struct s){1, 2};\n}\n"
+    );
+}
+
+/// A directive ends at its line end, so no brace attaches onto one. Each of these joined is another
+/// program: a `{` in `#if`'s condition, a spliced one's too, an `#else` with trailing tokens, and
+/// macros whose replacement lists gained a brace.
+#[test]
+fn a_brace_never_attaches_onto_a_directive_line() {
+    for src in [
+        "int f(int y) {\n#if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        "int f(int y) {\n#if defined(A) && \\\n\tFOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        "int f(int y) {\n#if A\n\t{\n\t\ty++;\n#else\n\t{\n\t\ty--;\n#endif\n\t}\n\treturn y;\n}\n",
+        "void f(void) {\n#define LOCAL(y)\n\t{\n\t\tLOCAL(1);\n\t}\n}\n",
+        "void f(void) {\n#define LOOP do\n\t{\n\t} while (0);\n}\n",
+        "#define TAG struct s\n{\n\tint x;\n};\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
+}
+
+/// A comment between a head and its brace keeps the break: a line comment would swallow the brace,
+/// and a block comment is where the author put it (§2.1).
+#[test]
+fn a_brace_never_attaches_past_a_comment() {
+    for src in [
+        "void f(void) // c\n{\n\treturn;\n}\n",
+        "void f(void) /* c */\n{\n\treturn;\n}\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
+}
+
+/// The attach is a spacing rule, and spacing runs before the layout, so the layout measures a head
+/// with its ` {`: a parameter list that fits only without one explodes (§2.2).
+#[test]
+fn an_attached_brace_counts_toward_its_heads_width() {
+    let once = format_with_width("void f(int a, int b)\n{\n\treturn;\n}\n", 21);
+    assert_eq!(once, "void f(\n\tint a,\n\tint b\n) {\n\treturn;\n}\n");
+    assert_eq!(format_with_width(&once, 21), once);
 }
 
 /// #88: a compound literal is a value like any other, so the `}` that ends one ends a value and not a

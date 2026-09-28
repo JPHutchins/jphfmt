@@ -950,4 +950,29 @@ mod tests {
         assert_eq!(space_tokens("( int)x"), "(int) x");
         assert_eq!(space_tokens("(int) x"), "(int) x");
     }
+
+    #[test]
+    fn space_braces_attaches_a_labels_colon_only() {
+        assert_eq!(space_tokens("case 1:\n{"), "case 1: {");
+        assert_eq!(space_tokens("done:\n{"), "done: {");
+        // The layout breaks after a ternary's `:` and a list element's, so neither is closed.
+        assert_eq!(space_tokens("x = c ? a :\n{"), "x = c ? a :\n{");
+        assert_eq!(space_tokens("x = {0:\n{}}"), "x = {0:\n{}}");
+    }
+
+    #[test]
+    fn space_braces_attaches_while_to_a_do_body_only() {
+        assert_eq!(space_tokens("do {\n}\nwhile (0);"), "do {\n} while (0);");
+        assert_eq!(space_tokens("{\n}\nwhile (x) {\n}"), "{\n}\nwhile (x) {\n}");
+    }
+
+    #[test]
+    fn space_braces_reads_an_enums_underlying_type_as_its_head() {
+        assert_eq!(
+            space_tokens("enum e : unsigned long\n{"),
+            "enum e : unsigned long {"
+        );
+        assert_eq!(space_tokens("enum : int\n{"), "enum : int {");
+        assert_eq!(space_tokens("struct s x\n{"), "struct s x\n{");
+    }
 }
