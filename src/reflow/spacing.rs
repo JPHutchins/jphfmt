@@ -11,10 +11,10 @@
 //! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
-    cast_tightens, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
-    is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
-    is_subscript, is_tag_keyword, is_trivia, is_type_context, padded_after_paren_open,
-    ternary_open_before,
+    cast_tightens, closes_literal_type, heads_body, is_backslash, is_bit_field_colon,
+    is_call_head_pair, is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee,
+    is_qualifier, is_subscript, is_tag_keyword, is_trivia, is_type_context,
+    padded_after_paren_open, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -495,27 +495,23 @@ fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> 
     }
 }
 
-/// Whether the `{` at `open` opens a `struct`, `union` or `enum` body: the tag keyword, its optional
-/// name, and an `enum`'s optional fixed underlying type are all that may stand before it.
+/// Whether the `{` at `open` opens a `struct`, `union` or `enum` body: the nearest tag keyword before
+/// it is reached past names alone — and, for an `enum`, the `:` of a fixed underlying type, the run
+/// [`enum_body_brace`] reads forward from the keyword. A `struct` or `union` takes at most a name.
 fn opens_tag_body(pieces: &[Piece], open: usize) -> bool {
-    let named =
-        |k: usize| pieces[k].1.kind == TokenKind::Ident && !is_tag_keyword(pieces[k].1.text);
-    let tagged = |k: usize, is_tag: fn(&str) -> bool| {
-        is_tag(pieces[k].1.text)
-            || (named(k)
-                && k.checked_sub(1)
-                    .is_some_and(|tag| is_tag(pieces[tag].1.text)))
-    };
-    let Some(head) = open.checked_sub(1) else {
-        return false;
-    };
-    let underlying_type = (0..=head).rev().take_while(|&k| named(k)).last();
-    tagged(head, is_tag_keyword)
-        || underlying_type
-            .and_then(|first| first.checked_sub(1))
-            .filter(|&colon| pieces[colon].1.text == ":")
-            .and_then(|colon| colon.checked_sub(1))
-            .is_some_and(|k| tagged(k, |text| text == "enum"))
+    (0..open)
+        .rev()
+        .find(|&k| {
+            is_tag_keyword(pieces[k].1.text)
+                || !(pieces[k].1.kind == TokenKind::Ident || pieces[k].1.text == ":")
+        })
+        .is_some_and(|tag| match pieces[tag].1.text {
+            "enum" => true,
+            "struct" | "union" => {
+                open - tag <= 2 && pieces[tag + 1..open].iter().all(|p| p.1.text != ":")
+            }
+            _ => false,
+        })
 }
 
 /// Whether the `}` at `close` ends a `do` statement's body, which makes the `while` after it that
@@ -533,7 +529,7 @@ fn closes_do_body(pieces: &[Piece], close: usize) -> bool {
 fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
     let line_start = (0..=k)
         .rev()
-        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && pieces[m - 1].1.text != "\\"))
+        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !is_backslash(&pieces[m - 1].1)))
         .unwrap_or(0);
     pieces[line_start..=k]
         .iter()
@@ -549,8 +545,10 @@ fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
 fn space_braces(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
-        let joinable = same_line(&pieces[j].0) || !on_directive_line(pieces, j - 1);
-        match attach_verdict(pieces, &toks, j).filter(|_| joinable) {
+        if !same_line(&pieces[j].0) && on_directive_line(pieces, j - 1) {
+            continue;
+        }
+        match attach_verdict(pieces, &toks, j) {
             Some(Attach::Spaced) => pieces[j].0 = " ".to_owned(),
             Some(Attach::Tight) => pieces[j].0.clear(),
             None => {}
