@@ -1679,6 +1679,21 @@ fn a_brace_never_attaches_onto_a_directive_line() {
     }
 }
 
+/// `else` and `do` open a body wherever they stand. The statement-level arm alone misses them inside
+/// an `=`-assigned statement expression, whose brace the block scan reads as an initializer's — which
+/// is why removing their own arm, which no other test could fail, lost these two (#188's round 2).
+#[test]
+fn else_and_do_attach_inside_an_assigned_statement_expression() {
+    for (src, attached) in [
+        ("int r = ({ do\n{ g(); } while (0); });\n", "do {"),
+        ("int r = ({ if (x) { } else\n{ x = 2; } });\n", "else {"),
+    ] {
+        let once = format(src);
+        assert!(once.contains(attached), "{once:?}");
+        assert_eq!(format(&once), once, "and it is a fixpoint");
+    }
+}
+
 /// Where a statement may stand, a `{` that begins none is the body of what precedes it, whatever
 /// declarator spells the head: a macro naming the function, a function returning a function pointer,
 /// an attribute macro after the parameters, an attribute between a tag and its body.

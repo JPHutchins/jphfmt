@@ -468,16 +468,19 @@ enum Attach {
 /// other operator or statement keyword introduce a value. A `:` attaches only as a label's, which
 /// only a statement may carry: a ternary's and a list element's are breaks the layout writes.
 ///
+/// `else` and `do` open a body wherever they stand: the statement-level test below reads the brace
+/// of an `=`-assigned statement expression as an initializer's, and would miss the ones inside it.
+///
 /// Where a statement may stand, a `{` after any other `)` or a name begins no statement of its own,
-/// so it is the body of what precedes it — `else` and `do`, and a declarator the heads above cannot
-/// read, like a macro that spells a function's name or a function returning a function pointer, or
-/// an attribute before the body.
+/// so it is the body of what precedes it — a declarator the heads above cannot read, like a macro
+/// that spells a function's name or a function returning a function pointer, or an attribute before
+/// the body.
 fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> {
     let head = j - 1;
     match (pieces[head].1.text, pieces[j].1.text) {
         (")", "{") if body_after_close(pieces, head) => Some(Attach::Spaced),
         (")", "{") if closes_literal_type(toks, head) => Some(Attach::Tight),
-        ("=", "{") | ("}", "else") => Some(Attach::Spaced),
+        ("else" | "do" | "=", "{") | ("}", "else") => Some(Attach::Spaced),
         (":", "{")
             if !ternary_open_before(toks, head) && at_statement_level(pieces, toks, head) =>
         {
