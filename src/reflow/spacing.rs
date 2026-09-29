@@ -467,6 +467,11 @@ enum Attach {
 /// that `)`: a callee name or a control keyword opens a body, while `&`, `=`, `return` and every
 /// other operator or statement keyword introduce a value. A `:` attaches only as a label's, which
 /// only a statement may carry: a ternary's and a list element's are breaks the layout writes.
+///
+/// Where a statement may stand, a `{` after any other `)` or a name begins no statement of its own,
+/// so it is the body of what precedes it — a declarator the heads above cannot read, like a macro
+/// that spells a function's name or a function returning a function pointer, or an attribute before
+/// the body.
 fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> {
     let head = j - 1;
     match (pieces[head].1.text, pieces[j].1.text) {
@@ -479,6 +484,12 @@ fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> 
             Some(Attach::Spaced)
         }
         (_, "{") if opens_tag_body(pieces, j) => Some(Attach::Spaced),
+        (text, "{")
+            if (text == ")" || pieces[head].1.kind == TokenKind::Ident)
+                && at_statement_level(pieces, toks, j) =>
+        {
+            Some(Attach::Spaced)
+        }
         ("}", "else") => Some(Attach::Spaced),
         ("}", "while") if closes_do_body(pieces, head) => Some(Attach::Spaced),
         _ => None,
@@ -967,12 +978,19 @@ mod tests {
     }
 
     #[test]
-    fn space_braces_reads_an_enums_underlying_type_as_its_head() {
+    fn space_braces_reads_a_tag_head_inside_a_group() {
+        // A group holds no statement, so only the tag arm can read these heads.
         assert_eq!(
-            space_tokens("enum e : unsigned long\n{"),
-            "enum e : unsigned long {"
+            space_tokens("sizeof(enum e : unsigned long\n{A})"),
+            "sizeof(enum e : unsigned long {A})"
         );
-        assert_eq!(space_tokens("enum : int\n{"), "enum : int {");
-        assert_eq!(space_tokens("struct s x\n{"), "struct s x\n{");
+        assert_eq!(
+            space_tokens("sizeof(enum : int\n{A})"),
+            "sizeof(enum : int {A})"
+        );
+        assert_eq!(
+            space_tokens("sizeof(struct s x\n{A})"),
+            "sizeof(struct s x\n{A})"
+        );
     }
 }

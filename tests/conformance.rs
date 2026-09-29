@@ -1654,8 +1654,47 @@ fn a_brace_never_attaches_onto_a_directive_line() {
         "void f(void) {\n#define LOCAL(y)\n\t{\n\t\tLOCAL(1);\n\t}\n}\n",
         "void f(void) {\n#define LOOP do\n\t{\n\t} while (0);\n}\n",
         "#define TAG struct s\n{\n\tint x;\n};\n",
+        // A comment is whitespace by the time the preprocessor reads the line.
+        "int f(int y) {\n\t/* c */ #if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
     ] {
         assert_eq!(format(src), src);
+    }
+}
+
+/// Where a statement may stand, a `{` that begins none is the body of what precedes it, whatever
+/// declarator spells the head: a macro naming the function, a function returning a function pointer,
+/// an attribute macro after the parameters, an attribute between a tag and its body.
+#[test]
+fn a_statement_level_brace_attaches_to_any_head() {
+    for (src, expected) in [
+        (
+            "WRAPPER(int, open)(const char * p)\n{\n\treturn 0;\n}\n",
+            "WRAPPER(int, open)(const char * p) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "int (*g(void))(int)\n{\n\treturn 0;\n}\n",
+            "int (*g(void))(int) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "int (*g(void))(int){\n\treturn 0;\n}\n",
+            "int (*g(void))(int) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "void f(void) __THROW\n{\n}\n",
+            "void f(void) __THROW {\n}\n",
+        ),
+        (
+            "struct __attribute__((packed)) s\n{\n\tint x;\n};\n",
+            "struct __attribute__((packed)) s {\n\tint x;\n};\n",
+        ),
+        (
+            "typedef struct __attribute__((packed))\n{\n\tint x;\n} T;\n",
+            "typedef struct __attribute__((packed)) {\n\tint x;\n} T;\n",
+        ),
+    ] {
+        let once = format(src);
+        assert_eq!(once, expected);
+        assert_eq!(format(&once), once);
     }
 }
 
@@ -3397,12 +3436,12 @@ fn a_brace_reserve_measures_a_call_head_the_walk_will_attach() {
     assert_laid_out(
         ": ?=, ,)A{*=}?,::?:\ta\n()",
         22,
-        ": ? =, ,)A{\n\t*=,\n}?,::?: a()\n",
+        ": ? =, ,)A {\n\t*=,\n}?,::?: a()\n",
     );
     let once = jphfmt::format_with_width(": ?=, ,)A{*=}?,::?:\ta\n(aa() /)A;)}=\\\"\\\")aa", 22);
     assert_eq!(
         once,
-        ": ? =, ,)A{\n\t*=,\n}?,::?: a(aa() /)A;)} = \\\"\\\")aa\n"
+        ": ? =, ,)A {\n\t*=,\n}?,::?: a(aa() /)A;)} = \\\"\\\")aa\n"
     );
     assert_eq!(
         jphfmt::format_with_width(&once, 22),

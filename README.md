@@ -25,6 +25,10 @@ the list to explode (`{}` lists only). Binary operators and the ternary `:`
 author left them out). A ternary *chain* — more than one `?` — breaks however short
 it is, so it reads as the map of conditions it is rather than as one line. Comments are sacred — never reflowed, moved, or re-aligned.
 
+A brace goes on the line of the construct it belongs to, whichever line the author put it on:
+`void f(void) {`, `} else {`, `struct s {`, `= {`, `case 1: {`, `} while (0);`. A comment or a
+directive's line end between the two keeps the break, since neither can be joined past.
+
 ## Usage
 
 ```sh
