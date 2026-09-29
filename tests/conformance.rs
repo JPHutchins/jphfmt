@@ -3430,21 +3430,23 @@ fn a_brace_reserve_measures_a_call_head_the_walk_will_attach() {
     // attached `a(` and the next pass measured the attached form, whose extra column flipped the
     // brace's fits verdict — pass 1 inline, pass 2 exploded, pass 3 stable. The reserve now
     // measures the attached form the walk will write, so the first pass decides what every pass
-    // keeps. The issue's seed and its minimized member, each pinned at width 22. The full seed's
-    // stable last line overruns 22 — the formatter's own best-effort output — so its hand-inlined
-    // assertions below check the exact form and the fixpoint, not the width bound.
+    // keeps. The issue's seed and its minimized member, each pinned at width 23 — one past the
+    // issue's 22, since the brace attach writes `A {` a column wider than the `A{` it measured, and
+    // at 22 the brace explodes with or without the fix. The full seed's stable last line overruns
+    // 23 — the formatter's own best-effort output — so its hand-inlined assertions below check the
+    // exact form and the fixpoint, not the width bound.
     assert_laid_out(
         ": ?=, ,)A{*=}?,::?:\ta\n()",
-        22,
+        23,
         ": ? =, ,)A {\n\t*=,\n}?,::?: a()\n",
     );
-    let once = jphfmt::format_with_width(": ?=, ,)A{*=}?,::?:\ta\n(aa() /)A;)}=\\\"\\\")aa", 22);
+    let once = jphfmt::format_with_width(": ?=, ,)A{*=}?,::?:\ta\n(aa() /)A;)}=\\\"\\\")aa", 23);
     assert_eq!(
         once,
         ": ? =, ,)A {\n\t*=,\n}?,::?: a(aa() /)A;)} = \\\"\\\")aa\n"
     );
     assert_eq!(
-        jphfmt::format_with_width(&once, 22),
+        jphfmt::format_with_width(&once, 23),
         once,
         "and it is a fixpoint"
     );
