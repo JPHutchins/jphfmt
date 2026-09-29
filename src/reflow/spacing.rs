@@ -11,9 +11,10 @@
 //! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
-    cast_tightens, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
-    is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
-    is_subscript, is_tag_keyword, is_trivia, is_type_context, padded_after_paren_open,
+    cast_tightens, closes_literal_type, heads_body, is_backslash, is_bit_field_colon,
+    is_call_head_pair, is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee,
+    is_qualifier, is_subscript, is_tag_keyword, is_trivia, is_type_context,
+    padded_after_paren_open, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -22,6 +23,11 @@ type Piece<'src> = (String, Token<'src>);
 
 fn same_line(gap: &str) -> bool {
     !gap.contains(['\n', '\r'])
+}
+
+/// The line breaks in a gap: a `\r\n`, a `\n` and a lone `\r` each end one line.
+fn line_breaks(gap: &str) -> usize {
+    gap.replace("\r\n", "\n").matches(['\n', '\r']).count()
 }
 
 /// Index of the `)` matching the `(` at `open`, scanning forward.
@@ -313,16 +319,20 @@ fn opens_literal(toks: &[Token], open: usize) -> bool {
     open > 0 && toks[open - 1].text == ")" && closes_literal_type(toks, open - 1)
 }
 
+/// Whether the piece at `k` stands where a statement may: outside every bracket, or directly in a
+/// block.
+fn at_statement_level(pieces: &[Piece], toks: &[Token], k: usize) -> bool {
+    enclosing_open(pieces, k)
+        .is_none_or(|open| pieces[open].1.text == "{" && opens_block(pieces, toks, open))
+}
+
 /// Whether the type name at `name` opens a declaration, which makes a following `*` run a
 /// declarator rather than a multiply. A statement boundary or declaration specifier settles it
 /// outright; inside brackets, only a parameter list does.
 fn declares_pointer(pieces: &[Piece], toks: &[Token], name: usize) -> bool {
-    let enclosing = enclosing_open(pieces, name);
-    let statement_level =
-        enclosing.is_none_or(|open| pieces[open].1.text == "{" && opens_block(pieces, toks, open));
     match name.checked_sub(1).map(|k| pieces[k].1.text) {
-        None | Some(";" | "{" | "}") => statement_level,
-        Some("(" | ",") => enclosing.is_some_and(|open| {
+        None | Some(";" | "{" | "}") => at_statement_level(pieces, toks, name),
+        Some("(" | ",") => enclosing_open(pieces, name).is_some_and(|open| {
             pieces[open].1.text == "("
                 && open > 0
                 && is_callee_ident(&pieces[open - 1].1)
@@ -448,19 +458,111 @@ fn space_casts(pieces: &mut [Piece]) {
     }
 }
 
-/// K&R brace attach: `) {` keeps one space (§2.5) for function and control bodies, but the tight
-/// `({` statement-expression and `(type){...}` compound literal are left alone (§8.4). What precedes
-/// the matching `(` decides it: a callee name or a control keyword opens a body, while `&`, `=`,
-/// `return` and every other operator or statement keyword introduce a value.
+/// How [`space_braces`] spells a gap it attaches.
+enum Attach {
+    /// One space: a body's `{` against its head, and `else` or a do-while's `while` against the `}`
+    /// before it.
+    Spaced,
+    /// None: a compound literal's `{` against its `(T)` (§8.4).
+    Tight,
+}
+
+/// The attach verdict for the piece at `j` against the piece before it — the construct's head —
+/// or `None` where the pair is not one a brace attaches. What precedes a `)`'s matching `(` decides
+/// that `)`: a callee name or a control keyword opens a body, while `&`, `=`, `return` and every
+/// other operator or statement keyword introduce a value. A `:` attaches only as a label's, which
+/// only a statement may carry: a ternary's and a list element's are breaks the layout writes.
+///
+/// `else` and `do` open a body wherever they stand: the statement-level test below reads the brace
+/// of an `=`-assigned statement expression as an initializer's, and would miss the ones inside it.
+///
+/// Where a statement may stand, a `{` after any other `)` or a name begins no statement of its own,
+/// so it is the body of what precedes it — a declarator the heads above cannot read, like a macro
+/// that spells a function's name or a function returning a function pointer, or an attribute before
+/// the body.
+fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> {
+    let head = j - 1;
+    match (pieces[head].1.text, pieces[j].1.text) {
+        (")", "{") if body_after_close(pieces, head) => Some(Attach::Spaced),
+        (")", "{") if closes_literal_type(toks, head) => Some(Attach::Tight),
+        ("else" | "do" | "=", "{") | ("}", "else") => Some(Attach::Spaced),
+        (":", "{")
+            if !ternary_open_before(toks, head) && at_statement_level(pieces, toks, head) =>
+        {
+            Some(Attach::Spaced)
+        }
+        (_, "{") if opens_tag_body(pieces, j) => Some(Attach::Spaced),
+        (text, "{")
+            if (text == ")" || pieces[head].1.kind == TokenKind::Ident)
+                && at_statement_level(pieces, toks, j) =>
+        {
+            Some(Attach::Spaced)
+        }
+        ("}", "while") if closes_do_body(pieces, head) => Some(Attach::Spaced),
+        _ => None,
+    }
+}
+
+/// Whether the `{` at `open` opens a `struct`, `union` or `enum` body: the nearest tag keyword before
+/// it is reached past names alone — and, for an `enum`, the `:` of a fixed underlying type, the run
+/// [`enum_body_brace`](super::tokens::enum_body_brace) reads forward from the keyword. A `struct` or
+/// `union` takes at most a name.
+fn opens_tag_body(pieces: &[Piece], open: usize) -> bool {
+    (0..open)
+        .rev()
+        .find(|&k| {
+            is_tag_keyword(pieces[k].1.text)
+                || !(pieces[k].1.kind == TokenKind::Ident || pieces[k].1.text == ":")
+        })
+        .is_some_and(|tag| match pieces[tag].1.text {
+            "enum" => true,
+            "struct" | "union" => {
+                open - tag <= 2 && pieces[tag + 1..open].iter().all(|p| p.1.text != ":")
+            }
+            _ => false,
+        })
+}
+
+/// Whether the `}` at `close` closes a brace directly after `do` — a do-while's body, which makes the
+/// `while` after it that statement's tail rather than a loop of its own. A body that is a braceless
+/// statement (`do if (x) {…} while (0);`) is not read, and its `while` keeps the author's break.
+fn closes_do_body(pieces: &[Piece], close: usize) -> bool {
+    enclosing_open(pieces, close)
+        .and_then(|open| open.checked_sub(1))
+        .is_some_and(|before| pieces[before].1.text == "do")
+}
+
+/// Whether the piece at `k` sits on a preprocessor directive's logical line: its first significant
+/// piece is a `#`, and a `\` splices the physical line after it in — one line break, so a blank line
+/// after a `\` ends the logical line. A directive ends at its line end, so nothing may be attached
+/// onto one — `#else⏎{` joined is `#else {`, and `#define X(y)⏎{` joined defines a different macro.
+fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
+    let spliced = |m: usize| is_backslash(&pieces[m - 1].1) && line_breaks(&pieces[m].0) == 1;
+    let line_start = (0..=k)
+        .rev()
+        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !spliced(m)))
+        .unwrap_or(0);
+    pieces[line_start..=k]
+        .iter()
+        .find(|p| !is_comment(&p.1))
+        .is_some_and(|p| p.1.text == "#")
+}
+
+/// K&R brace attach (§2.5): a brace goes on the line of the construct it belongs to — a body's `{`
+/// on its head's line, and an `else` or a do-while's `while` on the line of the `}` before it —
+/// whether the author broke the pair or not, the statement-expression `({` left alone. The one
+/// §2.5 rule that closes a line break; a comment or a directive's line end between the pair keeps
+/// it, since neither can be joined past.
 fn space_braces(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
-        if pieces[j].1.text == "{" && pieces[j - 1].1.text == ")" && same_line(&pieces[j].0) {
-            if body_after_close(pieces, j - 1) {
-                pieces[j].0 = " ".to_owned();
-            } else if closes_literal_type(&toks, j - 1) {
-                pieces[j].0.clear();
-            }
+        if !same_line(&pieces[j].0) && on_directive_line(pieces, j - 1) {
+            continue;
+        }
+        match attach_verdict(pieces, &toks, j) {
+            Some(Attach::Spaced) => pieces[j].0 = " ".to_owned(),
+            Some(Attach::Tight) => pieces[j].0.clear(),
+            None => {}
         }
     }
 }
@@ -866,5 +968,37 @@ mod tests {
         // `( int) x` -> `(int) x`: strip the same-line gap after `(` in a cast.
         assert_eq!(space_tokens("( int)x"), "(int) x");
         assert_eq!(space_tokens("(int) x"), "(int) x");
+    }
+
+    #[test]
+    fn space_braces_attaches_a_labels_colon_only() {
+        assert_eq!(space_tokens("case 1:\n{"), "case 1: {");
+        assert_eq!(space_tokens("done:\n{"), "done: {");
+        // The layout breaks after a ternary's `:` and a list element's, so neither is closed.
+        assert_eq!(space_tokens("x = c ? a :\n{"), "x = c ? a :\n{");
+        assert_eq!(space_tokens("x = {0:\n{}}"), "x = {0:\n{}}");
+    }
+
+    #[test]
+    fn space_braces_attaches_while_to_a_do_body_only() {
+        assert_eq!(space_tokens("do {\n}\nwhile (0);"), "do {\n} while (0);");
+        assert_eq!(space_tokens("{\n}\nwhile (x) {\n}"), "{\n}\nwhile (x) {\n}");
+    }
+
+    #[test]
+    fn space_braces_reads_a_tag_head_inside_a_group() {
+        // A group holds no statement, so only the tag arm can read these heads.
+        assert_eq!(
+            space_tokens("sizeof(enum e : unsigned long\n{A})"),
+            "sizeof(enum e : unsigned long {A})"
+        );
+        assert_eq!(
+            space_tokens("sizeof(enum : int\n{A})"),
+            "sizeof(enum : int {A})"
+        );
+        assert_eq!(
+            space_tokens("sizeof(struct s x\n{A})"),
+            "sizeof(struct s x\n{A})"
+        );
     }
 }

@@ -66,10 +66,27 @@ pub enum TokenKind {
     Unknown,
 }
 
-/// Extend a `//` match to just before the line's end (the newline stays its own token).
+/// Extend a `//` match to just before its logical line's end (the newline stays its own token). A `\`
+/// ending a physical line continues the comment onto the next: phase 2 splices lines before phase 3
+/// removes comments, so the line after is the comment's text, not code. Blanks between the `\` and
+/// the line end still splice, as GCC and Clang read them. The blanks are whatever `str::trim_end`
+/// removes, because that is what the trailing-blank trim writes away: a narrower reading would lex
+/// the author's line as code and the trimmed one as comment, and change between passes.
 fn lex_line_comment(lex: &mut Lexer<TokenKind>) {
     let rem = lex.remainder();
-    lex.bump(rem.find(['\n', '\r']).unwrap_or(rem.len()));
+    let line_end = |from: usize| rem[from..].find(['\n', '\r']).map(|i| from + i);
+    let mut end = 0;
+    while let Some(break_at) = line_end(end)
+        && rem[end..break_at].trim_end().ends_with('\\')
+    {
+        end = break_at
+            + if rem[break_at..].starts_with("\r\n") {
+                2
+            } else {
+                1
+            };
+    }
+    lex.bump(line_end(end).unwrap_or(rem.len()));
 }
 
 /// Extend a `/*` match to the closing `*/`, or to end-of-input if unterminated.
@@ -119,6 +136,25 @@ mod tests {
         let mut lex = TokenKind::lexer("//\n");
         assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)));
         assert_eq!(lex.slice(), "//");
+    }
+
+    #[test]
+    fn lex_line_comment_continues_across_a_splice() {
+        for (src, comment) in [
+            ("// c \\\nif (a)\n{", "// c \\\nif (a)"),
+            ("// c \\   \nif (a)\n{", "// c \\   \nif (a)"),
+            ("// c \\\x0C\nif (a)\n{", "// c \\\x0C\nif (a)"),
+            ("// c \\\x0B\t\nif (a)\n{", "// c \\\x0B\t\nif (a)"),
+            ("// c \\\u{a0}\nif (a)\n{", "// c \\\u{a0}\nif (a)"),
+            ("// c \\\r\nx\r\ny", "// c \\\r\nx"),
+            ("// a \\\nb \\\nc\nd", "// a \\\nb \\\nc"),
+            ("// c \\", "// c \\"),
+            ("// c \\ x\ny", "// c \\ x"),
+        ] {
+            let mut lex = TokenKind::lexer(src);
+            assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)), "{src:?}");
+            assert_eq!(lex.slice(), comment, "{src:?}");
+        }
     }
 
     #[test]

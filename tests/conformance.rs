@@ -1069,11 +1069,29 @@ fn a_statement_expression_the_emitter_cannot_own_passes_through() {
         // #74's two inputs, which the property tests found twice in one day as a `){` that gained a
         // space on the second pass. The `){` was the symptom: what the emitter deleted between `}`
         // and `)` is what `space_braces` read on the first pass and no longer read on the second.
-        // Deleting nothing leaves nothing for it to disagree with.
-        "A''A({\"\"}]\"\"''\"\"){\n",
-        "_({0\"\"}'']){\n",
+        // Deleting nothing leaves nothing for it to disagree with. Spelled with the `) {` the brace
+        // attach now writes on every pass, so the passthrough is still the whole output.
+        "A''A({\"\"}]\"\"''\"\") {\n",
+        "_({0\"\"}'']) {\n",
     ] {
         assert_eq!(format(src), src, "must pass through unchanged");
+    }
+}
+
+/// Only a `(`-group whose interior is a brace is a statement expression. Since #179 a `[`-group
+/// reached the same builder, which spells its brackets `({` and `})`, so `[{a}]` came out
+/// `({⏎\ta;⏎})` — the author's `[` and `]` rewritten. #188's brace attach then spaced the `){` the
+/// rewrite left, which is how it surfaced: as a non-fixpoint, on the seed below.
+#[test]
+fn a_bracket_group_holding_a_brace_keeps_its_brackets() {
+    for (src, width) in [("[{a}]\n", 100), ("[{\"\"}]{\n", 1), ("[{\"\"}]{\n", 100)] {
+        let once = format_with_width(src, width);
+        assert_eq!(once, src, "the author's brackets stay, at width {width}");
+        assert_eq!(
+            format_with_width(&once, width),
+            once,
+            "and it is a fixpoint"
+        );
     }
 }
 
@@ -1633,6 +1651,155 @@ fn a_compound_literal_brace_is_tight_across_a_newline_too() {
         once.contains("(struct s){1, 2}.a"),
         "the literal's brace is tight: {once:?}"
     );
+    // The same pair outside a group the layout owns: the spacing pass tightens it itself, so a
+    // statement's literal reads as the header's does.
+    let statement = "struct s f(void) {\n\treturn (struct s)\n\t{1, 2};\n}\n";
+    assert_eq!(
+        format(statement),
+        "struct s f(void) {\n\treturn (struct s){1, 2};\n}\n"
+    );
+}
+
+/// A directive ends at its line end, so no brace attaches onto one. Each of these joined is another
+/// program: a `{` in `#if`'s condition, a spliced one's too, an `#else` with trailing tokens, and
+/// macros whose replacement lists gained a brace.
+#[test]
+fn a_brace_never_attaches_onto_a_directive_line() {
+    for src in [
+        "int f(int y) {\n#if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        "int f(int y) {\n#if defined(A) && \\\n\tFOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        "int f(int y) {\n#if A\n\t{\n\t\ty++;\n#else\n\t{\n\t\ty--;\n#endif\n\t}\n\treturn y;\n}\n",
+        "void f(void) {\n#define LOCAL(y)\n\t{\n\t\tLOCAL(1);\n\t}\n}\n",
+        "void f(void) {\n#define LOOP do\n\t{\n\t} while (0);\n}\n",
+        "#define TAG struct s\n{\n\tint x;\n};\n",
+        // A comment is whitespace by the time the preprocessor reads the line.
+        "int f(int y) {\n\t/* c */ #if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        // A `\` splices one line break: after the blank line, `#if` begins a line of its own.
+        "int f(int y) {\n\tint x = 1; \\\n\n#if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
+}
+
+/// `else` and `do` open a body wherever they stand. The statement-level arm alone misses them inside
+/// an `=`-assigned statement expression, whose brace the block scan reads as an initializer's — which
+/// is why removing their own arm, which no other test could fail, lost these two (#188's round 2).
+#[test]
+fn else_and_do_attach_inside_an_assigned_statement_expression() {
+    for (src, attached) in [
+        ("int r = ({ do\n{ g(); } while (0); });\n", "do {"),
+        ("int r = ({ if (x) { } else\n{ x = 2; } });\n", "else {"),
+    ] {
+        let once = format(src);
+        assert!(once.contains(attached), "{once:?}");
+        assert_eq!(format(&once), once, "and it is a fixpoint");
+    }
+}
+
+/// Where a statement may stand, a `{` that begins none is the body of what precedes it, whatever
+/// declarator spells the head: a macro naming the function, a function returning a function pointer,
+/// an attribute macro after the parameters, an attribute between a tag and its body.
+#[test]
+fn a_statement_level_brace_attaches_to_any_head() {
+    for (src, expected) in [
+        (
+            "WRAPPER(int, open)(const char * p)\n{\n\treturn 0;\n}\n",
+            "WRAPPER(int, open)(const char * p) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "int (*g(void))(int)\n{\n\treturn 0;\n}\n",
+            "int (*g(void))(int) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "int (*g(void))(int){\n\treturn 0;\n}\n",
+            "int (*g(void))(int) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "void f(void) __THROW\n{\n}\n",
+            "void f(void) __THROW {\n}\n",
+        ),
+        (
+            "struct __attribute__((packed)) s\n{\n\tint x;\n};\n",
+            "struct __attribute__((packed)) s {\n\tint x;\n};\n",
+        ),
+        (
+            "typedef struct __attribute__((packed))\n{\n\tint x;\n} T;\n",
+            "typedef struct __attribute__((packed)) {\n\tint x;\n} T;\n",
+        ),
+    ] {
+        let once = format(src);
+        assert_eq!(once, expected);
+        assert_eq!(format(&once), once);
+    }
+}
+
+/// A `\` ending a `//` comment splices the next line into the comment (phase 2 runs before comments
+/// are removed), so a head on that line is comment text, and a brace joined onto it is deleted with
+/// it. The lexer reads that line as the comment's own, so no head stands there at any width — a guard
+/// that read the line instead lost it once the layout re-broke the "head" as code (#188's round 3),
+/// and missed a splice with blanks after the `\`, which the trailing-blank trim then makes strict.
+#[test]
+fn a_brace_never_attaches_onto_a_line_a_comment_spliced() {
+    for (src, comment) in [
+        (
+            "int f(int y) {\n#if A // c \\\n\t&& B\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+            "// c \\\n\t&& B\n",
+        ),
+        (
+            "void f(void) {\n#define X 1 // c \\\n\tmore\n\t{\n\t\tint z;\n\t}\n}\n",
+            "// c \\\n\tmore\n",
+        ),
+        (
+            "void f(int a) {\n\tint x; // c \\\n\tif (a)\n\t{\n\t}\n}\n",
+            "// c \\\n\tif (a)\n",
+        ),
+        (
+            "void f(int a) {\n\tint x; // c \\   \n\tif (a)\n\t{\n\t}\n}\n",
+            "// c \\\n\tif (a)\n",
+        ),
+        (
+            "void f(int a) {\n\tint x; // c \\\x0C\n\tif (a)\n\t{\n\t}\n}\n",
+            "// c \\\n\tif (a)\n",
+        ),
+    ] {
+        assert_eq!(
+            format(src),
+            src.replace("\\   \n", "\\\n").replace("\\\x0C\n", "\\\n")
+        );
+        for width in [1, 5, 9, 10, 20, 100] {
+            let once = format_with_width(src, width);
+            assert!(
+                once.contains(comment),
+                "the comment keeps its spliced line at width {width}: {once:?}"
+            );
+            assert_eq!(
+                format_with_width(&once, width),
+                once,
+                "and it is a fixpoint at width {width}"
+            );
+        }
+    }
+}
+
+/// A comment between a head and its brace keeps the break: a line comment would swallow the brace,
+/// and a block comment is where the author put it (§2.1).
+#[test]
+fn a_brace_never_attaches_past_a_comment() {
+    for src in [
+        "void f(void) // c\n{\n\treturn;\n}\n",
+        "void f(void) /* c */\n{\n\treturn;\n}\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
+}
+
+/// The attach is a spacing rule, and spacing runs before the layout, so the layout measures a head
+/// with its ` {`: a parameter list that fits only without one explodes (§2.2).
+#[test]
+fn an_attached_brace_counts_toward_its_heads_width() {
+    let once = format_with_width("void f(int a, int b)\n{\n\treturn;\n}\n", 21);
+    assert_eq!(once, "void f(\n\tint a,\n\tint b\n) {\n\treturn;\n}\n");
+    assert_eq!(format_with_width(&once, 21), once);
 }
 
 /// #88: a compound literal is a value like any other, so the `}` that ends one ends a value and not a
@@ -3346,21 +3513,23 @@ fn a_brace_reserve_measures_a_call_head_the_walk_will_attach() {
     // attached `a(` and the next pass measured the attached form, whose extra column flipped the
     // brace's fits verdict — pass 1 inline, pass 2 exploded, pass 3 stable. The reserve now
     // measures the attached form the walk will write, so the first pass decides what every pass
-    // keeps. The issue's seed and its minimized member, each pinned at width 22. The full seed's
-    // stable last line overruns 22 — the formatter's own best-effort output — so its hand-inlined
-    // assertions below check the exact form and the fixpoint, not the width bound.
+    // keeps. The issue's seed and its minimized member, each pinned at width 23 — one past the
+    // issue's 22, since the brace attach writes `A {` a column wider than the `A{` it measured, and
+    // at 22 the brace explodes with or without the fix. The full seed's stable last line overruns
+    // 23 — the formatter's own best-effort output — so its hand-inlined assertions below check the
+    // exact form and the fixpoint, not the width bound.
     assert_laid_out(
         ": ?=, ,)A{*=}?,::?:\ta\n()",
-        22,
-        ": ? =, ,)A{\n\t*=,\n}?,::?: a()\n",
+        23,
+        ": ? =, ,)A {\n\t*=,\n}?,::?: a()\n",
     );
-    let once = jphfmt::format_with_width(": ?=, ,)A{*=}?,::?:\ta\n(aa() /)A;)}=\\\"\\\")aa", 22);
+    let once = jphfmt::format_with_width(": ?=, ,)A{*=}?,::?:\ta\n(aa() /)A;)}=\\\"\\\")aa", 23);
     assert_eq!(
         once,
-        ": ? =, ,)A{\n\t*=,\n}?,::?: a(aa() /)A;)} = \\\"\\\")aa\n"
+        ": ? =, ,)A {\n\t*=,\n}?,::?: a(aa() /)A;)} = \\\"\\\")aa\n"
     );
     assert_eq!(
-        jphfmt::format_with_width(&once, 22),
+        jphfmt::format_with_width(&once, 23),
         once,
         "and it is a fixpoint"
     );

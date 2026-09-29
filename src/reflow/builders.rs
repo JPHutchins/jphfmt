@@ -1130,10 +1130,11 @@ pub(super) fn build_bracketed_group(
     // statement list, `;`-terminated and never a comma list, so the magic comma has nothing to
     // trail (#179's magic-comma half). The check sits above the spans_lines refusal, which an
     // authored multi-line body would otherwise take to the comma-list brace builder.
-    if inner
-        .iter()
-        .find(|t| !is_trivia(t))
-        .is_some_and(|t| t.text == "{")
+    if matches!(bracketing, Bracketing::Written { open: "(", .. })
+        && inner
+            .iter()
+            .find(|t| !is_trivia(t))
+            .is_some_and(|t| t.text == "{")
         && inner
             .iter()
             .rfind(|t| !is_trivia(t))
