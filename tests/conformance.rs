@@ -1078,6 +1078,23 @@ fn a_statement_expression_the_emitter_cannot_own_passes_through() {
     }
 }
 
+/// Only a `(`-group whose interior is a brace is a statement expression. Since #179 a `[`-group
+/// reached the same builder, which spells its brackets `({` and `})`, so `[{a}]` came out
+/// `({⏎\ta;⏎})` — the author's `[` and `]` rewritten. #188's brace attach then spaced the `){` the
+/// rewrite left, which is how it surfaced: as a non-fixpoint, on the seed below.
+#[test]
+fn a_bracket_group_holding_a_brace_keeps_its_brackets() {
+    for (src, width) in [("[{a}]\n", 100), ("[{\"\"}]{\n", 1), ("[{\"\"}]{\n", 100)] {
+        let once = format_with_width(src, width);
+        assert_eq!(once, src, "the author's brackets stay, at width {width}");
+        assert_eq!(
+            format_with_width(&once, width),
+            once,
+            "and it is a fixpoint"
+        );
+    }
+}
+
 /// A `;` that opens no statement is still a statement, and the emitter writes exactly one `;` per
 /// statement — so dropping the empty ones lost the `;` that produced them. Every leading segment is
 /// kept for that reason; only a *trailing* empty one is dropped, since that is what a body ending in
