@@ -477,7 +477,7 @@ fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> 
     match (pieces[head].1.text, pieces[j].1.text) {
         (")", "{") if body_after_close(pieces, head) => Some(Attach::Spaced),
         (")", "{") if closes_literal_type(toks, head) => Some(Attach::Tight),
-        ("else" | "do" | "=", "{") => Some(Attach::Spaced),
+        ("else" | "do" | "=", "{") | ("}", "else") => Some(Attach::Spaced),
         (":", "{")
             if !ternary_open_before(toks, head) && at_statement_level(pieces, toks, head) =>
         {
@@ -490,7 +490,6 @@ fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> 
         {
             Some(Attach::Spaced)
         }
-        ("}", "else") => Some(Attach::Spaced),
         ("}", "while") if closes_do_body(pieces, head) => Some(Attach::Spaced),
         _ => None,
     }

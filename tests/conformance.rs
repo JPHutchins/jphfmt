@@ -1069,9 +1069,10 @@ fn a_statement_expression_the_emitter_cannot_own_passes_through() {
         // #74's two inputs, which the property tests found twice in one day as a `){` that gained a
         // space on the second pass. The `){` was the symptom: what the emitter deleted between `}`
         // and `)` is what `space_braces` read on the first pass and no longer read on the second.
-        // Deleting nothing leaves nothing for it to disagree with.
-        "A''A({\"\"}]\"\"''\"\"){\n",
-        "_({0\"\"}'']){\n",
+        // Deleting nothing leaves nothing for it to disagree with. Spelled with the `) {` the brace
+        // attach now writes on every pass, so the passthrough is still the whole output.
+        "A''A({\"\"}]\"\"''\"\") {\n",
+        "_({0\"\"}'']) {\n",
     ] {
         assert_eq!(format(src), src, "must pass through unchanged");
     }
