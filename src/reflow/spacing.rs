@@ -11,10 +11,10 @@
 //! disagrees about it; the second is a fixpoint either way, so only a fixture can hold it.
 
 use super::tokens::{
-    cast_tightens, closes_literal_type, heads_body, is_bit_field_colon, is_call_head_pair,
-    is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee, is_qualifier,
-    is_subscript, is_tag_keyword, is_trivia, is_type_context, padded_after_paren_open,
-    splices_next_line, ternary_open_before,
+    cast_tightens, closes_literal_type, heads_body, is_backslash, is_bit_field_colon,
+    is_call_head_pair, is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee,
+    is_qualifier, is_subscript, is_tag_keyword, is_trivia, is_type_context,
+    padded_after_paren_open, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
 
@@ -518,29 +518,28 @@ fn opens_tag_body(pieces: &[Piece], open: usize) -> bool {
         })
 }
 
-/// Whether the `}` at `close` ends a `do` statement's body, which makes the `while` after it that
-/// statement's tail rather than a loop of its own.
+/// Whether the `}` at `close` closes a brace directly after `do` — a do-while's body, which makes the
+/// `while` after it that statement's tail rather than a loop of its own. A body that is a braceless
+/// statement (`do if (x) {…} while (0);`) is not read, and its `while` keeps the author's break.
 fn closes_do_body(pieces: &[Piece], close: usize) -> bool {
     enclosing_open(pieces, close)
         .and_then(|open| open.checked_sub(1))
         .is_some_and(|before| pieces[before].1.text == "do")
 }
 
-/// Whether the line end after the piece at `k` must stay: `k` sits on a preprocessor directive's
-/// logical line — its first significant piece is a `#` — or after a `//` comment on its logical line,
-/// which makes it that comment's text. A [`splices_next_line`] piece joins the physical line after it
-/// into the logical line, and a leading comment is whitespace to the preprocessor. Joined, `#else⏎{`
-/// is `#else {`, `#define X(y)⏎{` defines another macro, and a brace after `// c \⏎head` is deleted
-/// with the comment.
-fn keeps_line_end(pieces: &[Piece], k: usize) -> bool {
-    let line = &pieces[(0..=k)
+/// Whether the piece at `k` sits on a preprocessor directive's logical line: its first significant
+/// piece is a `#`, and a `\` splices the physical line before it in. A directive ends at its line
+/// end, so nothing may be attached onto one — `#else⏎{` joined is `#else {`, and `#define X(y)⏎{`
+/// joined defines a different macro.
+fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
+    let line_start = (0..=k)
         .rev()
-        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !splices_next_line(&pieces[m - 1].1)))
-        .unwrap_or(0)..=k];
-    line.iter()
+        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !is_backslash(&pieces[m - 1].1)))
+        .unwrap_or(0);
+    pieces[line_start..=k]
+        .iter()
         .find(|p| !is_comment(&p.1))
         .is_some_and(|p| p.1.text == "#")
-        || line.iter().any(|p| p.1.kind == TokenKind::LineComment)
 }
 
 /// K&R brace attach (§2.5): a brace goes on the line of the construct it belongs to — a body's `{`
@@ -551,7 +550,7 @@ fn keeps_line_end(pieces: &[Piece], k: usize) -> bool {
 fn space_braces(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 1..pieces.len() {
-        if !same_line(&pieces[j].0) && keeps_line_end(pieces, j - 1) {
+        if !same_line(&pieces[j].0) && on_directive_line(pieces, j - 1) {
             continue;
         }
         match attach_verdict(pieces, &toks, j) {
