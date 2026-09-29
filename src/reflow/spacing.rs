@@ -25,6 +25,11 @@ fn same_line(gap: &str) -> bool {
     !gap.contains(['\n', '\r'])
 }
 
+/// The line breaks in a gap: a `\r\n`, a `\n` and a lone `\r` each end one line.
+fn line_breaks(gap: &str) -> usize {
+    gap.replace("\r\n", "\n").matches(['\n', '\r']).count()
+}
+
 /// Index of the `)` matching the `(` at `open`, scanning forward.
 fn piece_close_paren(pieces: &[Piece], open: usize) -> Option<usize> {
     let mut depth = 0i32;
@@ -528,13 +533,14 @@ fn closes_do_body(pieces: &[Piece], close: usize) -> bool {
 }
 
 /// Whether the piece at `k` sits on a preprocessor directive's logical line: its first significant
-/// piece is a `#`, and a `\` splices the physical line before it in. A directive ends at its line
-/// end, so nothing may be attached onto one — `#else⏎{` joined is `#else {`, and `#define X(y)⏎{`
-/// joined defines a different macro.
+/// piece is a `#`, and a `\` splices the physical line after it in — one line break, so a blank line
+/// after a `\` ends the logical line. A directive ends at its line end, so nothing may be attached
+/// onto one — `#else⏎{` joined is `#else {`, and `#define X(y)⏎{` joined defines a different macro.
 fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
+    let spliced = |m: usize| is_backslash(&pieces[m - 1].1) && line_breaks(&pieces[m].0) == 1;
     let line_start = (0..=k)
         .rev()
-        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !is_backslash(&pieces[m - 1].1)))
+        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !spliced(m)))
         .unwrap_or(0);
     pieces[line_start..=k]
         .iter()

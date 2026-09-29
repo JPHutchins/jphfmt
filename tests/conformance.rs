@@ -1674,6 +1674,8 @@ fn a_brace_never_attaches_onto_a_directive_line() {
         "#define TAG struct s\n{\n\tint x;\n};\n",
         // A comment is whitespace by the time the preprocessor reads the line.
         "int f(int y) {\n\t/* c */ #if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        // A `\` splices one line break: after the blank line, `#if` begins a line of its own.
+        "int f(int y) {\n\tint x = 1; \\\n\n#if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
     ] {
         assert_eq!(format(src), src);
     }
@@ -1755,8 +1757,15 @@ fn a_brace_never_attaches_onto_a_line_a_comment_spliced() {
             "void f(int a) {\n\tint x; // c \\   \n\tif (a)\n\t{\n\t}\n}\n",
             "// c \\\n\tif (a)\n",
         ),
+        (
+            "void f(int a) {\n\tint x; // c \\\x0C\n\tif (a)\n\t{\n\t}\n}\n",
+            "// c \\\n\tif (a)\n",
+        ),
     ] {
-        assert_eq!(format(src), src.replace("\\   \n", "\\\n"));
+        assert_eq!(
+            format(src),
+            src.replace("\\   \n", "\\\n").replace("\\\x0C\n", "\\\n")
+        );
         for width in [1, 5, 9, 10, 20, 100] {
             let once = format_with_width(src, width);
             assert!(
