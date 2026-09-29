@@ -384,6 +384,13 @@ pub(super) fn is_backslash(t: &Token) -> bool {
     t.kind == TokenKind::Punct && t.text == "\\"
 }
 
+/// Whether `t` ends its physical line with a `\` the preprocessor splices: a continuation of its own,
+/// or the last character of a `//` comment. Phase 2 splices before phase 3 removes comments, so the
+/// line after such a comment is that comment's text.
+pub(super) fn splices_next_line(t: &Token) -> bool {
+    is_backslash(t) || (t.kind == TokenKind::LineComment && t.text.ends_with('\\'))
+}
+
 /// One past the last token of the preprocessor directive starting at `start` (following `\` line
 /// continuations).
 pub(super) fn directive_end(toks: &[Token], start: usize) -> usize {

@@ -1716,6 +1716,20 @@ fn a_statement_level_brace_attaches_to_any_head() {
     }
 }
 
+/// A `\` ending a `//` comment splices the next line into the comment (phase 2 runs before comments
+/// are removed), so a head on that line is comment text, and a brace joined onto it is deleted with
+/// it — in a directive, where the guard above then missed the splice, and outside one.
+#[test]
+fn a_brace_never_attaches_onto_a_line_a_comment_spliced() {
+    for src in [
+        "int f(int y) {\n#if A // c \\\n\t&& B\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        "void f(void) {\n#define X 1 // c \\\n\tmore\n\t{\n\t\tint z;\n\t}\n}\n",
+        "void f(int a) {\n\tint x; // c \\\n\tif (a)\n\t{\n\t}\n}\n",
+    ] {
+        assert_eq!(format(src), src);
+    }
+}
+
 /// A comment between a head and its brace keeps the break: a line comment would swallow the brace,
 /// and a block comment is where the author put it (§2.1).
 #[test]
