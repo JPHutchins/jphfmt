@@ -469,15 +469,15 @@ enum Attach {
 /// only a statement may carry: a ternary's and a list element's are breaks the layout writes.
 ///
 /// Where a statement may stand, a `{` after any other `)` or a name begins no statement of its own,
-/// so it is the body of what precedes it — a declarator the heads above cannot read, like a macro
-/// that spells a function's name or a function returning a function pointer, or an attribute before
-/// the body.
+/// so it is the body of what precedes it — `else` and `do`, and a declarator the heads above cannot
+/// read, like a macro that spells a function's name or a function returning a function pointer, or
+/// an attribute before the body.
 fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> {
     let head = j - 1;
     match (pieces[head].1.text, pieces[j].1.text) {
         (")", "{") if body_after_close(pieces, head) => Some(Attach::Spaced),
         (")", "{") if closes_literal_type(toks, head) => Some(Attach::Tight),
-        ("else" | "do" | "=", "{") | ("}", "else") => Some(Attach::Spaced),
+        ("=", "{") | ("}", "else") => Some(Attach::Spaced),
         (":", "{")
             if !ternary_open_before(toks, head) && at_statement_level(pieces, toks, head) =>
         {
@@ -497,7 +497,8 @@ fn attach_verdict(pieces: &[Piece], toks: &[Token], j: usize) -> Option<Attach> 
 
 /// Whether the `{` at `open` opens a `struct`, `union` or `enum` body: the nearest tag keyword before
 /// it is reached past names alone — and, for an `enum`, the `:` of a fixed underlying type, the run
-/// [`enum_body_brace`] reads forward from the keyword. A `struct` or `union` takes at most a name.
+/// [`enum_body_brace`](super::tokens::enum_body_brace) reads forward from the keyword. A `struct` or
+/// `union` takes at most a name.
 fn opens_tag_body(pieces: &[Piece], open: usize) -> bool {
     (0..open)
         .rev()
