@@ -430,10 +430,27 @@ fn paired(
 ) -> Option<usize> {
     let mut depth = 0usize;
     order.find(|&j| {
-        depth += usize::from(toks[j].text == opens);
-        depth = depth.saturating_sub(usize::from(toks[j].text == closes));
-        depth == 0 && toks[j].text == closes
+        let counted = |text: &str| toks[j].text == text && !directive_brace(toks, j);
+        let closing = counted(closes);
+        depth += usize::from(counted(opens));
+        depth = depth.saturating_sub(usize::from(closing));
+        depth == 0 && closing
     })
+}
+
+/// Whether `toks[j]` is a brace on a preprocessor directive's logical line — the line's first token
+/// is a `#` naming a directive. The brace is the preprocessor's text, so it pairs with nothing the
+/// code around it opens: `#define END }` in a function body closes no block (#189).
+fn directive_brace(toks: &[Token], j: usize) -> bool {
+    matches!(toks[j].text, "{" | "}")
+        && next_nontrivia(
+            toks,
+            (0..j)
+                .rev()
+                .find(|&k| ends_logical_line(toks, k))
+                .map_or(0, |k| k + 1),
+        )
+        .is_some_and(|h| h < j && toks[h].text == "#" && opens_directive(&toks[h + 1..]))
 }
 
 /// The tokens outside every bracket group, paired with their index — the level a construct's own
@@ -927,8 +944,8 @@ pub(super) fn contains_comment(toks: &[Token]) -> bool {
 /// through verbatim rather than risk mis-splitting (which could accumulate commas across passes).
 pub(super) fn is_balanced(toks: &[Token]) -> bool {
     let (mut paren, mut brack, mut brace) = (0i32, 0i32, 0i32);
-    for t in toks {
-        if t.kind != TokenKind::Punct {
+    for (j, t) in toks.iter().enumerate() {
+        if t.kind != TokenKind::Punct || directive_brace(toks, j) {
             continue;
         }
         match t.text {

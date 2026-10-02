@@ -3769,3 +3769,26 @@ fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
         "and it is a fixpoint"
     );
 }
+
+/// #189: a brace on a directive's line is the preprocessor's text, which pairs with nothing the code
+/// around it opens. Counted, `#define END }` closed the body one brace early and the block's own `}`
+/// went out at the function's indent; `#define BEGIN {` left the body unmatched, and a later
+/// `#define END }` lost its brace to a line of its own.
+#[test]
+fn a_brace_in_a_directive_pairs_with_nothing() {
+    for src in [
+        "void f(int y) {\n\tif (y) {\n\t\ty++;\n#define END }\n\t}\n\treturn;\n}\n",
+        "void f(int y) {\n\tif (y) {\n\t\ty++;\n#define BEGIN {\n\t}\n\treturn;\n}\n#define END }\nvoid g(int y) {\n\tif (y) {\n\t\ty++;\n\t}\n}\n",
+        "void h(void) {\n\tint a[] = {\n\t\t1,\n#define C }\n\t\t2,\n\t};\n}\n",
+    ] {
+        assert_eq!(format(src), src, "must be a fixpoint: {src:?}");
+    }
+    // The body around one still balances, so it is laid out rather than passed through.
+    assert_eq!(
+        format_with_width(
+            "void f(int y) {\n#define END }\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n}\n",
+            30
+        ),
+        "void f(int y) {\n#define END }\n\tg(\n\t\taaaaaaaaaaaa,\n\t\tbbbbbbbbbbbbbb,\n\t\tcccccccccccc\n\t);\n}\n"
+    );
+}
