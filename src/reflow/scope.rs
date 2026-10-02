@@ -93,20 +93,13 @@ pub(super) fn scoped(keyword: &str, depth: usize) -> Scoped {
     }
 }
 
-/// True when `prev_line`, after trimming trailing whitespace, ends with a single `\`
-/// (a `#define` continuation signal).
-fn is_continuation(prev_line: &str) -> bool {
-    let trimmed = prev_line.trim_end();
-    trimmed.ends_with('\\') && !trimmed.ends_with("\\\\")
-}
-
 pub(super) fn scope_directives(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut depth: usize = 0;
     let mut prev_line: &str = "";
 
     for line in s.lines() {
-        if is_continuation(prev_line) {
+        if crate::lexer::splices(prev_line) {
             out.push_str(line);
             out.push('\n');
             prev_line = line;
@@ -130,23 +123,6 @@ pub(super) fn scope_directives(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_continuation_backslash() {
-        assert!(is_continuation("foo \\"));
-        assert!(is_continuation("#define M(a) ((a) + 1) \\"));
-    }
-
-    #[test]
-    fn is_continuation_not_backslash() {
-        assert!(!is_continuation("foo bar"));
-        assert!(!is_continuation(""));
-    }
-
-    #[test]
-    fn is_continuation_double_backslash_is_not() {
-        assert!(!is_continuation("foo \\\\"));
-    }
 
     #[test]
     fn parse_directive_hash_define() {

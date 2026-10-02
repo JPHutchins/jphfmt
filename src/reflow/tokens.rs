@@ -387,16 +387,9 @@ pub(super) fn is_backslash(t: &Token) -> bool {
 /// One past the last token of the preprocessor directive starting at `start` (following `\` line
 /// continuations).
 pub(super) fn directive_end(toks: &[Token], start: usize) -> usize {
-    let mut i = start;
-    while i < toks.len() {
-        let is_newline = toks[i].kind == TokenKind::Newline;
-        let continued = is_newline && i > 0 && is_backslash(&toks[i - 1]);
-        i = i.saturating_add(1);
-        if is_newline && !continued {
-            break;
-        }
-    }
-    i
+    (start..toks.len())
+        .find(|&i| ends_logical_line(toks, i))
+        .map_or(toks.len(), |i| i + 1)
 }
 
 /// Index of the `)`/`]` matching the bracket at `open`, or `None` if unbalanced.
@@ -1227,12 +1220,15 @@ fn opens_directive(after: &[Token]) -> bool {
 
 /// Whether `toks[k]` ends the *logical* line — a newline the preprocessor does not splice away.
 ///
-/// Only a `\` **immediately** before it splices (C11 5.1.1.2), which is the same test
-/// [`directive_end`] makes and the reason this does not skip whitespace to find one. GCC splices
-/// `\`+space+newline too, with a warning, and neither predicate honours that extension — a limitation
-/// both share rather than two answers to one question.
+/// [`crate::lexer::splices`] read over tokens: the newline is spliced when the last token before it on
+/// its physical line, past the blanks that reading trims, is a `\`. [`directive_end`] asks the same
+/// question through this one test (#190).
 fn ends_logical_line(toks: &[Token], k: usize) -> bool {
-    toks[k].kind == TokenKind::Newline && !(k > 0 && is_backslash(&toks[k - 1]))
+    toks[k].kind == TokenKind::Newline
+        && !(0..k)
+            .rev()
+            .find(|&j| toks[j].kind == TokenKind::Newline || !toks[j].text.trim_end().is_empty())
+            .is_some_and(|j| is_backslash(&toks[j]))
 }
 
 /// A preprocessing directive's name: C23 §6.10.1, plus the extensions a real corpus writes. Not every
@@ -1526,6 +1522,24 @@ mod tests {
             let toks = tokenize(src);
             let close = toks.iter().rposition(|t| t.text == "}").unwrap();
             assert!(!closes_block(&toks, close), "{src}");
+        }
+    }
+
+    #[test]
+    fn directive_end_reads_the_splice_the_lexer_reads() {
+        // Blanks after the `\\` still splice, and a `\\` before it does not unsplice (#190).
+        for (src, directive) in [
+            ("#define X 1 \\ \n2\nint y;\n", "#define X 1 \\ \n2\n"),
+            ("#define X 1 \\\\\n2\nint y;\n", "#define X 1 \\\\\n2\n"),
+            ("#define X 1 \\ x\nint y;\n", "#define X 1 \\ x\n"),
+        ] {
+            let toks = crate::lexer::tokenize(src);
+            let end = directive_end(&toks, 0);
+            assert_eq!(
+                toks[..end].iter().map(|t| t.text).collect::<String>(),
+                directive,
+                "{src:?}"
+            );
         }
     }
 

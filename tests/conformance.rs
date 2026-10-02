@@ -3769,3 +3769,17 @@ fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
         "and it is a fixpoint"
     );
 }
+
+/// #190: phase 2 deletes a backslash-newline whatever precedes the `\`, so a `//` comment ending in
+/// `\\` splices its next line in as one ending in `\` does. The directive scoping read the spliced
+/// line as a directive: a swallowed `#if` raised the depth of the real ones after it, and a
+/// swallowed `#else` was re-indented as one.
+#[test]
+fn a_comment_ending_in_an_even_backslash_run_swallows_its_next_line() {
+    for src in [
+        "int x; // c \\\\\n#if Z\n#if A\nint y;\n#endif\n",
+        "#if A\n#\tif B\nint x; // c \\\\\n#else\n#\tendif\n#endif\n",
+    ] {
+        assert_eq!(format(src), src, "must be a fixpoint: {src:?}");
+    }
+}

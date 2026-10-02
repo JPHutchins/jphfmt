@@ -77,7 +77,7 @@ fn lex_line_comment(lex: &mut Lexer<TokenKind>) {
     let line_end = |from: usize| rem[from..].find(['\n', '\r']).map(|i| from + i);
     let mut end = 0;
     while let Some(break_at) = line_end(end)
-        && rem[end..break_at].trim_end().ends_with('\\')
+        && splices(&rem[end..break_at])
     {
         end = break_at
             + if rem[break_at..].starts_with("\r\n") {
@@ -87,6 +87,14 @@ fn lex_line_comment(lex: &mut Lexer<TokenKind>) {
             };
     }
     lex.bump(line_end(end).unwrap_or(rem.len()));
+}
+
+/// Whether a physical line ends in a splice: a `\` with nothing after it but blanks, read as
+/// [`lex_line_comment`] reads them. Phase 2 deletes a backslash-newline whatever precedes the `\`,
+/// so a line ending in `\\` splices as one ending in `\` does (#190). The one reading of the
+/// question for every pass that asks it of text.
+pub(crate) fn splices(line: &str) -> bool {
+    line.trim_end().ends_with('\\')
 }
 
 /// Extend a `/*` match to the closing `*/`, or to end-of-input if unterminated.
@@ -136,6 +144,17 @@ mod tests {
         let mut lex = TokenKind::lexer("//\n");
         assert_eq!(lex.next(), Some(Ok(TokenKind::LineComment)));
         assert_eq!(lex.slice(), "//");
+    }
+
+    #[test]
+    fn splices_reads_a_backslash_ending_the_line() {
+        assert!(splices("foo \\"));
+        assert!(splices("#define M(a) ((a) + 1) \\"));
+        assert!(splices("foo \\ \t"));
+        assert!(splices("int x; // c \\\\"));
+        assert!(!splices("foo bar"));
+        assert!(!splices(""));
+        assert!(!splices("foo \\ x"));
     }
 
     #[test]
