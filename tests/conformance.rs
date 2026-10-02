@@ -3879,32 +3879,38 @@ fn a_list_after_a_paren_lays_out_like_any_other() {
 
 /// The negative half of #191: a group that can spell a cast's type is followed by its operand, so the
 /// operand is not a list — a comma inside it is the comma operator, left alone like any depth-zero
-/// comma. A control header and a `#define`'s parameters are no callee either, and keep their gaps.
+/// comma — and a comment in the group hides the type it may spell, so it refuses the same way. A
+/// keyword's own operand (a control header, `sizeof`'s type), a statement expression, and a
+/// `#define`'s line — parameters, body, any group depth — are no list either, and keep their gaps
+/// at every width.
 #[test]
 fn a_paren_after_a_cast_or_a_header_is_not_a_list() {
     for src in [
         "x = (int) (aaaa, bbbb + cccc + dddd);\n",
         "y = (my_t)(aaaa, bbbb + cccc + dddd);\n",
         "z = (struct s *) (aaaa, bbbb + cccc);\n",
+        "y = (my_t /* c */) (aaaa, bbbb + cccc + dddd);\n",
+        "a = sizeof(int) (aaaa, bbbb);\n",
+        "#define F(x) (x)\n",
+        "#define X (a) (b) (c)\n",
+        "#define M F(a) (b)\n",
+        "#define F(x) (x) (y) (z)\n",
+        "if (x) (y) (z);\n",
+        "hook(x) ({\n\tint t = 1;\n\tt;\n});\n",
     ] {
-        assert_eq!(
-            format_with_width(src, 20),
-            src,
-            "must stay a group: {src:?}"
-        );
+        for w in 10..=120 {
+            assert_eq!(
+                format_with_width(src, w),
+                src,
+                "must keep its shape at width {w}: {src:?}"
+            );
+        }
     }
     assert_eq!(
         format_with_width("r = (*fp)(aaaa, bbbb + cccc + dddd);\n", 20),
         "r = (*fp)(\n\taaaa,\n\t(\n\t\tbbbb +\n\t\tcccc +\n\t\tdddd\n\t)\n);\n",
         "while a dereference is a callee"
     );
-    for src in [
-        "#define F(x) (x)\n",
-        "#define X (a) (b)\n",
-        "void f(void) {\n\tif (x) (y) (z);\n}\n",
-    ] {
-        assert_eq!(format(src), src, "must keep its gaps: {src:?}");
-    }
 }
 
 /// A list after a `)` is tight against it, as a call is against its callee (§2.5), and joins it
@@ -3919,6 +3925,11 @@ fn a_list_after_a_paren_is_tight_against_it() {
         format("void f(void) {\n\t(*fp)\n\t\t(a, b);\n}\n"),
         "void f(void) {\n\t(*fp)(a, b);\n}\n"
     );
+    assert_eq!(
+        format("int f(void) {\n\treturn (*fp) (a, b);\n}\n"),
+        "int f(void) {\n\treturn (*fp)(a, b);\n}\n",
+        "a statement keyword's operand is a value a list applies to, not the keyword's own"
+    );
 }
 
 /// The blank line after a directive is no callee's gap: `endif` is an identifier, and an arm that read
@@ -3929,11 +3940,11 @@ fn a_statement_after_a_directive_and_a_blank_line_keeps_its_indent() {
     assert_eq!(format(src), src);
 }
 
-/// A list after a group the walk wrote token by token — a comment refuses the group's own layout —
-/// attaches on its `(`, so the walk still counts the group's `)`: a bracket depth left one high reads
-/// the next block's `{` as an initializer's.
+/// A list after a group the walk wrote token by token — a depth-zero comma refuses the group's own
+/// layout — attaches on its `(`, so the walk still counts the group's `)`: a bracket depth left one
+/// high reads the next block's `{` as an initializer's.
 #[test]
 fn a_list_after_a_verbatim_group_keeps_the_bracket_depth() {
-    let src = "void f(void) {\n\tint a = (*fp /* c */)(b);\n\t{\n\t\tint y;\n\t}\n}\n";
+    let src = "void f(void) {\n\tint a = (x, *fp)(b);\n\t{\n\t\tint y;\n\t}\n}\n";
     assert_eq!(format(src), src);
 }

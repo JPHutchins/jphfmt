@@ -13,7 +13,7 @@
 use super::tokens::{
     cast_tightens, closes_literal_type, heads_body, is_backslash, is_bit_field_colon,
     is_call_head_pair, is_callee_ident, is_control_keyword, is_decl_specifier, is_excluded_callee,
-    is_qualifier, is_subscript, is_tag_keyword, is_trivia, is_type_context, names_a_macro,
+    is_qualifier, is_subscript, is_tag_keyword, is_trivia, is_type_context,
     padded_after_paren_open, ternary_open_before,
 };
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -653,10 +653,15 @@ fn space_call_heads(pieces: &mut [Piece]) {
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
     for j in 0..pieces.len().saturating_sub(1) {
         let next_is_paren = pieces[j + 1].1.kind == TokenKind::Punct && pieces[j + 1].1.text == "(";
-        if !same_line(&pieces[j + 1].0) || (next_is_paren && names_a_macro(&toks, j)) {
+        if !same_line(&pieces[j + 1].0) || (next_is_paren && names_a_macro(pieces, j)) {
             continue;
         }
-        if is_call_head_pair(&toks, j + 1) {
+        // A directive's line keeps the author's `)(` gaps: in a `#define` a group may be the
+        // parameters, the body, or text an expansion pastes into a call, none of it a list the line
+        // spells (§6). The layout never walks a directive's own line, so only this pass reads one.
+        if is_call_head_pair(&toks, j + 1)
+            && !(pieces[j].1.text == ")" && on_directive_line(pieces, j))
+        {
             pieces[j + 1].0.clear();
         } else if pieces[j + 1].1.text == "("
             && (is_control_keyword(pieces[j].1.text) || is_type_context(pieces[j].1.text))
@@ -664,6 +669,23 @@ fn space_call_heads(pieces: &mut [Piece]) {
             pieces[j + 1].0 = " ".to_owned();
         }
     }
+}
+
+/// Whether the token at `j` is the name in a `#define`, where the gap before a `(` is not spacing but
+/// meaning: `#define X (y)` defines `X` as `(y)`, and `#define X(y)` a function-like macro taking `y`.
+/// Neither spelling may become the other, so the author's gap stands exactly as written (§6).
+///
+/// Tightening it turned every object-like macro whose body is parenthesized into a function-like one, and
+/// the output did not compile — the most common shape in the corpus that jphfmt got wrong, and invisible
+/// to every check because the character it dropped was whitespace.
+fn names_a_macro(pieces: &[Piece], j: usize) -> bool {
+    // Past comments, which are pieces of their own: a comment is whitespace by the time the
+    // preprocessor reads the line, so `#define /* c */ X (y)` defines exactly what `#define X (y)` does.
+    let before = |k: usize| (0..k).rev().find(|&i| !is_comment(&pieces[i].1));
+    before(j)
+        .filter(|&k| pieces[k].1.text == "define")
+        .and_then(before)
+        .is_some_and(|k| pieces[k].1.text == "#")
 }
 
 /// A subscript is tight against what it indexes, exactly as a call is tight against its callee

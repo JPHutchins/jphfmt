@@ -518,12 +518,11 @@ fn emit_tokens(
         // and the walk reaches a list after `)` only on the `(` itself (#191).
         if is_trivia(&t)
             && prev_nontrivia(toks, i).is_some_and(|j| toks[j].text == ")")
-            && next_nontrivia(toks, i + 1).is_some_and(|open| {
-                tight_call_pair(toks, open, in_define_body).is_some()
-                    || forced_call_pair(toks, open).is_some()
-            })
+            && let Some(open) = next_nontrivia(toks, i + 1)
+            && (tight_call_pair(toks, open, in_define_body).is_some()
+                || forced_call_pair(toks, open).is_some())
         {
-            i = i.saturating_add(1);
+            i = advance(i, open);
             continue;
         }
         emit_str(out, col, t.text);
