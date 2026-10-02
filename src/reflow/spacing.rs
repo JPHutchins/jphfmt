@@ -565,11 +565,23 @@ fn directive_lines(pieces: &[Piece]) -> Vec<bool> {
 }
 
 /// Whether the piece at `m` opens a logical line: the first piece, or one after a line break that
-/// no `\` splices away — one line break, so a blank line after a `\` ends the logical line.
+/// no `\` splices away — the last piece before the break that is not blank, read as
+/// [`crate::lexer::splices`] trims blanks, with one line break between, so a blank line after a
+/// `\` ends the logical line.
 fn starts_logical_line(pieces: &[Piece], m: usize) -> bool {
     m == 0
         || !(same_line(&pieces[m].0)
-            || is_backslash(&pieces[m - 1].1) && line_breaks(&pieces[m].0) == 1)
+            || (0..m)
+                .rev()
+                .find(|&k| !pieces[k].1.text.trim_end().is_empty())
+                .is_some_and(|k| {
+                    is_backslash(&pieces[k].1)
+                        && pieces[k + 1..=m]
+                            .iter()
+                            .map(|p| line_breaks(&p.0))
+                            .sum::<usize>()
+                            == 1
+                }))
 }
 
 /// K&R brace attach (§2.5): a brace goes on the line of the construct it belongs to — a body's `{`
@@ -757,6 +769,46 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_three_splice_readings_agree() {
+        // "Does the next line continue this one?" read over text, tokens and pieces (#190): each
+        // snippet's second line is spliced onto its first by all three readings, or by none.
+        for (src, spliced) in [
+            ("a \\\nb", true),
+            ("a \\ \t\nb", true),
+            ("a \\\u{a0}\nb", true),
+            ("a \\\\\nb", true),
+            ("a \\\r\nb", true),
+            ("a \\\rb", true),
+            ("a \\ x\nb", false),
+            ("a\nb", false),
+            ("a \\ // c\nb", false),
+            ("a \\\n\nb", false),
+        ] {
+            let lines: Vec<&str> = src.lines().flat_map(|line| line.split('\r')).collect();
+            let toks = tokenize(src);
+            let last_newline = toks
+                .iter()
+                .rposition(|t| t.kind == TokenKind::Newline)
+                .unwrap_or(0);
+            let (pieces, _) = pieces_of(src);
+            let b = pieces.iter().position(|p| p.1.text == "b").unwrap_or(0);
+            assert_eq!(
+                lines[..lines.len() - 1]
+                    .iter()
+                    .all(|line| crate::lexer::splices(line)),
+                spliced,
+                "text: {src:?}"
+            );
+            assert_eq!(
+                !super::super::tokens::ends_logical_line(&toks, last_newline),
+                spliced,
+                "tokens: {src:?}"
+            );
+            assert_eq!(!starts_logical_line(&pieces, b), spliced, "pieces: {src:?}");
+        }
+    }
 
     #[test]
     fn same_line_newline() {
