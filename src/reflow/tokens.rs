@@ -264,10 +264,15 @@ pub(super) fn prev_significant(toks: &[Token], before: usize) -> Option<usize> {
 pub(super) fn closes_literal_type(toks: &[Token], close: usize) -> bool {
     match_open_paren(toks, close).is_some_and(|open| {
         names_literal_type(&toks[open + 1..close])
-            && prev_significant(toks, open).is_none_or(|before| {
-                can_precede_cast(&toks[before]) || closes_control_header(toks, before)
-            })
+            && cast_can_follow(toks, prev_significant(toks, open))
     })
+}
+
+/// Whether a cast can stand after the token at `before` — [`can_precede_cast`], and the control
+/// header's `)` that introduces a statement. The one spelling for [`closes_literal_type`] and
+/// [`closes_callee_group`].
+fn cast_can_follow(toks: &[Token], before: Option<usize>) -> bool {
+    before.is_none_or(|k| can_precede_cast(&toks[k]) || closes_control_header(toks, k))
 }
 
 /// Whether `inner` names the type of a compound literal: [`is_type_group`], a lone identifier, or a tag
@@ -580,17 +585,13 @@ fn closes_callee_group(toks: &[Token], close: usize) -> bool {
             .filter(|t| !is_trivia(t))
             .map(|t| t.kind)
             .eq([TokenKind::Ident]);
-        !contains_comment(&toks[open..close])
-            && !before.is_some_and(|k| {
+        !(contains_comment(&toks[open..close])
+            || before.is_some_and(|k| {
                 is_excluded_callee(toks[k].text)
                     && !matches!(toks[k].text, "return" | "else" | "do")
             })
-            && (is_call_head_pair(toks, open)
-                || !(closes_type_paren(toks, close)
-                    || lone_identifier
-                        && before.is_none_or(|k| {
-                            can_precede_cast(&toks[k]) || closes_control_header(toks, k)
-                        })))
+            || closes_type_paren(toks, close)
+            || lone_identifier && cast_can_follow(toks, before))
     })
 }
 

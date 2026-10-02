@@ -174,31 +174,13 @@ fn emit_tokens(
                 .map(|open| (t.text, open))
         };
         if let Some((callee, open)) = call {
-            if let Some((_, close)) = tight_call_pair(toks, open, in_define_body) {
+            if let Some((_, close)) =
+                tight_call_pair(toks, open, in_define_body).or_else(|| forced_call_pair(toks, open))
+            {
                 // The pair-tolerant reading: trivia between the callee and `(` is dropped, and the
                 // tight `f(` this writes is the form `space_call_heads` canonicalizes — the same
                 // join `build_expr_doc`'s call arm makes for nested calls.
-                let inner = &toks[open + 1..close];
-                emit_str(out, col, callee);
-                let doc = build_call_body(
-                    inner,
-                    Fit::Measured,
-                    prev_nontrivia(toks, open).map(|k| &toks[k]),
-                    next_nontrivia(toks, close + 1).map(|k| &toks[k]),
-                );
-                emit_doc(
-                    &doc,
-                    trailing_reserved(toks, close + 1, in_define_body),
-                    out,
-                    col,
-                    width,
-                );
-                pending_func_def =
-                    next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                i = advance(i, close.saturating_add(1));
-                continue;
-            }
-            if let Some((_, close)) = forced_call_pair(toks, open) {
+                //
                 // The re-laid call is forced broken anyway — a magic trailing comma — where the
                 // passthrough's text form loses the force: the enclosing group the call sits in
                 // then measures a doc without the ForceBreak and joins what the previous pass
