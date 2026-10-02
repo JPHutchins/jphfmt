@@ -4019,3 +4019,16 @@ fn a_comment_ending_in_an_even_backslash_run_swallows_its_next_line() {
         assert_eq!(format(src), src, "must be a fixpoint: {src:?}");
     }
 }
+
+/// Every pass reads one line end (#196's review): a lone `\r` ends a line for the directive scoping
+/// as it does for the lexer, and a `#` on a line a `\` spliced in is that line's text to the walk as
+/// it is to the scoping — a swallowed `#if` raises neither's depth, so the `#define` after it is
+/// measured at the column it is written at.
+#[test]
+fn every_pass_reads_one_line_end() {
+    let lone_cr = format("int a;\r#if X\r#define Y\r#endif\r");
+    assert_eq!(lone_cr, "int a;\n#if X\n#\tdefine Y\n#endif\n");
+    assert_eq!(format(&lone_cr), lone_cr, "and it is a fixpoint");
+    let spliced = "int a; \\\\\n#if B\n#define M(a, b) ((a) + (b))\n#endif\n";
+    assert_eq!(format_with_width(spliced, 29), spliced);
+}

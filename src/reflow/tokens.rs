@@ -1314,7 +1314,7 @@ fn opens_directive(after: &[Token]) -> bool {
 /// [`crate::lexer::splices`] read over tokens: the newline is spliced when the last token before it on
 /// its physical line, past the blanks that reading trims, is a `\`. [`directive_end`] asks the same
 /// question through this one test (#190).
-fn ends_logical_line(toks: &[Token], k: usize) -> bool {
+pub(super) fn ends_logical_line(toks: &[Token], k: usize) -> bool {
     toks[k].kind == TokenKind::Newline
         && !(0..k)
             .rev()

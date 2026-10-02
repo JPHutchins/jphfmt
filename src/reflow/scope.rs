@@ -98,7 +98,8 @@ pub(super) fn scope_directives(s: &str) -> String {
     let mut depth: usize = 0;
     let mut prev_line: &str = "";
 
-    for line in s.lines() {
+    // A lone `\r` ends a line as the lexer reads it, and `str::lines` keeps it inside one.
+    for line in s.lines().flat_map(|line| line.split('\r')) {
         if crate::lexer::splices(prev_line) {
             out.push_str(line);
             out.push('\n');

@@ -13,12 +13,12 @@ use super::builders::{
 use super::scope::scoped;
 use super::tokens::{
     assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
-    directive_end, enum_body_brace, has_middle_newline, has_non_trivia, holds_hash_fragment,
-    holds_unpaired_directive_brace, holds_unsafe_hash, is_backslash, is_balanced, is_call_head,
-    is_call_head_pair, is_chain_break, is_comment, is_control_keyword, is_trivia, match_brace,
-    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, operand_span,
-    prev_nontrivia, prev_significant, respaced_when_joined_top, spans_lines,
-    split_brace_line_comment, statement_end,
+    directive_end, ends_logical_line, enum_body_brace, has_middle_newline, has_non_trivia,
+    holds_hash_fragment, holds_unpaired_directive_brace, holds_unsafe_hash, is_backslash,
+    is_balanced, is_call_head, is_call_head_pair, is_chain_break, is_comment, is_control_keyword,
+    is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
+    opens_stmt_expr, operand_span, prev_nontrivia, prev_significant, respaced_when_joined_top,
+    spans_lines, split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -85,7 +85,14 @@ fn emit_tokens(
     while i < toks.len() {
         let t = toks[i];
 
-        if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(out) {
+        // A `#` on a line a `\` spliced onto the one before it is that line's text, not a directive
+        // (phase 2 runs before phase 4) — the reading `scope_directives` takes of the same line.
+        let spliced_in = (0..i)
+            .rev()
+            .find(|&k| toks[k].kind != TokenKind::Whitespace)
+            .is_some_and(|k| toks[k].kind == TokenKind::Newline && !ends_logical_line(toks, k));
+        if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(out) && !spliced_in
+        {
             let is_define = next_nontrivia(toks, i + 1)
                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
             i = advance(
