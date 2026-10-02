@@ -547,41 +547,59 @@ fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
 }
 
 /// [`on_directive_line`] for every piece at once, in one pass — a pass that asks it per piece stays
-/// linear on a long line (#193's review).
+/// linear on a long line (#193's review). A piece is on a directive's line from the `#` that begins
+/// one ([`begins_directive`]) to that logical line's end.
 fn directive_lines(pieces: &[Piece]) -> Vec<bool> {
-    pieces
-        .iter()
-        .enumerate()
-        .scan(None, |hash_led: &mut Option<bool>, (m, p)| {
-            if starts_logical_line(pieces, m) {
-                *hash_led = None;
-            }
-            if hash_led.is_none() && !is_comment(&p.1) {
-                *hash_led = Some(p.1.text == "#");
-            }
-            Some(hash_led.is_some_and(|led| led))
+    (0..pieces.len())
+        .scan(false, |directive, m| {
+            *directive =
+                begins_directive(pieces, m) || *directive && !starts_logical_line(pieces, m);
+            Some(*directive)
         })
         .collect()
 }
 
+/// [`super::tokens::begins_directive`] over pieces: the `#` at `m` begins a directive when the white
+/// space before it holds a line end — a break no `\` splices, or a comment spanning lines — or when
+/// nothing precedes it. The one reading the walk and the scoping take over tokens (#194).
+fn begins_directive(pieces: &[Piece], m: usize) -> bool {
+    pieces[m].1.text == "#"
+        && (0..=m)
+            .rev()
+            .find_map(|k| {
+                if k < m {
+                    let piece = &pieces[k].1;
+                    let spans_lines = piece.text.contains(['\n', '\r']);
+                    if is_comment(piece) && spans_lines {
+                        return Some(true);
+                    }
+                    let splices = is_backslash(piece)
+                        && (k + 1..pieces.len())
+                            .find(|&j| {
+                                !same_line(&pieces[j].0) || !pieces[j].1.text.trim_end().is_empty()
+                            })
+                            .is_some_and(|j| !same_line(&pieces[j].0));
+                    if !(piece.text.trim_end().is_empty() || is_comment(piece) || splices) {
+                        return Some(false);
+                    }
+                }
+                starts_logical_line(pieces, k).then_some(true)
+            })
+            .unwrap_or(true)
+}
+
 /// Whether the piece at `m` opens a logical line: the first piece, or one after a line break that
-/// no `\` splices away — the last piece before the break that is not blank, read as
-/// [`crate::lexer::splices`] trims blanks, with one line break between, so a blank line after a
-/// `\` ends the logical line.
+/// no `\` splices away — the last piece on the break's line that is not blank, read as
+/// [`crate::lexer::splices`] trims blanks, with one line break, so a blank line after a `\` ends
+/// the logical line. The scan stops at the line's start, so a run of blanks costs its own length.
 fn starts_logical_line(pieces: &[Piece], m: usize) -> bool {
     m == 0
         || !(same_line(&pieces[m].0)
-            || (0..m)
-                .rev()
-                .find(|&k| !pieces[k].1.text.trim_end().is_empty())
-                .is_some_and(|k| {
-                    is_backslash(&pieces[k].1)
-                        && pieces[k + 1..=m]
-                            .iter()
-                            .map(|p| line_breaks(&p.0))
-                            .sum::<usize>()
-                            == 1
-                }))
+            || line_breaks(&pieces[m].0) == 1
+                && (0..m)
+                    .rev()
+                    .find(|&k| !pieces[k].1.text.trim_end().is_empty() || !same_line(&pieces[k].0))
+                    .is_some_and(|k| is_backslash(&pieces[k].1)))
 }
 
 /// K&R brace attach (§2.5): a brace goes on the line of the construct it belongs to — a body's `{`
@@ -807,6 +825,41 @@ mod tests {
                 "tokens: {src:?}"
             );
             assert_eq!(!starts_logical_line(&pieces, b), spliced, "pieces: {src:?}");
+        }
+    }
+
+    #[test]
+    fn the_token_and_piece_readings_of_a_directive_start_agree() {
+        // Whether a `#` begins a directive (#194), over tokens and over pieces: each snippet's last
+        // `#` begins one by both readings, or by neither.
+        for (src, directive) in [
+            ("#if x", true),
+            ("a;\n#if x", true),
+            ("a;\n\t#if x", true),
+            ("/* c */#if x", true),
+            ("a;\n/* c */ #if x", true),
+            ("a; /* b\n c */ #if x", true),
+            ("a;\n\\\n#if x", true),
+            ("a; #if x", false),
+            ("a; /* c */ #if x", false),
+            ("a; \\\n#if x", false),
+            ("a; \\ \n#if x", false),
+            ("#define S(x) \\\n#x", false),
+        ] {
+            let toks = tokenize(src);
+            let hash = toks.iter().rposition(|t| t.text == "#").unwrap_or(0);
+            let (pieces, _) = pieces_of(src);
+            let piece = pieces.iter().rposition(|p| p.1.text == "#").unwrap_or(0);
+            assert_eq!(
+                super::super::tokens::begins_directive(&toks, hash),
+                directive,
+                "tokens: {src:?}"
+            );
+            assert_eq!(
+                begins_directive(&pieces, piece),
+                directive,
+                "pieces: {src:?}"
+            );
         }
     }
 

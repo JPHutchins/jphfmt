@@ -54,7 +54,11 @@ pub fn format_with_width(src: &str, width: usize) -> String {
     // Token spacing runs first so the layout measures final widths — otherwise a space added
     // afterward (`(int)x` -> `(int) x`) could widen a line and flip a fits/explode decision on
     // the next pass, breaking idempotency.
-    let spaced = spacing::space_tokens(src);
+    //
+    // Line endings are normalized before the first pass reads them, as `post_process` normalizes
+    // what every later pass reads: a lone `\r` ends a line to the lexer but not to every reader, and
+    // the first pass read it where the second never sees one (#197).
+    let spaced = spacing::space_tokens(&lf_endings(src));
     let structured = structure::structure(&tokenize(&spaced), 0, width, false);
     post_process(&scope::scope_directives(&structured))
 }
@@ -128,10 +132,19 @@ fn collapse_blank_lines(s: &str) -> String {
     out
 }
 
+/// Every line ending as LF: `\r\n` and a lone `\r`, the lexer's other two spellings of one.
+fn lf_endings(s: &str) -> Cow<'_, str> {
+    if s.contains('\r') {
+        Cow::Owned(s.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(s)
+    }
+}
+
 /// Normalize every line ending to LF and guarantee exactly one trailing newline (§2.1). An
 /// all-whitespace input yields the empty string.
 fn normalize_endings(s: &str) -> String {
-    let lf = s.replace("\r\n", "\n").replace('\r', "\n");
+    let lf = lf_endings(s);
     let trimmed = lf.trim_end();
     if trimmed.is_empty() {
         return String::new();

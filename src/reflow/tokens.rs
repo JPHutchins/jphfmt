@@ -1309,6 +1309,38 @@ fn opens_directive(after: &[Token]) -> bool {
     }
 }
 
+/// Whether the `#` at `i` begins a preprocessing directive (C11 §6.10): it is the input's first
+/// token, or the white space before it holds a line end. A comment is white space by then, holding a
+/// line end when it spans lines; a line end a `\` splices away is gone, with its `\`, before either
+/// is read (#194). The one reading of the question for the walk and the scoping, and over pieces
+/// for the spacing pass.
+pub(super) fn begins_directive(toks: &[Token], i: usize) -> bool {
+    toks[i].text == "#"
+        && (0..i)
+            .rev()
+            .find(|&k| !vanishes_before_directives(toks, k))
+            .is_none_or(|k| toks[k].kind == TokenKind::Newline || is_comment(&toks[k]))
+}
+
+/// Whether `toks[k]` is blank or gone by the time directives are read, without holding a line end: a
+/// blank, a comment on one line, and a spliced line end with the `\` that splices it.
+fn vanishes_before_directives(toks: &[Token], k: usize) -> bool {
+    match toks[k].kind {
+        TokenKind::Newline => !ends_logical_line(toks, k),
+        TokenKind::LineComment | TokenKind::BlockComment => !toks[k].text.contains(['\n', '\r']),
+        _ => {
+            toks[k].text.trim_end().is_empty()
+                || is_backslash(&toks[k])
+                    && (k + 1..toks.len())
+                        .find(|&j| {
+                            toks[j].kind == TokenKind::Newline
+                                || !toks[j].text.trim_end().is_empty()
+                        })
+                        .is_some_and(|j| toks[j].kind == TokenKind::Newline)
+        }
+    }
+}
+
 /// Whether `toks[k]` ends the *logical* line — a newline the preprocessor does not splice away.
 ///
 /// [`crate::lexer::splices`] read over tokens: the newline is spliced when the last token before it on

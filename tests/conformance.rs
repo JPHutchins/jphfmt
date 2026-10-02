@@ -1701,8 +1701,9 @@ fn a_brace_never_attaches_onto_a_directive_line() {
         "void f(void) {\n#define LOCAL(y)\n\t{\n\t\tLOCAL(1);\n\t}\n}\n",
         "void f(void) {\n#define LOOP do\n\t{\n\t} while (0);\n}\n",
         "#define TAG struct s\n{\n\tint x;\n};\n",
-        // A comment is whitespace by the time the preprocessor reads the line.
-        "int f(int y) {\n\t/* c */ #if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
+        // A comment is whitespace by the time the preprocessor reads the line, and the directive
+        // keeps a plain one's column (#194).
+        "int f(int y) {\n/* c */ #if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
         // A `\` splices one line break: after the blank line, `#if` begins a line of its own.
         "int f(int y) {\n\tint x = 1; \\\n\n#if FOO(1)\n\t{\n\t\ty++;\n\t}\n#endif\n\treturn y;\n}\n",
     ] {
@@ -4031,4 +4032,81 @@ fn every_pass_reads_one_line_end() {
     assert_eq!(format(&lone_cr), lone_cr, "and it is a fixpoint");
     let spliced = "int a; \\\\\n#if B\n#define M(a, b) ((a) + (b))\n#endif\n";
     assert_eq!(format_with_width(spliced, 29), spliced);
+}
+
+/// #194: a `#` begins a directive when the white space before it holds a line end (C11 §6.10), and a
+/// comment is white space by then — so a `#define` after a comment on its line is a directive to the
+/// walk as it was to the spacing pass. The walk read it as code and laid `F(x)` out as a call, and
+/// the brace after it attached on the next pass; at a body's start the comment line took the body
+/// indent the plain directive does not.
+#[test]
+fn a_directive_after_a_comment_on_its_line_is_one() {
+    let src = "/* c */#define F(x) (x)\n{\n";
+    for w in 8..=30 {
+        assert_eq!(
+            format_with_width(src, w),
+            src,
+            "must keep its shape at width {w}"
+        );
+    }
+    let body = "void f(void) {\n/* c */ #define E {\n/* c */ #define D }\n\tq = aa + bb + cc + dd + ee + ff + gg + hh;\n}\n";
+    assert_eq!(format(body), body);
+    let comment_then_code = "void g(void) {\n\t/* c */ x = 1;\n}\n";
+    assert_eq!(format(comment_then_code), comment_then_code);
+}
+
+/// The scoping reads the same start the walk does: a comment-prefixed `#if` opens a level for both, so
+/// the `#define` inside is written a tab deep and measured there; a comment spanning lines holds a
+/// line end, so a `#` after it begins a directive; a `#` line inside a comment is the comment's text,
+/// never re-indented (§2.1).
+#[test]
+fn the_scoping_reads_the_walks_directive_start() {
+    let src = "/* c */ #if X\n#define M(a, b) ((a) + (b))\n#endif\n";
+    let deep = "/* c */ #if X\n#\tdefine M(a, b) ( \\\n\t(a) + \\\n\t(b) \\\n)\n#endif\n";
+    assert_eq!(format_with_width(src, 30), deep);
+    assert_eq!(format_with_width(deep, 30), deep, "and it is a fixpoint");
+    assert_eq!(
+        format("#if A\nx; /* a\n b */ #define X 1\n#endif\n"),
+        "#if A\nx; /* a\n b */ #\tdefine X 1\n#endif\n"
+    );
+    for src in [
+        "#if A\n/*\n#define X\n*/\n#endif\n",
+        "void f(void) {\n\t// c\n#if X\n\tg();\n#endif\n}\n",
+        "void f(void) {\n\t/* a\n\t b */ #if X\n\tg();\n#endif\n}\n",
+    ] {
+        assert_eq!(format(src), src, "must be a fixpoint: {src:?}");
+    }
+}
+
+/// #197: a lone `\r` ends a line to the lexer but not to every reader, so the first pass walked the
+/// `#define` after one as code while the second, reading normalized endings, wrote a macro. Endings
+/// are normalized before the first pass reads them.
+#[test]
+fn a_lone_carriage_return_ends_a_line_for_every_pass() {
+    for (src, width, expected) in [
+        (
+            "\r#define M(a) ((a)+1)\n",
+            100,
+            "\n#define M(a) ((a) + 1)\n",
+        ),
+        (
+            "x\r#define M(a) ((a)+1)\n",
+            100,
+            "x\n#define M(a) ((a) + 1)\n",
+        ),
+        (
+            "int a;\r#define M(a) ((a)+1)\rint b;\r",
+            100,
+            "int a;\n#define M(a) ((a) + 1)\nint b;\n",
+        ),
+        (
+            "; {  \\\r#endif \u{2009}x\\\r#define M(a) ((a)+1)\r",
+            29,
+            "; { \\\n#endif \u{2009}x\\\n#define M(a)((a) + 1)\n",
+        ),
+    ] {
+        let once = format_with_width(src, width);
+        assert_eq!(once, expected, "{src:?}");
+        assert_eq!(format_with_width(&once, width), once, "a fixpoint: {src:?}");
+    }
 }

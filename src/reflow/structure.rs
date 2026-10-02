@@ -12,8 +12,8 @@ use super::builders::{
 };
 use super::scope::scoped;
 use super::tokens::{
-    assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
-    directive_end, ends_logical_line, enum_body_brace, has_middle_newline, has_non_trivia,
+    assigns, begins_directive, closes_block, closes_control_header, closes_literal_type,
+    contains_comment, directive_end, enum_body_brace, has_middle_newline, has_non_trivia,
     holds_hash_fragment, holds_unpaired_directive_brace, holds_unsafe_hash, is_backslash,
     is_balanced, is_call_head, is_call_head_pair, is_chain_break, is_comment, is_control_keyword,
     is_trivia, match_brace, match_bracket, next_nontrivia, next_nontrivia_in, next_paren,
@@ -85,13 +85,10 @@ fn emit_tokens(
     while i < toks.len() {
         let t = toks[i];
 
-        // A `#` on a line a `\` spliced onto the one before it is that line's text, not a directive
-        // (phase 2 runs before phase 4) — the reading `scope_directives` takes of the same line.
-        let spliced_in = (0..i)
-            .rev()
-            .find(|&k| toks[k].kind != TokenKind::Whitespace)
-            .is_some_and(|k| toks[k].kind == TokenKind::Newline && !ends_logical_line(toks, k));
-        if t.kind == TokenKind::Punct && t.text == "#" && current_line_is_blank(out) && !spliced_in
+        if t.kind == TokenKind::Punct
+            && t.text == "#"
+            && begins_directive(toks, i)
+            && on_a_line_of_its_own(toks, i, out)
         {
             let is_define = next_nontrivia(toks, i + 1)
                 .is_some_and(|j| toks[j].kind == TokenKind::Ident && toks[j].text == "define");
@@ -1039,7 +1036,13 @@ fn emit_func_body(
     }
 
     emit_str(out, col, "\n");
-    if body[0].text != "#" {
+    // A directive line keeps its column, a comment before its `#` on that line with it (#194).
+    let directive_led = (0..body.len())
+        .find(|&k| !is_comment(&body[k]) && body[k].kind != TokenKind::Whitespace)
+        .is_some_and(|k| {
+            begins_directive(body, k) && !body[..k].iter().any(|t| t.text.contains('\n'))
+        });
+    if !directive_led {
         emit_str(out, col, &inner_indent);
     }
     emit_tokens(body, out, col, depth, width, in_define_body);
@@ -1073,12 +1076,29 @@ fn emit_str(out: &mut String, col: &mut usize, s: &str) {
     }
 }
 
-/// True when nothing but whitespace has been emitted on the current output line — so a `#` here
-/// begins a preprocessor directive.
-fn current_line_is_blank(out: &str) -> bool {
-    out.rsplit('\n')
-        .next()
-        .is_none_or(|line| line.chars().all(|c| c == ' ' || c == '\t'))
+/// Whether the output's current line holds what the source's holds before the directive `#` at
+/// `hash` — its indentation, and a comment the walk wrote verbatim — so the directive is written on a
+/// line of its own. Every arm keeps a directive's line end, so an output line that differs is an arm
+/// that joined one: loud in debug, and the `#` goes out as text in release rather than a directive
+/// written mid-line.
+fn on_a_line_of_its_own(toks: &[Token], hash: usize, out: &str) -> bool {
+    let unspaced = |line: &str| {
+        line.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let line_head = (0..hash)
+        .rev()
+        .find(|&k| toks[k].text.contains('\n'))
+        .unwrap_or(0);
+    let source: String = toks[line_head..hash].iter().map(|t| t.text).collect();
+    let own_line = unspaced(source.rsplit('\n').next().unwrap_or(""))
+        == unspaced(out.rsplit('\n').next().unwrap_or(""));
+    debug_assert!(
+        own_line,
+        "an arm joined a directive's line onto another: {out:?}"
+    );
+    own_line
 }
 
 /// Indentation, in columns, of the current output line.
@@ -1276,31 +1296,6 @@ mod tests {
 
     fn tok(kind: TokenKind, text: &'static str) -> Token<'static> {
         Token { kind, text }
-    }
-
-    #[test]
-    fn current_line_is_blank_empty_string() {
-        assert!(current_line_is_blank(""));
-    }
-
-    #[test]
-    fn current_line_is_blank_whitespace_only() {
-        assert!(current_line_is_blank("  	"));
-    }
-
-    #[test]
-    fn current_line_is_blank_content() {
-        assert!(!current_line_is_blank("x"));
-    }
-
-    #[test]
-    fn current_line_is_blank_after_newline_content() {
-        assert!(!current_line_is_blank("a\nb"));
-    }
-
-    #[test]
-    fn current_line_is_blank_after_newline_whitespace() {
-        assert!(current_line_is_blank("a\n  "));
     }
 
     #[test]
