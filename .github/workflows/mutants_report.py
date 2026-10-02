@@ -42,6 +42,16 @@ EXCLUDED: dict[str, tuple[int, str, tuple[str, ...]]] = {
         "if !inner.iter().any(|t| t.kind == TokenKind::Newline)",
         ("replace == with != in joined_pair_respaced",),
     ),
+    r"builders\.rs:\d+:\d+: replace \+ with \* in tight_after_paren_open": (
+        0,
+        "&& toks[k + 1..j].iter().any(|t| t.kind == TokenKind::Newline)",
+        ("replace + with * in tight_after_paren_open",),
+    ),
+    r"tokens\.rs:\d+:\d+: replace \+ with \* in padded_after_paren_open": (
+        4,
+        "&toks[open + 1..close],",
+        ("replace + with * in padded_after_paren_open",),
+    ),
 }
 
 

@@ -496,6 +496,14 @@ fn call_with_line_comment_passes_through() {
     );
 }
 
+/// A nested call whose author broke inside its arguments passes through: collapsing the break joins
+/// what the author separated, and only a forced break makes the laid form the one every pass reaches.
+#[test]
+fn a_nested_call_holding_an_authored_break_passes_through() {
+    let src = "void f(void) {\n\tif (likely(a\n\t\t\t&& b)) {\n\t\tg();\n\t}\n}\n";
+    assert_eq!(format(src), src);
+}
+
 /// §2.5 tightens a call against its callee; a subscript is the same postfix operator on the same
 /// value, so `[` is tight too (#79). `[[` is not a subscript — it opens an attribute, and both
 /// `int x [[deprecated]];` and `int arr[10] [[deprecated]];` are valid C23.
@@ -1135,6 +1143,22 @@ fn a_comment_bearing_group_passes_through_however_long() {
         "int z = arr[aaaaaaaaaaaaaaaaaaaaaa /* c */ + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccc + ddddd];\n",
     ] {
         assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+}
+
+/// A literal whose text spans lines has no one-line width, so a group holding one passes through
+/// instead of breaking on a measurement it cannot make.
+#[test]
+fn a_group_holding_a_spliced_literal_passes_through() {
+    for src in [
+        "int x = (aaaa + \"bb\\\ncc\" + dddd);\n",
+        "int y = arr[aaaa + \"bb\\\ncc\"[0] + dddd];\n",
+    ] {
+        assert_eq!(
+            format_with_width(src, 30),
+            src,
+            "must pass through: {src:?}"
+        );
     }
 }
 
@@ -3742,6 +3766,25 @@ fn a_par_opens_its_pad_on_the_feeds_verdict() {
     let eq = format_with_width("=\"\"/&;\n", 10);
     assert_eq!(eq, " = \"\" / &;\n");
     assert_eq!(format_with_width(&eq, 10), eq, "and it is a fixpoint");
+}
+
+/// The negative half of the pad verdict: a `*` run with no qualifier after it is a dereference, and a
+/// written `(` opens on it tight, in a condition and in an argument list alike.
+#[test]
+fn a_par_opens_tight_on_a_bare_dereference() {
+    let src = "void f(int * p) {\n\tif (*p < 8) {\n\t\tg(*p);\n\t}\n}\n";
+    assert_eq!(format(src), src);
+}
+
+/// The property suites assert the spacing fixpoint as `first_respacing_pass(out) == None`, so the
+/// check must be able to answer otherwise.
+#[test]
+fn the_spacing_fixpoint_check_names_a_respacing() {
+    assert_eq!(
+        jphfmt::first_respacing_pass("int*x;\n"),
+        Some(("space_tokens", "int * x;\n".to_owned()))
+    );
+    assert_eq!(jphfmt::first_respacing_pass("int * x;\n"), None);
 }
 
 #[test]

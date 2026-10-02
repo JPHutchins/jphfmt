@@ -9,6 +9,11 @@ additional_cargo_test_args = ["--lib", "--test", "conformance"]
 # - the newline early-return's == with != flips which spans skip the scan, and the only
 #   spans whose skip status changes are newline-only interiors, where none of the scan's
 #   refusal checks (star gaps, bit-field colons) can fire.
+# - tight_after_paren_open's newline scan with + with * starts at the `(` its guard just
+#   matched, and a `(` is never a Newline token.
+# - padded_after_paren_open's cast interior with + with * gains its own `(`, which
+#   spells_only_type_tokens admits and is_type_group's keyword search never matches, so
+#   cast_tightens reads the same verdict.
 # The fixpoint re-reads (#180) emit the rendered string, so the base_level divisions and the
 # stmt-expr render levels flow into the output — their mutants kill the conformance suite and
 # the sweep kills them; no exclusion, no rationale.
@@ -19,4 +24,6 @@ additional_cargo_test_args = ["--lib", "--test", "conformance"]
 exclude_re = [
     'structure\.rs:322:42: replace \+ with \* in emit_tokens',
     'tokens\.rs:727:37: replace == with != in joined_pair_respaced',
+    'builders\.rs:265:27: replace \+ with \* in tight_after_paren_open',
+    'tokens\.rs:86:28: replace \+ with \* in padded_after_paren_open',
 ]
