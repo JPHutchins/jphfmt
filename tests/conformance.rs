@@ -840,12 +840,17 @@ fn a_body_brace_after_an_extra_paren_group_is_not_a_literal() {
     // A `)` before a body's `{` is not enough: a function-pointer return type, a `__attribute__`,
     // and a commented callee all put one there, and none of them is a compound literal.
     for src in [
-        "void (*signal(int sig, void (*handler)(int)))(int) { return handler; }\n",
         "void f(void) __attribute__((noreturn)) { g(); }\n",
         "void f /* c */ (void) { g(); }\n",
     ] {
         assert_eq!(format(src), src, "must pass through: {src:?}");
     }
+    // The return type's parameter list opens after a `)`, a list like any other (#191), so the body
+    // is a function's, laid out as `void f(void) {` lays out its own.
+    assert_eq!(
+        format("void (*signal(int sig, void (*handler)(int)))(int) { return handler; }\n"),
+        "void (*signal(int sig, void (*handler)(int)))(int) {\n\treturn handler;\n}\n"
+    );
 }
 
 #[test]
@@ -3768,4 +3773,124 @@ fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
         cast_deref,
         "and it is a fixpoint"
     );
+}
+
+/// #191: a `(` that opens right after a `)` is a list like any other — a macro naming the function, a
+/// function-pointer declarator, a call through a pointer, `_Generic(…)(…)`. Groups are decided left to
+/// right, each measured up to where the next one opens, so the left stays flat while its line fits up
+/// to `)(` and the list after it takes the overflow; both break when neither fits.
+#[test]
+fn a_list_after_a_paren_lays_out_like_any_other() {
+    for (src, width, expected) in [
+        (
+            "WRAPPER(int, setxattr)(const char * path, const char * name, const void * value, size_t size, int flags) {\n\treturn 0;\n}\n",
+            100,
+            "WRAPPER(int, setxattr)(\n\tconst char * path,\n\tconst char * name,\n\tconst void * value,\n\tsize_t size,\n\tint flags\n) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "typedef int (*setxattr_fn)(const char * path, const char * name, const void * value, size_t size, int flags);\n",
+            100,
+            "typedef int (*setxattr_fn)(\n\tconst char * path,\n\tconst char * name,\n\tconst void * value,\n\tsize_t size,\n\tint flags\n);\n",
+        ),
+        (
+            "struct ops {\n\tint (*setxattr)(const char * path, const char * name, const void * value, size_t size, int flags);\n};\n",
+            100,
+            "struct ops {\n\tint (*setxattr)(\n\t\tconst char * path,\n\t\tconst char * name,\n\t\tconst void * value,\n\t\tsize_t size,\n\t\tint flags\n\t);\n};\n",
+        ),
+        (
+            "static void (*pick_handler(int kind, const char * name, size_t name_length, unsigned flags, int extra_flag))(int signal) {\n\treturn 0;\n}\n",
+            100,
+            "static void (*pick_handler(\n\tint kind,\n\tconst char * name,\n\tsize_t name_length,\n\tunsigned flags,\n\tint extra_flag\n))(int signal) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "void f(void) {\n\t(*ctx->handler)(context_path_name, attribute_name, attribute_value, attribute_size, attribute_flags);\n}\n",
+            100,
+            "void f(void) {\n\t(*ctx->handler)(\n\t\tcontext_path_name,\n\t\tattribute_name,\n\t\tattribute_value,\n\t\tattribute_size,\n\t\tattribute_flags\n\t);\n}\n",
+        ),
+        (
+            "void g(void) {\n\t_Generic((value), int: print_int, default: print_other)(output_stream, value_to_print, precision_digits, field_width);\n}\n",
+            80,
+            "void g(void) {\n\t_Generic((value), int: print_int, default: print_other)(\n\t\toutput_stream,\n\t\tvalue_to_print,\n\t\tprecision_digits,\n\t\tfield_width\n\t);\n}\n",
+        ),
+        (
+            "void g(void) {\n\t_Generic((value), int: print_int, default: print_other)(output_stream, value_to_print, precision_digits, field_width);\n}\n",
+            40,
+            "void g(void) {\n\t_Generic(\n\t\t(value),\n\t\tint: print_int,\n\t\tdefault: print_other\n\t)(\n\t\toutput_stream,\n\t\tvalue_to_print,\n\t\tprecision_digits,\n\t\tfield_width\n\t);\n}\n",
+        ),
+    ] {
+        assert_eq!(
+            format_with_width(src, width),
+            expected,
+            "{src:?} at width {width}"
+        );
+        for w in 10..=120 {
+            let once = format_with_width(src, w);
+            assert_eq!(
+                format_with_width(&once, w),
+                once,
+                "{src:?} is a fixpoint at width {w}"
+            );
+        }
+    }
+}
+
+/// The negative half of #191: a group that can spell a cast's type is followed by its operand, so the
+/// operand is not a list — a comma inside it is the comma operator, left alone like any depth-zero
+/// comma. A control header and a `#define`'s parameters are no callee either, and keep their gaps.
+#[test]
+fn a_paren_after_a_cast_or_a_header_is_not_a_list() {
+    for src in [
+        "x = (int) (aaaa, bbbb + cccc + dddd);\n",
+        "y = (my_t)(aaaa, bbbb + cccc + dddd);\n",
+        "z = (struct s *) (aaaa, bbbb + cccc);\n",
+    ] {
+        assert_eq!(
+            format_with_width(src, 20),
+            src,
+            "must stay a group: {src:?}"
+        );
+    }
+    assert_eq!(
+        format_with_width("r = (*fp)(aaaa, bbbb + cccc + dddd);\n", 20),
+        "r = (*fp)(\n\taaaa,\n\t(\n\t\tbbbb +\n\t\tcccc +\n\t\tdddd\n\t)\n);\n",
+        "while a dereference is a callee"
+    );
+    for src in [
+        "#define F(x) (x)\n",
+        "#define X (a) (b)\n",
+        "void f(void) {\n\tif (x) (y) (z);\n}\n",
+    ] {
+        assert_eq!(format(src), src, "must keep its gaps: {src:?}");
+    }
+}
+
+/// A list after a `)` is tight against it, as a call is against its callee (§2.5), and joins it
+/// across the author's line break.
+#[test]
+fn a_list_after_a_paren_is_tight_against_it() {
+    assert_eq!(
+        format("void *(*alloc) (void * ctx, size_t size);\n"),
+        "void *(*alloc)(void * ctx, size_t size);\n"
+    );
+    assert_eq!(
+        format("void f(void) {\n\t(*fp)\n\t\t(a, b);\n}\n"),
+        "void f(void) {\n\t(*fp)(a, b);\n}\n"
+    );
+}
+
+/// The blank line after a directive is no callee's gap: `endif` is an identifier, and an arm that read
+/// the `(` past it as a call head swallowed the next line's indentation.
+#[test]
+fn a_statement_after_a_directive_and_a_blank_line_keeps_its_indent() {
+    let src = "void f(void) {\n#ifdef D\n#endif\n\n\t(void) h(x);\n}\n";
+    assert_eq!(format(src), src);
+}
+
+/// A list after a group the walk wrote token by token — a comment refuses the group's own layout —
+/// attaches on its `(`, so the walk still counts the group's `)`: a bracket depth left one high reads
+/// the next block's `{` as an initializer's.
+#[test]
+fn a_list_after_a_verbatim_group_keeps_the_bracket_depth() {
+    let src = "void f(void) {\n\tint a = (*fp /* c */)(b);\n\t{\n\t\tint y;\n\t}\n}\n";
+    assert_eq!(format(src), src);
 }

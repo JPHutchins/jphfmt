@@ -551,13 +551,56 @@ pub(super) fn opens_with_separator(toks: &[Token]) -> bool {
     next_nontrivia(toks, 0).is_some_and(|k| matches!(toks[k].text, ";" | "," | ":"))
 }
 
-/// Whether the `(` at `j` follows a callee identifier — the pair `space_call_heads` tightens. The
-/// one spelling for that pass and for [`respaced_when_joined`], which writes this canonical tight
-/// form rather than refusing it (#121's search).
+/// Whether the `(` at `j` opens an argument or parameter list — after a callee identifier, or after a
+/// `)` whose group the list applies to ([`closes_callee_group`]) — the pair `space_call_heads`
+/// tightens. The one spelling for that pass and for [`respaced_when_joined`], which writes this
+/// canonical tight form rather than refusing it (#121's search).
 pub(super) fn is_call_head_pair(toks: &[Token], j: usize) -> bool {
     toks[j].kind == TokenKind::Punct
         && toks[j].text == "("
-        && prev_nontrivia(toks, j).is_some_and(|k| is_callee_ident(&toks[k]))
+        && prev_nontrivia(toks, j).is_some_and(|k| {
+            is_callee_ident(&toks[k]) || (toks[k].text == ")" && closes_callee_group(toks, k))
+        })
+}
+
+/// Whether the group the `)` at `close` ends is one a following `(` applies a list to — a call's own
+/// result, a function-pointer declarator, a dereference — rather than a control header, a
+/// `#define`'s parameters, or a cast's type, after which the `(` opens the operand (#191). A lone
+/// identifier is a call through a name or a cast to a typedef, one spelling token-level, so it is a
+/// list only where no cast can stand: the [`closes_literal_type`] prev rule.
+fn closes_callee_group(toks: &[Token], close: usize) -> bool {
+    match_open_paren(toks, close).is_some_and(|open| {
+        let before = prev_significant(toks, open);
+        let lone_identifier = toks[open + 1..close]
+            .iter()
+            .filter(|t| !is_trivia(t))
+            .map(|t| t.kind)
+            .eq([TokenKind::Ident]);
+        !closes_control_header(toks, close)
+            && !before.is_some_and(|k| names_a_macro(toks, k))
+            && (is_call_head_pair(toks, open)
+                || !(closes_type_paren(toks, close)
+                    || lone_identifier
+                        && before.is_none_or(|k| {
+                            can_precede_cast(&toks[k]) || closes_control_header(toks, k)
+                        })))
+    })
+}
+
+/// Whether the token at `j` is the name in a `#define`, where the gap before a `(` is not spacing but
+/// meaning: `#define X (y)` defines `X` as `(y)`, and `#define X(y)` a function-like macro taking `y`.
+/// Neither spelling may become the other, so the author's gap stands exactly as written (§6).
+///
+/// Tightening it turned every object-like macro whose body is parenthesized into a function-like one, and
+/// the output did not compile — the most common shape in the corpus that jphfmt got wrong, and invisible
+/// to every check because the character it dropped was whitespace.
+pub(super) fn names_a_macro(toks: &[Token], j: usize) -> bool {
+    // Past comments: a comment is whitespace by the time the preprocessor reads the line, so
+    // `#define /* c */ X (y)` defines exactly what `#define X (y)` does.
+    prev_significant(toks, j)
+        .filter(|&k| toks[k].text == "define")
+        .and_then(|k| prev_significant(toks, k))
+        .is_some_and(|k| toks[k].text == "#")
 }
 
 /// Whether the `[` at `j` indexes a value — the shape `space_subscripts` tightens. An attribute's
