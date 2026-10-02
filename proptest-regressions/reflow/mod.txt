@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 0c013c5c7a139a1956fb459b47840e6d275a3f6b107209d121dcf6cff8c8885f # shrinks to s = "={0:{A*a}?\"\"?}", width = 1
 cc 2633e319a13fb914ac7f9991fd24830e67d8170720e4c4fe6bd7423fcbc18b5c # shrinks to s = "=(''\"\"{a*_;}A\"", width = 1
+cc bc2cb50e7f3b88a4f462a7d3f939c58b4d0e6a59f741c702a31754b7dcb04403 # shrinks to s = "=?:A;", width = 9
