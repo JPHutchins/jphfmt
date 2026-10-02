@@ -431,14 +431,65 @@ fn paired(
     toks: &[Token],
     opens: &str,
     closes: &str,
-    mut order: impl Iterator<Item = usize>,
+    order: impl Iterator<Item = usize>,
 ) -> Option<usize> {
+    let mut directive_brace = directive_braces(toks);
+    let mut order = order.peekable();
+    // The anchor pairs with nothing either: a directive's brace closes no block and opens none.
+    if order.peek().is_some_and(|&anchor| directive_brace(anchor)) {
+        return None;
+    }
     let mut depth = 0usize;
     order.find(|&j| {
-        depth += usize::from(toks[j].text == opens);
-        depth = depth.saturating_sub(usize::from(toks[j].text == closes));
-        depth == 0 && toks[j].text == closes
+        let counted = matches!(toks[j].text, t if t == opens || t == closes) && !directive_brace(j);
+        let closing = counted && toks[j].text == closes;
+        depth += usize::from(counted && toks[j].text == opens);
+        depth = depth.saturating_sub(usize::from(closing));
+        depth == 0 && closing
     })
+}
+
+/// The test for whether `toks[j]` is a brace on a preprocessor directive's logical line — whose first
+/// significant token, past the comments phase 3 has made whitespace, is a `#` naming a directive. Such
+/// a brace is the preprocessor's text, which pairs with nothing the code around it opens:
+/// `#define END }` in a function body closes no block (#189). The test remembers the logical line it
+/// read last, so a walk that asks it of every brace in a span stays linear (#195's review).
+fn directive_braces<'a>(toks: &'a [Token]) -> impl FnMut(usize) -> bool + 'a {
+    let mut line: Option<(std::ops::Range<usize>, bool)> = None;
+    move |j| {
+        matches!(toks[j].text, "{" | "}")
+            && match &line {
+                Some((range, directive)) if range.contains(&j) => *directive,
+                _ => {
+                    let start = (0..j)
+                        .rev()
+                        .find(|&k| ends_logical_line(toks, k))
+                        .map_or(0, |k| k + 1);
+                    let end = (j..toks.len())
+                        .find(|&k| ends_logical_line(toks, k))
+                        .map_or(toks.len(), |k| k + 1);
+                    let directive = (start..j)
+                        .find(|&h| !is_trivia(&toks[h]) && !is_comment(&toks[h]))
+                        .is_some_and(|h| toks[h].text == "#" && opens_directive(&toks[h + 1..]));
+                    line = Some((start..end, directive));
+                    directive
+                }
+            }
+    }
+}
+
+/// Whether the braces on `toks`'s directive lines do not pair among themselves — `#define BEGIN {`
+/// with no directive `}` after it. Code may use such a macro to open or close a block its own braces
+/// never show, so which of the code's braces closes the construct is not knowable from tokens (§6).
+pub(super) fn holds_unpaired_directive_brace(toks: &[Token]) -> bool {
+    let mut directive_brace = directive_braces(toks);
+    let depth = (0..toks.len())
+        .filter(|&j| directive_brace(j))
+        .try_fold(0usize, |depth, j| match toks[j].text {
+            "{" => Some(depth + 1),
+            _ => depth.checked_sub(1),
+        });
+    depth != Some(0)
 }
 
 /// The tokens outside every bracket group, paired with their index — the level a construct's own
@@ -447,7 +498,11 @@ pub(super) fn at_depth_zero<'a, 'src>(
     toks: &'a [Token<'src>],
 ) -> impl Iterator<Item = (usize, &'a Token<'src>)> {
     let mut depth = 0i32;
-    toks.iter().enumerate().filter(move |(_, t)| {
+    let mut directive_brace = directive_braces(toks);
+    toks.iter().enumerate().filter(move |&(j, t)| {
+        if directive_brace(j) {
+            return false;
+        }
         match t.text {
             "(" | "[" | "{" => depth += 1,
             ")" | "]" | "}" => depth -= 1,
@@ -962,8 +1017,9 @@ pub(super) fn contains_comment(toks: &[Token]) -> bool {
 /// through verbatim rather than risk mis-splitting (which could accumulate commas across passes).
 pub(super) fn is_balanced(toks: &[Token]) -> bool {
     let (mut paren, mut brack, mut brace) = (0i32, 0i32, 0i32);
-    for t in toks {
-        if t.kind != TokenKind::Punct {
+    let mut directive_brace = directive_braces(toks);
+    for (j, t) in toks.iter().enumerate() {
+        if t.kind != TokenKind::Punct || directive_brace(j) {
             continue;
         }
         match t.text {
@@ -1562,6 +1618,24 @@ mod tests {
             let close = toks.iter().rposition(|t| t.text == "}").unwrap();
             assert!(!closes_block(&toks, close), "{src}");
         }
+    }
+
+    #[test]
+    fn a_directive_brace_is_no_bracket_to_any_depth_walk() {
+        let toks = crate::lexer::tokenize("{ a,\n#define X }\n b, c }");
+        assert_eq!(match_brace(&toks, 0), Some(toks.len() - 1));
+        assert_eq!(match_open_brace(&toks, toks.len() - 1), Some(0));
+        let directive = toks.iter().position(|t| t.text == "}").unwrap();
+        assert_eq!(match_open_brace(&toks, directive), None);
+        assert!(is_balanced(&toks[1..toks.len() - 1]));
+        assert!(holds_unpaired_directive_brace(&toks));
+        let commas: Vec<_> = at_depth_zero(&toks[1..toks.len() - 1])
+            .filter(|(_, t)| t.text == ",")
+            .collect();
+        assert_eq!(commas.len(), 2);
+        assert!(!holds_unpaired_directive_brace(&crate::lexer::tokenize(
+            "{\n#define E {\n#define D }\n}"
+        )));
     }
 
     #[test]

@@ -14,10 +14,11 @@ use super::scope::scoped;
 use super::tokens::{
     assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
     directive_end, enum_body_brace, has_middle_newline, has_non_trivia, holds_hash_fragment,
-    holds_unsafe_hash, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
-    is_comment, is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia,
-    next_nontrivia_in, next_paren, opens_stmt_expr, operand_span, prev_nontrivia, prev_significant,
-    respaced_when_joined_top, spans_lines, split_brace_line_comment, statement_end,
+    holds_unpaired_directive_brace, holds_unsafe_hash, is_backslash, is_balanced, is_call_head,
+    is_call_head_pair, is_chain_break, is_comment, is_control_keyword, is_trivia, match_brace,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, operand_span,
+    prev_nontrivia, prev_significant, respaced_when_joined_top, spans_lines,
+    split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -998,7 +999,7 @@ fn emit_func_body(
         return open.saturating_add(1);
     };
     let inner = &toks[open + 1..close];
-    if !is_balanced(inner) {
+    if !is_balanced(inner) || holds_unpaired_directive_brace(inner) {
         emit_str(out, col, toks[open].text);
         for tok in &toks[open + 1..=close] {
             emit_str(out, col, tok.text);
