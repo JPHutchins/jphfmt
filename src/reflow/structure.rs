@@ -14,10 +14,11 @@ use super::scope::scoped;
 use super::tokens::{
     assigns, closes_block, closes_control_header, closes_literal_type, contains_comment,
     directive_end, enum_body_brace, has_middle_newline, has_non_trivia, holds_hash_fragment,
-    holds_unsafe_hash, is_backslash, is_balanced, is_call_head, is_call_head_pair, is_chain_break,
-    is_comment, is_control_keyword, is_trivia, match_brace, match_bracket, next_nontrivia,
-    next_nontrivia_in, next_paren, opens_stmt_expr, operand_span, prev_nontrivia, prev_significant,
-    respaced_when_joined_top, spans_lines, split_brace_line_comment, statement_end,
+    holds_unpaired_directive_brace, holds_unsafe_hash, is_backslash, is_balanced, is_call_head,
+    is_call_head_pair, is_chain_break, is_comment, is_control_keyword, is_trivia, match_brace,
+    match_bracket, next_nontrivia, next_nontrivia_in, next_paren, opens_stmt_expr, operand_span,
+    prev_nontrivia, prev_significant, respaced_when_joined_top, spans_lines,
+    split_brace_line_comment, statement_end,
 };
 use crate::doc::{Doc, TAB_WIDTH, display_width, render};
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -162,43 +163,36 @@ fn emit_tokens(
             continue;
         }
 
-        if let Some(open) = next_nontrivia(toks, i + 1).filter(|&k| toks[k].text == "(") {
-            if let Some((_, close)) = tight_call_pair(toks, open, in_define_body) {
+        // The callee an arm attaches a list to, and the list's `(`: an identifier ahead of its `(`,
+        // or a list opening after a `)` — a group an earlier arm already wrote, so the walk stands
+        // on the `(` itself and writes no callee (#191).
+        let call = if t.text == "(" && prev_nontrivia(toks, i).is_some_and(|k| toks[k].text == ")")
+        {
+            Some(("", i))
+        } else {
+            next_nontrivia(toks, i + 1)
+                .filter(|&k| !is_trivia(&t) && t.text != ")" && toks[k].text == "(")
+                .map(|open| (t.text, open))
+        };
+        if let Some((callee, open)) = call {
+            if let Some((_, close)) =
+                tight_call_pair(toks, open, in_define_body).or_else(|| forced_call_pair(toks, open))
+            {
                 // The pair-tolerant reading: trivia between the callee and `(` is dropped, and the
                 // tight `f(` this writes is the form `space_call_heads` canonicalizes — the same
                 // join `build_expr_doc`'s call arm makes for nested calls.
-                let inner = &toks[open + 1..close];
-                emit_str(out, col, t.text);
-                let doc = build_call_body(
-                    inner,
-                    Fit::Measured,
-                    Some(&toks[i]),
-                    next_nontrivia(toks, close + 1).map(|k| &toks[k]),
-                );
-                emit_doc(
-                    &doc,
-                    trailing_reserved(toks, close + 1, in_define_body),
-                    out,
-                    col,
-                    width,
-                );
-                pending_func_def =
-                    next_nontrivia(toks, close + 1).is_some_and(|j| toks[j].text == "{");
-                i = advance(i, close.saturating_add(1));
-                continue;
-            }
-            if let Some((_, close)) = forced_call_pair(toks, open) {
+                //
                 // The re-laid call is forced broken anyway — a magic trailing comma — where the
                 // passthrough's text form loses the force: the enclosing group the call sits in
                 // then measures a doc without the ForceBreak and joins what the previous pass
                 // broke, two passes for one line (#108's draw). A forced break has no fits
                 // decision to flip, so the re-laid form is the one every pass reaches.
                 let inner = &toks[open + 1..close];
-                emit_str(out, col, t.text);
+                emit_str(out, col, callee);
                 let doc = build_call_body(
                     inner,
                     Fit::Measured,
-                    Some(&toks[i]),
+                    prev_nontrivia(toks, open).map(|k| &toks[k]),
                     next_nontrivia(toks, close + 1).map(|k| &toks[k]),
                 );
                 emit_doc(
@@ -500,6 +494,18 @@ fn emit_tokens(
             && next_nontrivia(toks, i + 1).is_some_and(|j| toks[j].text == "{")
         {
             i = i.saturating_add(1);
+            continue;
+        }
+        // The gap between a group and the list an arm attaches after it drops, as the identifier
+        // arm drops its callee's: the reserve's newline prediction reads the attached form (#146),
+        // and the walk reaches a list after `)` only on the `(` itself (#191).
+        if is_trivia(&t)
+            && prev_nontrivia(toks, i).is_some_and(|j| toks[j].text == ")")
+            && let Some(open) = next_nontrivia(toks, i + 1)
+            && (tight_call_pair(toks, open, in_define_body).is_some()
+                || forced_call_pair(toks, open).is_some())
+        {
+            i = advance(i, open);
             continue;
         }
         emit_str(out, col, t.text);
@@ -993,7 +999,7 @@ fn emit_func_body(
         return open.saturating_add(1);
     };
     let inner = &toks[open + 1..close];
-    if !is_balanced(inner) {
+    if !is_balanced(inner) || holds_unpaired_directive_brace(inner) {
         emit_str(out, col, toks[open].text);
         for tok in &toks[open + 1..=close] {
             emit_str(out, col, tok.text);

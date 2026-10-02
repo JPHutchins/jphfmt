@@ -151,17 +151,18 @@ fn build_juxtaposed_doc(element: &[Token]) -> Doc {
     )
 }
 
-/// Whether the nearest non-trivia token before `open` names a callee ([`super::tokens::is_callee_ident`]). Unlike
+/// Whether the nearest non-trivia token before `open` names a callee ([`super::tokens::is_callee_ident`])
+/// or closes a group a list applies to. Unlike
 /// [`super::tokens::is_call_head`], trivia (including a newline) between the ident and `(` is
 /// tolerated: [`build_expr_doc`] must flatten such a gap to nothing (§2.5's tight `foo(`) rather
 /// than a collapsed space, since a collapsed space is itself same-line and would be tightened by
 /// `space_call_heads` on the next pass — collapsing to a space here instead would render this
 /// pass's output as a fixpoint of a *different* pass, breaking idempotency.
 ///
-/// Only an *identifier* callee is recognized: calls through a function pointer (`(*p)(args)`) or a
-/// parenthesized expression (`(expr)(args)`) are left as flat text, because a `)` before `(` is
-/// token-level indistinguishable from a C-style cast `(type)(expr)` — exploding the latter as a
-/// call would be wrong, so §6 "prefer passthrough when ambiguous" applies.
+/// A call through a function pointer (`(*p)(args)`) or a call's own result (`f(a)(b)`) is a list
+/// like any other (#191). A `)` before `(` is also a C-style cast `(type)(expr)`, and exploding the
+/// operand as a list would be wrong, so a group that can spell a cast's type is not a callee — §6
+/// "prefer passthrough when ambiguous" — which [`super::tokens::is_call_head_pair`] decides.
 ///
 /// Only whitespace/newline trivia is skipped, never comments: a commented `foo /* c */ (a)` stops
 /// the walk, but the structure pass rejects comment-bearing constructs before they reach here.

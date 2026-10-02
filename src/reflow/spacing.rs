@@ -537,15 +537,39 @@ fn closes_do_body(pieces: &[Piece], close: usize) -> bool {
 /// after a `\` ends the logical line. A directive ends at its line end, so nothing may be attached
 /// onto one — `#else⏎{` joined is `#else {`, and `#define X(y)⏎{` joined defines a different macro.
 fn on_directive_line(pieces: &[Piece], k: usize) -> bool {
-    let spliced = |m: usize| is_backslash(&pieces[m - 1].1) && line_breaks(&pieces[m].0) == 1;
     let line_start = (0..=k)
         .rev()
-        .find(|&m| m == 0 || (!same_line(&pieces[m].0) && !spliced(m)))
+        .find(|&m| starts_logical_line(pieces, m))
         .unwrap_or(0);
-    pieces[line_start..=k]
+    directive_lines(&pieces[line_start..=k])
+        .last()
+        .is_some_and(|&directive| directive)
+}
+
+/// [`on_directive_line`] for every piece at once, in one pass — a pass that asks it per piece stays
+/// linear on a long line (#193's review).
+fn directive_lines(pieces: &[Piece]) -> Vec<bool> {
+    pieces
         .iter()
-        .find(|p| !is_comment(&p.1))
-        .is_some_and(|p| p.1.text == "#")
+        .enumerate()
+        .scan(None, |hash_led: &mut Option<bool>, (m, p)| {
+            if starts_logical_line(pieces, m) {
+                *hash_led = None;
+            }
+            if hash_led.is_none() && !is_comment(&p.1) {
+                *hash_led = Some(p.1.text == "#");
+            }
+            Some(hash_led.is_some_and(|led| led))
+        })
+        .collect()
+}
+
+/// Whether the piece at `m` opens a logical line: the first piece, or one after a line break that
+/// no `\` splices away — one line break, so a blank line after a `\` ends the logical line.
+fn starts_logical_line(pieces: &[Piece], m: usize) -> bool {
+    m == 0
+        || !(same_line(&pieces[m].0)
+            || is_backslash(&pieces[m - 1].1) && line_breaks(&pieces[m].0) == 1)
 }
 
 /// K&R brace attach (§2.5): a brace goes on the line of the construct it belongs to — a body's `{`
@@ -643,19 +667,24 @@ fn space_semicolons(pieces: &mut [Piece]) {
     }
 }
 
-/// Normalize `ident (` spacing for call heads: non-excluded idents become tight (`foo(`),
+/// Normalize `ident (` spacing for call heads: non-excluded idents become tight (`foo(`), as does a
+/// list after the group it applies to (`(*fp)(`, #191),
 /// control-flow keywords and type keywords get exactly one space (`if (`, `int (*cb)`),
 /// and other excluded callees (`sizeof`, `typeof`, `return`, etc.) are left as-is so we
 /// don't fight the house style (e.g. golden.c has `sizeof(int)` tight).
 fn space_call_heads(pieces: &mut [Piece]) {
     // Projected once, not per `(`: the backward scan is over the whole prefix.
     let toks: Vec<Token> = pieces.iter().map(|p| p.1).collect();
+    let directive = directive_lines(pieces);
     for j in 0..pieces.len().saturating_sub(1) {
         let next_is_paren = pieces[j + 1].1.kind == TokenKind::Punct && pieces[j + 1].1.text == "(";
         if !same_line(&pieces[j + 1].0) || (next_is_paren && names_a_macro(pieces, j)) {
             continue;
         }
-        if is_call_head_pair(&toks, j + 1) {
+        // A directive's line keeps the author's `)(` gaps: in a `#define` a group may be the
+        // parameters, the body, or text an expansion pastes into a call, none of it a list the line
+        // spells (§6). The layout never walks a directive's own line, so only this pass reads one.
+        if is_call_head_pair(&toks, j + 1) && !(pieces[j].1.text == ")" && directive[j]) {
             pieces[j + 1].0.clear();
         } else if pieces[j + 1].1.text == "("
             && (is_control_keyword(pieces[j].1.text) || is_type_context(pieces[j].1.text))

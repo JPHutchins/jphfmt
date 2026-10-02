@@ -496,6 +496,14 @@ fn call_with_line_comment_passes_through() {
     );
 }
 
+/// A nested call whose author broke inside its arguments passes through: collapsing the break joins
+/// what the author separated, and only a forced break makes the laid form the one every pass reaches.
+#[test]
+fn a_nested_call_holding_an_authored_break_passes_through() {
+    let src = "void f(void) {\n\tif (likely(a\n\t\t\t&& b)) {\n\t\tg();\n\t}\n}\n";
+    assert_eq!(format(src), src);
+}
+
 /// §2.5 tightens a call against its callee; a subscript is the same postfix operator on the same
 /// value, so `[` is tight too (#79). `[[` is not a subscript — it opens an attribute, and both
 /// `int x [[deprecated]];` and `int arr[10] [[deprecated]];` are valid C23.
@@ -840,12 +848,17 @@ fn a_body_brace_after_an_extra_paren_group_is_not_a_literal() {
     // A `)` before a body's `{` is not enough: a function-pointer return type, a `__attribute__`,
     // and a commented callee all put one there, and none of them is a compound literal.
     for src in [
-        "void (*signal(int sig, void (*handler)(int)))(int) { return handler; }\n",
         "void f(void) __attribute__((noreturn)) { g(); }\n",
         "void f /* c */ (void) { g(); }\n",
     ] {
         assert_eq!(format(src), src, "must pass through: {src:?}");
     }
+    // The return type's parameter list opens after a `)`, a list like any other (#191), so the body
+    // is a function's, laid out as `void f(void) {` lays out its own.
+    assert_eq!(
+        format("void (*signal(int sig, void (*handler)(int)))(int) { return handler; }\n"),
+        "void (*signal(int sig, void (*handler)(int)))(int) {\n\treturn handler;\n}\n"
+    );
 }
 
 #[test]
@@ -1130,6 +1143,22 @@ fn a_comment_bearing_group_passes_through_however_long() {
         "int z = arr[aaaaaaaaaaaaaaaaaaaaaa /* c */ + bbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccc + ddddd];\n",
     ] {
         assert_eq!(format(src), src, "must pass through: {src:?}");
+    }
+}
+
+/// A literal whose text spans lines has no one-line width, so a group holding one passes through
+/// instead of breaking on a measurement it cannot make.
+#[test]
+fn a_group_holding_a_spliced_literal_passes_through() {
+    for src in [
+        "int x = (aaaa + \"bb\\\ncc\" + dddd);\n",
+        "int y = arr[aaaa + \"bb\\\ncc\"[0] + dddd];\n",
+    ] {
+        assert_eq!(
+            format_with_width(src, 30),
+            src,
+            "must pass through: {src:?}"
+        );
     }
 }
 
@@ -3739,6 +3768,25 @@ fn a_par_opens_its_pad_on_the_feeds_verdict() {
     assert_eq!(format_with_width(&eq, 10), eq, "and it is a fixpoint");
 }
 
+/// The negative half of the pad verdict: a `*` run with no qualifier after it is a dereference, and a
+/// written `(` opens on it tight, in a condition and in an argument list alike.
+#[test]
+fn a_par_opens_tight_on_a_bare_dereference() {
+    let src = "void f(int * p) {\n\tif (*p < 8) {\n\t\tg(*p);\n\t}\n}\n";
+    assert_eq!(format(src), src);
+}
+
+/// The property suites assert the spacing fixpoint as `first_respacing_pass(out) == None`, so the
+/// check must be able to answer otherwise.
+#[test]
+fn the_spacing_fixpoint_check_names_a_respacing() {
+    assert_eq!(
+        jphfmt::first_respacing_pass("int*x;\n"),
+        Some(("space_tokens", "int * x;\n".to_owned()))
+    );
+    assert_eq!(jphfmt::first_respacing_pass("int * x;\n"), None);
+}
+
 #[test]
 fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
     // #175's round-3 witness: the collapse's cast verdict reads the slice the layout walks, so the
@@ -3767,6 +3815,194 @@ fn a_control_body_group_keeps_its_pad_where_space_casts_skips() {
         format_with_width(&cast_deref, 10),
         cast_deref,
         "and it is a fixpoint"
+    );
+}
+
+/// #191: a `(` that opens right after a `)` is a list like any other — a macro naming the function, a
+/// function-pointer declarator, a call through a pointer, `_Generic(…)(…)`. Groups are decided left to
+/// right, each measured up to where the next one opens, so the left stays flat while its line fits up
+/// to `)(` and the list after it takes the overflow; both break when neither fits.
+#[test]
+fn a_list_after_a_paren_lays_out_like_any_other() {
+    for (src, width, expected) in [
+        (
+            "WRAPPER(int, setxattr)(const char * path, const char * name, const void * value, size_t size, int flags) {\n\treturn 0;\n}\n",
+            100,
+            "WRAPPER(int, setxattr)(\n\tconst char * path,\n\tconst char * name,\n\tconst void * value,\n\tsize_t size,\n\tint flags\n) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "typedef int (*setxattr_fn)(const char * path, const char * name, const void * value, size_t size, int flags);\n",
+            100,
+            "typedef int (*setxattr_fn)(\n\tconst char * path,\n\tconst char * name,\n\tconst void * value,\n\tsize_t size,\n\tint flags\n);\n",
+        ),
+        (
+            "struct ops {\n\tint (*setxattr)(const char * path, const char * name, const void * value, size_t size, int flags);\n};\n",
+            100,
+            "struct ops {\n\tint (*setxattr)(\n\t\tconst char * path,\n\t\tconst char * name,\n\t\tconst void * value,\n\t\tsize_t size,\n\t\tint flags\n\t);\n};\n",
+        ),
+        (
+            "static void (*pick_handler(int kind, const char * name, size_t name_length, unsigned flags, int extra_flag))(int signal) {\n\treturn 0;\n}\n",
+            100,
+            "static void (*pick_handler(\n\tint kind,\n\tconst char * name,\n\tsize_t name_length,\n\tunsigned flags,\n\tint extra_flag\n))(int signal) {\n\treturn 0;\n}\n",
+        ),
+        (
+            "void f(void) {\n\t(*ctx->handler)(context_path_name, attribute_name, attribute_value, attribute_size, attribute_flags);\n}\n",
+            100,
+            "void f(void) {\n\t(*ctx->handler)(\n\t\tcontext_path_name,\n\t\tattribute_name,\n\t\tattribute_value,\n\t\tattribute_size,\n\t\tattribute_flags\n\t);\n}\n",
+        ),
+        (
+            "void g(void) {\n\t_Generic((value), int: print_int, default: print_other)(output_stream, value_to_print, precision_digits, field_width);\n}\n",
+            80,
+            "void g(void) {\n\t_Generic((value), int: print_int, default: print_other)(\n\t\toutput_stream,\n\t\tvalue_to_print,\n\t\tprecision_digits,\n\t\tfield_width\n\t);\n}\n",
+        ),
+        (
+            "void g(void) {\n\t_Generic((value), int: print_int, default: print_other)(output_stream, value_to_print, precision_digits, field_width);\n}\n",
+            40,
+            "void g(void) {\n\t_Generic(\n\t\t(value),\n\t\tint: print_int,\n\t\tdefault: print_other\n\t)(\n\t\toutput_stream,\n\t\tvalue_to_print,\n\t\tprecision_digits,\n\t\tfield_width\n\t);\n}\n",
+        ),
+    ] {
+        assert_eq!(
+            format_with_width(src, width),
+            expected,
+            "{src:?} at width {width}"
+        );
+        for w in 10..=120 {
+            let once = format_with_width(src, w);
+            assert_eq!(
+                format_with_width(&once, w),
+                once,
+                "{src:?} is a fixpoint at width {w}"
+            );
+        }
+    }
+}
+
+/// The negative half of #191: a group that can spell a cast's type is followed by its operand, so the
+/// operand is not a list — a comma inside it is the comma operator, left alone like any depth-zero
+/// comma — and a comment in the group hides the type it may spell, so it refuses the same way. A
+/// keyword's own operand (a control header, `sizeof`'s type), a statement expression, and a
+/// `#define`'s line — parameters, body, any group depth — are no list either, and keep their gaps
+/// at every width.
+#[test]
+fn a_paren_after_a_cast_or_a_header_is_not_a_list() {
+    for src in [
+        "x = (int) (aaaa, bbbb + cccc + dddd);\n",
+        "y = (my_t)(aaaa, bbbb + cccc + dddd);\n",
+        "z = (struct s *) (aaaa, bbbb + cccc);\n",
+        "y = (my_t /* c */) (aaaa, bbbb + cccc + dddd);\n",
+        "a = sizeof(int) (aaaa, bbbb);\n",
+        "#define F(x) (x)\n",
+        "#define X (a) (b) (c)\n",
+        "#define M F(a) (b)\n",
+        "#define F(x) (x) (y) (z)\n",
+        "if (x) (y) (z);\n",
+        "hook(x) ({\n\tint t = 1;\n\tt;\n});\n",
+    ] {
+        for w in 10..=120 {
+            assert_eq!(
+                format_with_width(src, w),
+                src,
+                "must keep its shape at width {w}: {src:?}"
+            );
+        }
+    }
+    assert_eq!(
+        format_with_width("r = (*fp)(aaaa, bbbb + cccc + dddd);\n", 20),
+        "r = (*fp)(\n\taaaa,\n\t(\n\t\tbbbb +\n\t\tcccc +\n\t\tdddd\n\t)\n);\n",
+        "while a dereference is a callee"
+    );
+}
+
+/// A list after a `)` is tight against it, as a call is against its callee (§2.5), and joins it
+/// across the author's line break.
+#[test]
+fn a_list_after_a_paren_is_tight_against_it() {
+    assert_eq!(
+        format("void *(*alloc) (void * ctx, size_t size);\n"),
+        "void *(*alloc)(void * ctx, size_t size);\n"
+    );
+    assert_eq!(
+        format("void f(void) {\n\t(*fp)\n\t\t(a, b);\n}\n"),
+        "void f(void) {\n\t(*fp)(a, b);\n}\n"
+    );
+    assert_eq!(
+        format("int f(void) {\n\treturn (*fp) (a, b);\n}\n"),
+        "int f(void) {\n\treturn (*fp)(a, b);\n}\n",
+        "a statement keyword's operand is a value a list applies to, not the keyword's own"
+    );
+}
+
+/// The blank line after a directive is no callee's gap: `endif` is an identifier, and an arm that read
+/// the `(` past it as a call head swallowed the next line's indentation.
+#[test]
+fn a_statement_after_a_directive_and_a_blank_line_keeps_its_indent() {
+    let src = "void f(void) {\n#ifdef D\n#endif\n\n\t(void) h(x);\n}\n";
+    assert_eq!(format(src), src);
+}
+
+/// A list after a group the walk wrote token by token — a depth-zero comma refuses the group's own
+/// layout — attaches on its `(`, so the walk still counts the group's `)`: a bracket depth left one
+/// high reads the next block's `{` as an initializer's.
+#[test]
+fn a_list_after_a_verbatim_group_keeps_the_bracket_depth() {
+    let src = "void f(void) {\n\tint a = (x, *fp)(b);\n\t{\n\t\tint y;\n\t}\n}\n";
+    assert_eq!(format(src), src);
+}
+
+/// #189: a brace on a directive's line is the preprocessor's text, which pairs with nothing the code
+/// around it opens. Counted, `#define END }` closed the body one brace early and the block's own `}`
+/// went out at the function's indent; `#define BEGIN {` left the body unmatched, and a later
+/// `#define END }` lost its brace to a line of its own. A comment before the `#` is whitespace by
+/// phase 4, and a `\` splices the brace's line into the directive's.
+#[test]
+fn a_brace_in_a_directive_pairs_with_nothing() {
+    for src in [
+        "void f(int y) {\n\tif (y) {\n\t\ty++;\n#define END }\n\t}\n\treturn;\n}\n",
+        "void f(int y) {\n\tif (y) {\n\t\ty++;\n#define BEGIN {\n\t}\n\treturn;\n}\n#define END }\nvoid g(int y) {\n\tif (y) {\n\t\ty++;\n\t}\n}\n",
+        "void h(void) {\n\tint a[] = {\n\t\t1,\n#define C }\n\t\t2,\n\t};\n}\n",
+        "void f(int y) {\n\tif (y) {\n\t\ty++;\n/* c */ #define END }\n\t}\n\treturn;\n}\n",
+        "void f(void) {\n\tint x = 1;\n#define END \\\n}\n\treturn;\n}\n",
+    ] {
+        assert_eq!(format(src), src, "must be a fixpoint: {src:?}");
+    }
+}
+
+/// A directive brace no other directive brace pairs is a macro the code may open or close a block
+/// with — `BEGIN` used where its `{` belongs — so which of the code's braces closes the body is not
+/// knowable from tokens, and the body passes through however long its lines (§6). Directive braces
+/// that pair among themselves leave the body the code's, laid out as any other.
+#[test]
+fn a_body_holding_an_unpaired_directive_brace_passes_through() {
+    for src in [
+        "void f(int y) {\n#define END }\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n}\n",
+        "void f(int y) {\n#define BEGIN {\n\tBEGIN\n\t}\n\treturn;\n}\n",
+        "void f(void) {\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n#define END \\\n}\n\treturn;\n}\n",
+    ] {
+        assert_eq!(
+            format_with_width(src, 30),
+            src,
+            "must pass through: {src:?}"
+        );
+    }
+    assert_eq!(
+        format_with_width(
+            "void f(void) {\n#define INIT { 0, 1 }\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n}\n",
+            30
+        ),
+        "void f(void) {\n#define INIT { 0, 1 }\n\tg(\n\t\taaaaaaaaaaaa,\n\t\tbbbbbbbbbbbbbb,\n\t\tcccccccccccc\n\t);\n}\n"
+    );
+}
+
+/// A statement after a directive's `}` starts one: the brace closes no block, so it is no anchor for
+/// the block-or-value question, and the statement is laid out as the one it is.
+#[test]
+fn a_statement_after_a_directive_brace_is_laid_out() {
+    assert_eq!(
+        format_with_width(
+            "void f(void) {\n\tint a[] = {\n\t\t1,\n\t};\n#define E {\n#define D }\n\tq = aa + bb + cc + dd + ee + ff + gg + hh;\n}\n",
+            40
+        ),
+        "void f(void) {\n\tint a[] = {\n\t\t1,\n\t};\n#define E {\n#define D }\n\tq = (\n\t\taa +\n\t\tbb +\n\t\tcc +\n\t\tdd +\n\t\tee +\n\t\tff +\n\t\tgg +\n\t\thh\n\t);\n}\n"
     );
 }
 

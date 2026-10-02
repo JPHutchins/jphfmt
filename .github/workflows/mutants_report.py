@@ -33,7 +33,7 @@ EXCLUDED: dict[str, tuple[int, str, tuple[str, ...]]] = {
     # value, and an insertion before the anchor fails loudly instead of re-anchoring silently
     # (#183).
     r"structure\.rs:\d+:\d+: replace \+ with \* in emit_tokens": (
-        18,
+        14,
         "contains_comment(&toks[i + 1..close])",
         ("replace + with * in emit_tokens",),
     ),
@@ -41,6 +41,16 @@ EXCLUDED: dict[str, tuple[int, str, tuple[str, ...]]] = {
         0,
         "if !inner.iter().any(|t| t.kind == TokenKind::Newline)",
         ("replace == with != in joined_pair_respaced",),
+    ),
+    r"builders\.rs:\d+:\d+: replace \+ with \* in tight_after_paren_open": (
+        0,
+        "&& toks[k + 1..j].iter().any(|t| t.kind == TokenKind::Newline)",
+        ("replace + with * in tight_after_paren_open",),
+    ),
+    r"tokens\.rs:\d+:\d+: replace \+ with \* in padded_after_paren_open": (
+        4,
+        "&toks[open + 1..close],",
+        ("replace + with * in padded_after_paren_open",),
     ),
 }
 
