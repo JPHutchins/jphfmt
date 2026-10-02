@@ -3952,22 +3952,56 @@ fn a_list_after_a_verbatim_group_keeps_the_bracket_depth() {
 /// #189: a brace on a directive's line is the preprocessor's text, which pairs with nothing the code
 /// around it opens. Counted, `#define END }` closed the body one brace early and the block's own `}`
 /// went out at the function's indent; `#define BEGIN {` left the body unmatched, and a later
-/// `#define END }` lost its brace to a line of its own.
+/// `#define END }` lost its brace to a line of its own. A comment before the `#` is whitespace by
+/// phase 4, and a `\` splices the brace's line into the directive's.
 #[test]
 fn a_brace_in_a_directive_pairs_with_nothing() {
     for src in [
         "void f(int y) {\n\tif (y) {\n\t\ty++;\n#define END }\n\t}\n\treturn;\n}\n",
         "void f(int y) {\n\tif (y) {\n\t\ty++;\n#define BEGIN {\n\t}\n\treturn;\n}\n#define END }\nvoid g(int y) {\n\tif (y) {\n\t\ty++;\n\t}\n}\n",
         "void h(void) {\n\tint a[] = {\n\t\t1,\n#define C }\n\t\t2,\n\t};\n}\n",
+        "void f(int y) {\n\tif (y) {\n\t\ty++;\n/* c */ #define END }\n\t}\n\treturn;\n}\n",
+        "void f(void) {\n\tint x = 1;\n#define END \\\n}\n\treturn;\n}\n",
     ] {
         assert_eq!(format(src), src, "must be a fixpoint: {src:?}");
     }
-    // The body around one still balances, so it is laid out rather than passed through.
+}
+
+/// A directive brace no other directive brace pairs is a macro the code may open or close a block
+/// with — `BEGIN` used where its `{` belongs — so which of the code's braces closes the body is not
+/// knowable from tokens, and the body passes through however long its lines (§6). Directive braces
+/// that pair among themselves leave the body the code's, laid out as any other.
+#[test]
+fn a_body_holding_an_unpaired_directive_brace_passes_through() {
+    for src in [
+        "void f(int y) {\n#define END }\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n}\n",
+        "void f(int y) {\n#define BEGIN {\n\tBEGIN\n\t}\n\treturn;\n}\n",
+        "void f(void) {\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n#define END \\\n}\n\treturn;\n}\n",
+    ] {
+        assert_eq!(
+            format_with_width(src, 30),
+            src,
+            "must pass through: {src:?}"
+        );
+    }
     assert_eq!(
         format_with_width(
-            "void f(int y) {\n#define END }\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n}\n",
+            "void f(void) {\n#define INIT { 0, 1 }\n\tg(aaaaaaaaaaaa, bbbbbbbbbbbbbb, cccccccccccc);\n}\n",
             30
         ),
-        "void f(int y) {\n#define END }\n\tg(\n\t\taaaaaaaaaaaa,\n\t\tbbbbbbbbbbbbbb,\n\t\tcccccccccccc\n\t);\n}\n"
+        "void f(void) {\n#define INIT { 0, 1 }\n\tg(\n\t\taaaaaaaaaaaa,\n\t\tbbbbbbbbbbbbbb,\n\t\tcccccccccccc\n\t);\n}\n"
+    );
+}
+
+/// A statement after a directive's `}` starts one: the brace closes no block, so it is no anchor for
+/// the block-or-value question, and the statement is laid out as the one it is.
+#[test]
+fn a_statement_after_a_directive_brace_is_laid_out() {
+    assert_eq!(
+        format_with_width(
+            "void f(void) {\n\tint a[] = {\n\t\t1,\n\t};\n#define E {\n#define D }\n\tq = aa + bb + cc + dd + ee + ff + gg + hh;\n}\n",
+            40
+        ),
+        "void f(void) {\n\tint a[] = {\n\t\t1,\n\t};\n#define E {\n#define D }\n\tq = (\n\t\taa +\n\t\tbb +\n\t\tcc +\n\t\tdd +\n\t\tee +\n\t\tff +\n\t\tgg +\n\t\thh\n\t);\n}\n"
     );
 }

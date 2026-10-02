@@ -22,8 +22,8 @@ additional_cargo_test_args = ["--lib", "--test", "conformance"]
 # line must still hold the recorded fragment — and reports the exact patterns to write when
 # a line shift moves them (#183).
 exclude_re = [
-    'structure\.rs:304:42: replace \+ with \* in emit_tokens',
-    'tokens\.rs:736:37: replace == with != in joined_pair_respaced',
+    'structure\.rs:305:42: replace \+ with \* in emit_tokens',
+    'tokens\.rs:774:37: replace == with != in joined_pair_respaced',
     'builders\.rs:265:27: replace \+ with \* in tight_after_paren_open',
     'tokens\.rs:86:28: replace \+ with \* in padded_after_paren_open',
 ]
